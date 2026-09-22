@@ -22,5 +22,8 @@ jobs:
 
       - run: npm test
 
+      # The release pull request consumes every changeset, so by the time it
+      # exists there are none left to find. Checking it would deadlock releases.
       - name: Every changed package has a changeset
+        if: github.head_ref != 'changeset-release/main'
         run: npx changeset status --since=origin/main
