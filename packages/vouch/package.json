@@ -1,0 +1,29 @@
+{
+  "name": "@euanmsm/vouch",
+  "version": "0.0.0",
+  "description": "Runs lifecycle scripts for named packages while .npmrc's ignore-scripts blocks everyone else",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/euanmsm/devkit.git",
+    "directory": "packages/vouch"
+  },
+  "bin": {
+    "vouch": "bin/vouch.mjs"
+  },
+  "exports": {
+    ".": "./src/allowlist.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "vouch.example.json"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@euanmsm/devkit-core": "0.0.0"
+  }
+}

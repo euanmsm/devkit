@@ -1,0 +1,32 @@
+{
+  "name": "@euanmsm/terse",
+  "version": "0.0.0",
+  "description": "A comment contract scanner, a Claude Code edit gate and a CI check that fails only on newly added violations",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/euanmsm/devkit.git",
+    "directory": "packages/terse"
+  },
+  "bin": {
+    "terse-gate": "bin/terse-gate.mjs",
+    "terse": "bin/terse.mjs"
+  },
+  "exports": {
+    ".": "./src/scanner.mjs",
+    "./gate": "./src/gate.mjs",
+    "./check": "./src/check.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "terse.example.json"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@euanmsm/devkit-core": "0.0.0"
+  }
+}

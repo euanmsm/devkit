@@ -9,18 +9,18 @@ nothing here ends up in a production bundle.
 
 ## The packages
 
-| Package                                                            | What it does                                                                       |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| [`@euanmsm/skill-gate`](packages/skill-gate)                       | Blocks a Claude Code edit until the conventions governing that file have been read |
-| [`@euanmsm/comment-contract`](packages/comment-contract)           | Stops comments that break the contract, both as an edit gate and as a CI check     |
-| [`@euanmsm/repo-security`](packages/repo-security)                 | Scans for leaked secrets, malicious patterns and tampered lockfiles                |
-| [`@euanmsm/postinstall-allowlist`](packages/postinstall-allowlist) | Lets named packages run install scripts while blocking everyone else               |
-| [`@euanmsm/devkit-core`](packages/core)                            | Config loading the others share. Not useful on its own                             |
+| Package                                    | What it does                                                                       |
+| ------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [`@euanmsm/preflight`](packages/preflight) | Blocks a Claude Code edit until the conventions governing that file have been read |
+| [`@euanmsm/terse`](packages/terse)         | Stops comments that break the contract, both as an edit gate and as a CI check     |
+| [`@euanmsm/secure`](packages/secure)       | Scans for leaked secrets, malicious patterns and tampered lockfiles                |
+| [`@euanmsm/vouch`](packages/vouch)         | Lets named packages run install scripts while blocking everyone else               |
+| [`@euanmsm/devkit-core`](packages/core)    | Config loading the others share. Not useful on its own                             |
 
 ## Installing one
 
 ```sh
-npm i -D @euanmsm/comment-contract
+npm i -D @euanmsm/terse
 ```
 
 Each package reads its settings from a JSON file in a `.devkit/` directory at
@@ -28,8 +28,8 @@ your repository root, and ships an example to copy:
 
 ```sh
 mkdir -p .devkit
-cp node_modules/@euanmsm/comment-contract/comment-contract.example.json \
-   .devkit/comment-contract.json
+cp node_modules/@euanmsm/terse/terse.example.json \
+   .devkit/terse.json
 ```
 
 Every package works without that file — it falls back to sensible defaults, or
@@ -49,8 +49,8 @@ Publishing is a code review, never a command you run by hand.
    summaries wrote.
 4. Merge that pull request. The same Action publishes to npm.
 
-A change with no changeset publishes nothing, which is the right behaviour for
-a README fix or a test tidy-up.
+A change with no changeset publishes nothing, which is the right behaviour for a
+README fix or a test tidy-up.
 
 ## Working on it
 

@@ -1,8 +1,0 @@
-{
-	"_readme": "Packages allowed to run lifecycle scripts despite ignore-scripts=true. Every entry needs a reason — an unexplained entry is a supply-chain hole nobody can review.",
-
-	"allowed": [
-		{ "pkg": "esbuild", "script": "postinstall", "reason": "Downloads platform-specific binary" },
-		{ "pkg": "sharp", "script": "install", "reason": "Downloads prebuilt libvips native binary" }
-	]
-}
