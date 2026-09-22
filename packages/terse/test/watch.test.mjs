@@ -12,7 +12,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-import { changedSinceCommit, format, unreported } from '../src/watch.mjs';
+import {
+  changedSinceCommit,
+  format,
+  summarise,
+  unreported,
+} from '../src/watch.mjs';
 
 const CLEAN = [
   '// ============================================================================',
@@ -150,5 +155,30 @@ describe('format', () => {
 
   test('pluralises past one', () => {
     assert.match(format(['x', 'y']), /2 comment-contract violations/);
+  });
+});
+
+describe('summarise', () => {
+  test('names the count and the file, for the terminal', () => {
+    const line = summarise(['a.ts:1  [file-header]  No header.']);
+
+    assert.equal(line, 'terse: 1 new comment violation in a.ts');
+  });
+
+  test('counts a file once however many findings it has', () => {
+    const line = summarise(['a.ts:1  [x]  One.', 'a.ts:4  [y]  Two.']);
+
+    assert.equal(line, 'terse: 2 new comment violations in a.ts');
+  });
+
+  test('stops naming files past three, rather than filling the line', () => {
+    const lines = ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts'].map(
+      (f) => `${f}:1  [x]  One.`,
+    );
+
+    assert.equal(
+      summarise(lines),
+      'terse: 5 new comment violations in a.ts, b.ts, c.ts and 2 more',
+    );
   });
 });

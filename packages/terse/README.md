@@ -82,6 +82,16 @@ It reports each violation **once per session**, keeping the set it has already
 mentioned in `.git/terse/`. Without that it would repeat every outstanding
 violation after every command, which is noise an agent learns to skip.
 
+Two audiences, two messages. The agent gets the full list in its context, so it
+can act. You get one line in the terminal:
+
+```
+terse: 3 new comment violations in src/server.ts
+```
+
+Hook output on a clean exit never reaches the terminal by itself, so without
+that line the watcher would fire invisibly and you would never know it had.
+
 Omitting the `matcher` on the `PostToolUse` entry is deliberate — it matches
 every tool, so a file written through an MCP server or some future tool is
 covered without anyone remembering to add it.

@@ -139,6 +139,24 @@ export function format(lines) {
   );
 }
 
+/**
+ * Builds the one line the user reads in the terminal.
+ *
+ * @param lines - Findings the working tree has gained
+ * @returns A summary naming the count and the files
+ */
+export function summarise(lines) {
+  const count = lines.length;
+  const files = [...new Set(lines.map((l) => l.split(':')[0]))];
+  const named = files.slice(0, 3).join(', ');
+  const rest = files.length > 3 ? ` and ${files.length - 3} more` : '';
+
+  return (
+    `terse: ${count} new comment violation${count === 1 ? '' : 's'} ` +
+    `in ${named}${rest}`
+  );
+}
+
 /** Reads the hook payload and reports anything new the working tree has gained. */
 export function main() {
   if (process.env.TERSE === 'off') return;
@@ -152,8 +170,10 @@ export function main() {
   const fresh = unreported(root, input.session_id);
   if (fresh.length === 0) return;
 
+  // The agent reads the findings; the terminal gets a line saying it happened.
   process.stdout.write(
     JSON.stringify({
+      systemMessage: summarise(fresh),
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
         additionalContext: format(fresh),
