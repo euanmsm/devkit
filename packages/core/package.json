@@ -1,5 +1,5 @@
 {
-	"name": "@litebyte/devkit-core",
+	"name": "@euanmsm/devkit-core",
 	"version": "0.0.0",
 	"description": "Shared config loading and repo-root discovery for the devkit tools",
 	"type": "module",

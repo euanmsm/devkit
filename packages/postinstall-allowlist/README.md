@@ -1,4 +1,4 @@
-# @litebyte/postinstall-allowlist
+# @euanmsm/postinstall-allowlist
 
 Lets a named handful of packages run their install scripts while every other
 package is blocked from running anything at all.
@@ -15,7 +15,7 @@ This runs those few, by name, and nothing else.
 ## Installing
 
 ```sh
-npm i -D @litebyte/postinstall-allowlist
+npm i -D @euanmsm/postinstall-allowlist
 ```
 
 Block scripts in `.npmrc`:
@@ -36,7 +36,7 @@ governs your dependencies, not you.
 ## Configuring
 
 ```sh
-cp node_modules/@litebyte/postinstall-allowlist/postinstall-allowlist.example.json \
+cp node_modules/@euanmsm/postinstall-allowlist/postinstall-allowlist.example.json \
    .devkit/postinstall-allowlist.json
 ```
 

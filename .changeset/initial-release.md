@@ -1,9 +1,9 @@
 ---
-"@litebyte/devkit-core": minor
-"@litebyte/skill-gate": minor
-"@litebyte/comment-contract": minor
-"@litebyte/repo-security": minor
-"@litebyte/postinstall-allowlist": minor
+"@euanmsm/devkit-core": minor
+"@euanmsm/skill-gate": minor
+"@euanmsm/comment-contract": minor
+"@euanmsm/repo-security": minor
+"@euanmsm/postinstall-allowlist": minor
 ---
 
 First release. Extracted from the Curricular repository, with every repo-specific value moved into a `.devkit/` config file.

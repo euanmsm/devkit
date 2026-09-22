@@ -9,7 +9,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 
-import { compile, loadConfig, repoRoot } from "@litebyte/devkit-core";
+import { compile, loadConfig, repoRoot } from "@euanmsm/devkit-core";
 
 const CONFIG_NAME = "skill-map.json";
 

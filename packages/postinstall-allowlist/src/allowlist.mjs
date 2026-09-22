@@ -9,7 +9,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { loadConfig, repoRoot } from "@litebyte/devkit-core";
+import { loadConfig, repoRoot } from "@euanmsm/devkit-core";
 
 const CONFIG_NAME = "postinstall-allowlist.json";
 const DEFAULT_TIMEOUT_MS = 300_000;

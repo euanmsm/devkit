@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadConfig, repoRoot } from "@litebyte/devkit-core";
+import { loadConfig, repoRoot } from "@euanmsm/devkit-core";
 
 const SH = join(dirname(fileURLToPath(import.meta.url)), "..", "sh");
 

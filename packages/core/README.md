@@ -1,4 +1,4 @@
-# @litebyte/devkit-core
+# @euanmsm/devkit-core
 
 Config loading shared by the devkit tools. Installed as a dependency of the
 others — there is no reason to install it directly.

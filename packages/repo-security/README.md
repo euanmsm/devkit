@@ -1,4 +1,4 @@
-# @litebyte/repo-security
+# @euanmsm/repo-security
 
 Two scans that between them cover the ways a repository gets compromised: a
 secret committed by accident, and malicious code arriving through a dependency
@@ -30,7 +30,7 @@ check is fast enough that nobody disables it. In CI they scan the whole tree.
 ## Installing
 
 ```sh
-npm i -D @litebyte/repo-security
+npm i -D @euanmsm/repo-security
 brew install gitleaks semgrep
 ```
 
@@ -52,7 +52,7 @@ and into CI without `PRE_COMMIT`, where they scan everything.
 ## Configuring
 
 ```sh
-cp node_modules/@litebyte/repo-security/repo-security.example.json \
+cp node_modules/@euanmsm/repo-security/repo-security.example.json \
    .devkit/repo-security.json
 ```
 

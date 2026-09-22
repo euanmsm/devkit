@@ -1,4 +1,4 @@
-# @litebyte/skill-gate
+# @euanmsm/skill-gate
 
 A Claude Code hook that blocks an edit until the agent has read the conventions
 governing the file it is about to change.
@@ -11,9 +11,9 @@ turns the conventions from something an agent might read into something it must.
 ## Installing
 
 ```sh
-npm i -D @litebyte/skill-gate
+npm i -D @euanmsm/skill-gate
 mkdir -p .devkit
-cp node_modules/@litebyte/skill-gate/skill-map.example.json .devkit/skill-map.json
+cp node_modules/@euanmsm/skill-gate/skill-map.example.json .devkit/skill-map.json
 ```
 
 Then register it as a `PreToolUse` hook in `.claude/settings.json`:

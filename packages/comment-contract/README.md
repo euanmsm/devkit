@@ -1,4 +1,4 @@
-# @litebyte/comment-contract
+# @euanmsm/comment-contract
 
 Mechanical enforcement of a comment contract — the rules saying what earns a
 comment, how long it may be, and which phrases are banned outright.
@@ -14,7 +14,7 @@ mean fixing a thousand comments before you can merge anything.
 ## Installing
 
 ```sh
-npm i -D @litebyte/comment-contract
+npm i -D @euanmsm/comment-contract
 ```
 
 For CI, add the check to your scripts:
@@ -46,7 +46,7 @@ Optional — every setting has a default. Copy the example if you want to change
 one:
 
 ```sh
-cp node_modules/@litebyte/comment-contract/comment-contract.example.json \
+cp node_modules/@euanmsm/comment-contract/comment-contract.example.json \
    .devkit/comment-contract.json
 ```
 

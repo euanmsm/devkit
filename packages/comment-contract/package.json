@@ -1,5 +1,5 @@
 {
-	"name": "@litebyte/comment-contract",
+	"name": "@euanmsm/comment-contract",
 	"version": "0.0.0",
 	"description": "A comment contract scanner, a Claude Code edit gate and a CI check that fails only on newly added violations",
 	"type": "module",
@@ -27,6 +27,6 @@
 		"node": ">=22"
 	},
 	"dependencies": {
-		"@litebyte/devkit-core": "0.0.0"
+		"@euanmsm/devkit-core": "0.0.0"
 	}
 }

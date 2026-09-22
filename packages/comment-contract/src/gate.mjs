@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative } from "node:path";
 
-import { repoRoot } from "@litebyte/devkit-core";
+import { repoRoot } from "@euanmsm/devkit-core";
 
 // A dynamic import keeps a broken config inside this file's own fail-open path.
 let contract = null;

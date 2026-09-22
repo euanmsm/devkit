@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
-import { compile, loadConfig } from "@litebyte/devkit-core";
+import { compile, loadConfig } from "@euanmsm/devkit-core";
 
 // ============================================================================
 // Config

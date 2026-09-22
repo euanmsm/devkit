@@ -9,18 +9,18 @@ nothing here ends up in a production bundle.
 
 ## The packages
 
-| Package                                                             | What it does                                                                       |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| [`@litebyte/skill-gate`](packages/skill-gate)                       | Blocks a Claude Code edit until the conventions governing that file have been read |
-| [`@litebyte/comment-contract`](packages/comment-contract)           | Stops comments that break the contract, both as an edit gate and as a CI check     |
-| [`@litebyte/repo-security`](packages/repo-security)                 | Scans for leaked secrets, malicious patterns and tampered lockfiles                |
-| [`@litebyte/postinstall-allowlist`](packages/postinstall-allowlist) | Lets named packages run install scripts while blocking everyone else               |
-| [`@litebyte/devkit-core`](packages/core)                            | Config loading the others share. Not useful on its own                             |
+| Package                                                            | What it does                                                                       |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| [`@euanmsm/skill-gate`](packages/skill-gate)                       | Blocks a Claude Code edit until the conventions governing that file have been read |
+| [`@euanmsm/comment-contract`](packages/comment-contract)           | Stops comments that break the contract, both as an edit gate and as a CI check     |
+| [`@euanmsm/repo-security`](packages/repo-security)                 | Scans for leaked secrets, malicious patterns and tampered lockfiles                |
+| [`@euanmsm/postinstall-allowlist`](packages/postinstall-allowlist) | Lets named packages run install scripts while blocking everyone else               |
+| [`@euanmsm/devkit-core`](packages/core)                            | Config loading the others share. Not useful on its own                             |
 
 ## Installing one
 
 ```sh
-npm i -D @litebyte/comment-contract
+npm i -D @euanmsm/comment-contract
 ```
 
 Each package reads its settings from a JSON file in a `.devkit/` directory at
@@ -28,7 +28,7 @@ your repository root, and ships an example to copy:
 
 ```sh
 mkdir -p .devkit
-cp node_modules/@litebyte/comment-contract/comment-contract.example.json \
+cp node_modules/@euanmsm/comment-contract/comment-contract.example.json \
    .devkit/comment-contract.json
 ```
 
