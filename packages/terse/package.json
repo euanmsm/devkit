@@ -31,7 +31,7 @@
     "terse.example.json"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.11"
   },
   "dependencies": {
     "@euanmsm/devkit-core": "0.0.0"

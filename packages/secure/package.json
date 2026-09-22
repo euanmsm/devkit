@@ -1,7 +1,7 @@
 {
   "name": "@euanmsm/secure",
   "version": "0.0.0",
-  "description": "Pre-commit and CI security scanning — gitleaks, semgrep, lockfile-lint and a config-integrity check",
+  "description": "Pre-commit and CI security scanning \u2014 gitleaks, semgrep, lockfile-lint and a config-integrity check",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -19,7 +19,7 @@
     "secure.example.json"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.11"
   },
   "dependencies": {
     "@euanmsm/devkit-core": "0.0.0"
