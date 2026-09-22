@@ -6,7 +6,7 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.11"
   },
   "scripts": {
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"packages/*/test/*.test.mjs\"",
@@ -15,7 +15,7 @@
     "release": "npm run test && changeset publish"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.27.0",
+    "@changesets/cli": "^3.0.3",
     "prettier": "^3.3.0"
   }
 }
