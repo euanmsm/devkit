@@ -1,0 +1,29 @@
+{
+	"name": "@litebyte/postinstall-allowlist",
+	"version": "0.0.0",
+	"description": "Runs lifecycle scripts for named packages while .npmrc's ignore-scripts blocks everyone else",
+	"type": "module",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/euanmsm/devkit.git",
+		"directory": "packages/postinstall-allowlist"
+	},
+	"bin": {
+		"devkit-postinstall-allowlist": "bin/allowlist.mjs"
+	},
+	"exports": {
+		".": "./src/allowlist.mjs"
+	},
+	"files": [
+		"bin",
+		"src",
+		"postinstall-allowlist.example.json"
+	],
+	"engines": {
+		"node": ">=22"
+	},
+	"dependencies": {
+		"@litebyte/devkit-core": "0.0.0"
+	}
+}

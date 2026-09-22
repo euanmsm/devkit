@@ -1,0 +1,12 @@
+{
+	"_readme": "Path-to-skill map. Patterns are JS regexes tested against the repo-relative path. `primary` is first-match-wins, so order matters — most specific first. `universal` rules always add on top.",
+
+	"exclude": ["node_modules/", "^tmp/", "\\.tmp\\.", "\\.min\\.[cm]?js$", "\\.d\\.ts$"],
+
+	"primary": [
+		{ "pattern": "^_CONVENTIONS/", "skills": ["conventions"] },
+		{ "pattern": "(^|/)README\\.md$", "skills": ["readmes"] }
+	],
+
+	"universal": [{ "pattern": "\\.(tsx?|mjs|cjs|js)$", "skills": ["comments", "readability"] }]
+}

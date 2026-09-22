@@ -1,0 +1,27 @@
+{
+	"name": "@litebyte/repo-security",
+	"version": "0.0.0",
+	"description": "Pre-commit and CI security scanning — gitleaks, semgrep, lockfile-lint and a config-integrity check",
+	"type": "module",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/euanmsm/devkit.git",
+		"directory": "packages/repo-security"
+	},
+	"bin": {
+		"devkit-security-scan": "bin/security-scan.mjs",
+		"devkit-config-integrity": "bin/config-integrity.mjs"
+	},
+	"files": [
+		"bin",
+		"sh",
+		"repo-security.example.json"
+	],
+	"engines": {
+		"node": ">=22"
+	},
+	"dependencies": {
+		"@litebyte/devkit-core": "0.0.0"
+	}
+}

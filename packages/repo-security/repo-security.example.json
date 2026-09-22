@@ -1,0 +1,9 @@
+{
+	"_readme": "Config for the security scan and the config-integrity check. Both run from the repository root.",
+
+	"gitignoreRequired": [".env.local", ".env*.local", ".env.keys"],
+	"lockfileAllowedHosts": ["npm"],
+	"semgrepConfigs": ["p/supply-chain", "p/javascript"],
+	"maxConfigLineLength": 200,
+	"docsUrl": ""
+}

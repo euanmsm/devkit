@@ -1,0 +1,21 @@
+{
+	"name": "devkit",
+	"private": true,
+	"type": "module",
+	"workspaces": [
+		"packages/*"
+	],
+	"engines": {
+		"node": ">=22"
+	},
+	"scripts": {
+		"test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"packages/*/test/*.test.mjs\"",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"release": "npm run test && changeset publish"
+	},
+	"devDependencies": {
+		"@changesets/cli": "^2.27.0",
+		"prettier": "^3.3.0"
+	}
+}

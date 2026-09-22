@@ -1,0 +1,12 @@
+{
+	"_readme": "Every field is optional — anything omitted falls back to the built-in default. `bans` REPLACES the defaults rather than adding to them, so copy the ones you want to keep.",
+
+	"exclude": ["(^|/)node_modules/", "^tmp/", "\\.min\\.[cm]?js$", "\\.d\\.ts$"],
+	"headerMax": 8,
+	"jsdocProseMax": 4,
+	"commentMaxChars": 100,
+	"bannerMinCode": 150,
+	"todoPrefix": "SHS",
+	"rulesDoc": "_CONVENTIONS/comments/1-comments.md",
+	"examplesDoc": "_CONVENTIONS/comments/2-examples.md"
+}
