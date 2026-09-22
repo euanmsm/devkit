@@ -27,7 +27,7 @@ For CI, add the check to your scripts:
 
 It diffs against `origin/main` by default; pass another base as an argument.
 
-For the edit gate, add a `PreToolUse` hook in `.claude/settings.json`:
+For the hooks, add both to `.claude/settings.json`:
 
 ```json
 {
@@ -35,12 +35,56 @@ For the edit gate, add a `PreToolUse` hook in `.claude/settings.json`:
     "PreToolUse": [
       {
         "matcher": "Edit|Write",
-        "hooks": [{ "type": "command", "command": "npx terse-gate" }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx --no-install terse-gate",
+            "timeout": 10,
+            "statusMessage": "Checking the comment contract"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx --no-install terse-watch",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
 }
 ```
+
+The `timeout` matters. Without it a hook that hangs blocks the edit forever,
+which quietly undoes the fail-open design.
+
+### Two hooks, because one is not enough
+
+`terse-gate` runs **before** an `Edit` or `Write` and can refuse it. That is the
+one that actually prevents a bad comment reaching a file.
+
+`terse-watch` runs **after every tool call** and catches what the gate cannot
+see. An agent writing a file with a Bash heredoc, `sed -i`, or a Python script
+never touches the `Edit` tool, so the gate is never consulted. The watcher
+compares the working tree against the last commit and reports anything new.
+
+It cannot block. The file is already written by the time it runs, and a
+`PostToolUse` hook has no power to undo that. What it does is tell the agent
+what it just wrote, immediately, so the fix happens in the same turn rather than
+in review.
+
+It reports each violation **once per session**, keeping the set it has already
+mentioned in `.git/terse/`. Without that it would repeat every outstanding
+violation after every command, which is noise an agent learns to skip.
+
+Omitting the `matcher` on the `PostToolUse` entry is deliberate — it matches
+every tool, so a file written through an MCP server or some future tool is
+covered without anyone remembering to add it.
 
 ## Configuring
 
@@ -166,7 +210,7 @@ failure into a message an agent can act on without you in the loop.
 
 ## When it does not block
 
-Like `preflight`, the hook fails open — a broken config allows the edit rather
-than stopping work, and `TERSE=off` disables it for one command. The CI check
+Like `preflight`, both hooks fail open — a broken config allows the edit rather
+than stopping work, and `TERSE=off` disables them for one command. The CI check
 does the opposite and fails loudly, because there a tool that cannot run is a
 tool that is silently passing everything.

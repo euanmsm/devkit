@@ -13,14 +13,16 @@
     "terse-gate": "bin/terse-gate.mjs",
     "terse": "bin/terse.mjs",
     "terse-init": "bin/terse-init.mjs",
-    "terse-docs": "bin/terse-docs.mjs"
+    "terse-docs": "bin/terse-docs.mjs",
+    "terse-watch": "bin/terse-watch.mjs"
   },
   "exports": {
     ".": "./src/scanner.mjs",
     "./gate": "./src/gate.mjs",
     "./check": "./src/check.mjs",
     "./init": "./src/init.mjs",
-    "./docs": "./src/docs.mjs"
+    "./docs": "./src/docs.mjs",
+    "./watch": "./src/watch.mjs"
   },
   "files": [
     "bin",
