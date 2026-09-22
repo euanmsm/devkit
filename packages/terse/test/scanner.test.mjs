@@ -38,7 +38,7 @@ function src(...body) {
   return `${HEADER}\n\n${documented([ANCHOR, '', ...body]).join('\n')}\n`;
 }
 
-/** Builds a source long enough for rule 18 to permit a section banner. */
+/** Builds a source long enough for section-banner to permit a banner. */
 function long(...body) {
   const filler = Array.from(
     { length: 160 },
@@ -47,9 +47,9 @@ function long(...body) {
   return src(...body, ...filler);
 }
 
-/** Rule numbers a source breaks. */
+/** Rule names a source breaks. */
 function rules(source) {
-  return [...new Set(scan(source).map((f) => f.rule))].sort((a, b) => a - b);
+  return [...new Set(scan(source).map((f) => f.rule))].sort();
 }
 
 /** Asserts a source breaks exactly one rule, the given one. */
@@ -109,7 +109,7 @@ describe('governs', () => {
 
 describe('rule 1 — file header', () => {
   test('flags a file that opens with code', () => {
-    breaks(1, '/** Fixture. */\nexport const a = 1;\n');
+    breaks('file-header', '/** Fixture. */\nexport const a = 1;\n');
   });
 
   test('accepts a `// ====` header', () => {
@@ -123,17 +123,20 @@ describe('rule 1 — file header', () => {
   });
 
   test('flags a shebang with no header under it', () => {
-    breaks(1, '#!/usr/bin/env node\n/** F. */\nexport const a = 1;\n');
+    breaks(
+      'file-header',
+      '#!/usr/bin/env node\n/** F. */\nexport const a = 1;\n',
+    );
   });
 });
 
 describe('rule 2 — exported symbols', () => {
   test('flags an export with no JSDoc', () => {
-    breaks(2, `${HEADER}\n\nexport const a = 1;\n`);
+    breaks('exported-jsdoc', `${HEADER}\n\nexport const a = 1;\n`);
   });
 
   test('flags an export carrying only a `//` comment', () => {
-    breaks(2, `${HEADER}\n\n// Room id.\nexport const a = 1;\n`);
+    breaks('exported-jsdoc', `${HEADER}\n\n// Room id.\nexport const a = 1;\n`);
   });
 
   test('accepts an export carrying JSDoc', () => {
@@ -155,12 +158,15 @@ describe('rule 2 — exported symbols', () => {
 
 describe('rule 3 — property JSDoc', () => {
   test('flags a property with no JSDoc', () => {
-    breaks(3, src('export interface P {', '\tname: string;', '}'));
+    breaks(
+      'property-jsdoc',
+      src('export interface P {', '\tname: string;', '}'),
+    );
   });
 
   test('flags a block-form property JSDoc', () => {
     breaks(
-      3,
+      'property-jsdoc',
       src(
         'export interface P {',
         '\t/**',
@@ -174,7 +180,7 @@ describe('rule 3 — property JSDoc', () => {
 
   test('flags a property JSDoc carrying a second sentence', () => {
     breaks(
-      3,
+      'property-jsdoc',
       src(
         'export interface P {',
         '\t/** Name. Set at creation. */',
@@ -222,42 +228,42 @@ describe('rule 3 — property JSDoc', () => {
 describe('rule 2 — brace counting', () => {
   test('keeps checking exports after a brace inside a string', () => {
     breaks(
-      2,
+      'exported-jsdoc',
       `${HEADER}\n\n/** Open. */\nexport const open = "{";\n\nexport const b = 2;\n`,
     );
   });
 
   test('keeps checking exports after a brace inside a regex', () => {
     breaks(
-      2,
+      'exported-jsdoc',
       `${HEADER}\n\n/** Open. */\nexport const re = /\\{/;\n\nexport const b = 2;\n`,
     );
   });
 
   test('keeps checking exports after a brace inside a template literal', () => {
     breaks(
-      2,
+      'exported-jsdoc',
       `${HEADER}\n\n/** Open. */\nexport const t = \`{\`;\n\nexport const b = 2;\n`,
     );
   });
 
   test('balances a JSX comment, whose braces sit either side of `/* */`', () => {
     breaks(
-      2,
+      'exported-jsdoc',
       `${HEADER}\n\n/** F. */\nexport const a = <p>{/* Note. */}</p>;\n\nexport const b = 2;\n`,
     );
   });
 
   test('balances a JSX comment running over two lines', () => {
     breaks(
-      2,
+      'exported-jsdoc',
       `${HEADER}\n\n/** F. */\nexport const a = <p>{/* Note\n * and more. */}</p>;\n\nexport const b = 2;\n`,
     );
   });
 
   test('balances a self-closing JSX element after a brace', () => {
     breaks(
-      2,
+      'exported-jsdoc',
       `${HEADER}\n\n/** F. */\nexport const a = <p>{x && <i n={y} />}</p>;\n\nexport const b = 2;\n`,
     );
   });
@@ -270,14 +276,14 @@ describe('rule 5 — header cap', () => {
     );
 
     breaks(
-      5,
+      'header-cap',
       `${BAR}\n// Fixture\n${BAR}\n//\n${overview}\n\n/** F. */\nexport const a = 1;\n`,
     );
   });
 
   test('flags a subsection inside the header', () => {
     breaks(
-      5,
+      'header-cap',
       `${BAR}\n// Fixture\n${BAR}\n//\n// Detail\n// ------\n\n/** F. */\nexport const a = 1;\n`,
     );
   });
@@ -309,13 +315,13 @@ describe('rule 5 — header cap', () => {
     const found = newFindings(before, after, [{ from: 9, to: 9 }]);
 
     assert.equal(found.length, 1);
-    assert.equal(found[0].rule, 5);
+    assert.equal(found[0].rule, 'header-cap');
   });
 
   test('does not absorb a comment block sitting below the header', () => {
     const source = `${BAR}\n// Fixture\n${BAR}\n//\n// Overview.\n\n// The regex matches a slug.\n// The regex matches a code.\n\n/** F. */\nexport const a = 1;\n`;
 
-    assert.deepEqual(rules(source), [7]);
+    assert.deepEqual(rules(source), ['logic-comment-length']);
   });
 });
 
@@ -325,12 +331,12 @@ describe('rule 6 — JSDoc cap', () => {
       '\n',
     );
 
-    breaks(6, src('/**', prose, ' */', 'export const a = 1;'));
+    breaks('jsdoc-cap', src('/**', prose, ' */', 'export const a = 1;'));
   });
 
   test('flags a tag wrapping onto a second line', () => {
     breaks(
-      6,
+      'jsdoc-cap',
       src(
         '/**',
         ' * Does a thing.',
@@ -368,14 +374,14 @@ describe('rule 6 — JSDoc cap', () => {
     const found = newFindings(before, after, [{ from: 13, to: 13 }]);
 
     assert.equal(found.length, 1);
-    assert.equal(found[0].rule, 6);
+    assert.equal(found[0].rule, 'jsdoc-cap');
   });
 });
 
 describe('rule 7 — logic comment cap', () => {
   test('flags a two-line logic comment', () => {
     breaks(
-      7,
+      'logic-comment-length',
       src(
         '// The regex matches a slug.',
         '// The regex matches a code.',
@@ -392,7 +398,7 @@ describe('rule 7 — logic comment cap', () => {
 describe('rule 9 — no history', () => {
   test('flags past tense about the code', () => {
     breaks(
-      9,
+      'no-history',
       src('// The value is no longer read here.', 'export const a = 1;'),
     );
   });
@@ -400,14 +406,17 @@ describe('rule 9 — no history', () => {
 
 describe('rule 10 — no conversation', () => {
   test('flags a reference to the plan', () => {
-    breaks(10, src('// Removed as requested.', 'export const a = 1;'));
+    breaks(
+      'no-conversation',
+      src('// Removed as requested.', 'export const a = 1;'),
+    );
   });
 });
 
 describe('rule 11 — no issue ids', () => {
   test('flags a bare issue code', () => {
     breaks(
-      11,
+      'no-issue-id',
       src('// Matches the shape CUR-1234 describes.', 'export const a = 1;'),
     );
   });
@@ -420,7 +429,7 @@ describe('rule 11 — no issue ids', () => {
 describe('rule 12 — no justification', () => {
   test('flags a rationale clause', () => {
     breaks(
-      12,
+      'no-justification',
       src(
         '// The list is sorted so that the picker is stable.',
         'export const a = 1;',
@@ -431,12 +440,15 @@ describe('rule 12 — no justification', () => {
 
 describe('rule 13 — one sentence, one clause, 100 chars', () => {
   test('flags a comment over the character cap', () => {
-    breaks(13, src(`// ${'a'.repeat(120)}`, 'export const a = 1;'));
+    breaks(
+      'comment-length',
+      src(`// ${'a'.repeat(120)}`, 'export const a = 1;'),
+    );
   });
 
   test('flags a second sentence', () => {
     breaks(
-      13,
+      'comment-length',
       src('// Matches a slug. Matches a code.', 'export const a = 1;'),
     );
   });
@@ -444,17 +456,17 @@ describe('rule 13 — one sentence, one clause, 100 chars', () => {
 
 describe('rule 15 — no commented-out code', () => {
   test('flags a commented-out statement', () => {
-    breaks(15, src('// const b = 2;', 'export const a = 1;'));
+    breaks('no-commented-code', src('// const b = 2;', 'export const a = 1;'));
   });
 });
 
 describe('rule 16 — marker form', () => {
   test('flags a bare TODO', () => {
-    breaks(16, src('// TODO: sort this out', 'export const a = 1;'));
+    breaks('todo-form', src('// TODO: sort this out', 'export const a = 1;'));
   });
 
   test('flags a FIXME', () => {
-    breaks(16, src('// FIXME: broken', 'export const a = 1;'));
+    breaks('todo-form', src('// FIXME: broken', 'export const a = 1;'));
   });
 
   test('accepts `TODO(CUR-1234):`', () => {
@@ -465,7 +477,7 @@ describe('rule 16 — marker form', () => {
 describe('rule 17 — allowed tags', () => {
   test('flags @example', () => {
     breaks(
-      17,
+      'jsdoc-tags',
       src(
         '/**',
         ' * Does a thing.',
@@ -494,7 +506,7 @@ describe('rule 17 — allowed tags', () => {
 describe('rule 18 — section banners', () => {
   test('flags a banner in a short file', () => {
     breaks(
-      18,
+      'section-banner',
       src('export const a = 1;', BAR, '// Section', BAR, 'export const b = 2;'),
     );
   });
@@ -546,7 +558,7 @@ describe('newFindings blocks', () => {
     const found = newFindings(before, after);
 
     assert.equal(found.length, 1);
-    assert.equal(found[0].rule, 9);
+    assert.equal(found[0].rule, 'no-history');
   });
 
   test('every rule a single comment breaks', () => {
@@ -556,10 +568,12 @@ describe('newFindings blocks', () => {
 
     const rules = newFindings(src(), after).map((f) => f.rule);
 
-    assert.deepEqual(
-      [...new Set(rules)].sort((a, b) => a - b),
-      [9, 12, 13, 14],
-    );
+    assert.deepEqual([...new Set(rules)].sort(), [
+      'comment-length',
+      'no-history',
+      'no-justification',
+      'no-person',
+    ]);
   });
 
   test('a violation the same violation later in the file would otherwise absorb', () => {
@@ -578,7 +592,7 @@ describe('newFindings blocks', () => {
     const found = newFindings('', 'export const a = 1;\n', null);
 
     assert.equal(
-      found.some((f) => f.rule === 1),
+      found.some((f) => f.rule === 'file-header'),
       true,
     );
   });
@@ -594,7 +608,7 @@ describe('newFindings blocks', () => {
     const found = newFindings(before, after);
 
     assert.equal(found.length, 1);
-    assert.equal(found[0].rule, 9);
+    assert.equal(found[0].rule, 'no-history');
   });
 });
 
@@ -633,8 +647,8 @@ describe('newFindings allows', () => {
     const after = `${HEADER}\n\n/** F. */\nexport const a = 1;\n${banner}\n/** F. */\nexport const b = 2;\n${padding.join('\n')}\n`;
 
     // The banner is illegal in both, and its message names a line count that moved.
-    assert.equal(rules(before).includes(18), true);
-    assert.equal(rules(after).includes(18), true);
+    assert.equal(rules(before).includes('section-banner'), true);
+    assert.equal(rules(after).includes('section-banner'), true);
     assert.deepEqual(newFindings(before, after), []);
   });
 

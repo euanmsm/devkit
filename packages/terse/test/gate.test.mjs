@@ -73,7 +73,7 @@ describe('format', () => {
     const message = format(
       [
         {
-          rule: 13,
+          rule: 'comment-length',
           line: 41,
           message: 'Comment is 137 chars, cap is 100.',
         },
@@ -83,14 +83,17 @@ describe('format', () => {
 
     assert.match(message, /^BLOCKED — apps\/main\/src\/a\.ts/);
     assert.match(message, /1 comment-contract violation:/);
-    assert.match(message, /line 41 {2}\[rule 13] {2}Comment is 137 chars/);
+    assert.match(
+      message,
+      /line 41 {2}\[comment-length] {2}Comment is 137 chars/,
+    );
   });
 
   test('pluralises past one finding', () => {
     const findings = [
-      { rule: 9, line: 1, message: 'Comment mentions history.' },
+      { rule: 'no-history', line: 1, message: 'Comment mentions history.' },
       {
-        rule: 14,
+        rule: 'no-person',
         line: 2,
         message: 'Comment mentions first or second person.',
       },
@@ -104,14 +107,21 @@ describe('format', () => {
       rulesDoc: 'docs/1-rules.md',
       examplesDoc: 'docs/2-examples.md',
     };
-    const message = format([{ rule: 9, line: 1, message: 'x' }], 'a.ts', docs);
+    const message = format(
+      [{ rule: 'no-history', line: 1, message: 'x' }],
+      'a.ts',
+      docs,
+    );
 
     assert.match(message, /docs\/1-rules\.md/);
     assert.match(message, /docs\/2-examples\.md/);
   });
 
   test('omits the pointers when a repo configures no convention files', () => {
-    const message = format([{ rule: 9, line: 1, message: 'x' }], 'a.ts');
+    const message = format(
+      [{ rule: 'no-history', line: 1, message: 'x' }],
+      'a.ts',
+    );
 
     assert.equal(message.includes('The rules are in'), false);
   });

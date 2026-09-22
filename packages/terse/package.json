@@ -11,12 +11,14 @@
   },
   "bin": {
     "terse-gate": "bin/terse-gate.mjs",
-    "terse": "bin/terse.mjs"
+    "terse": "bin/terse.mjs",
+    "terse-init": "bin/terse-init.mjs"
   },
   "exports": {
     ".": "./src/scanner.mjs",
     "./gate": "./src/gate.mjs",
-    "./check": "./src/check.mjs"
+    "./check": "./src/check.mjs",
+    "./init": "./src/init.mjs"
   },
   "files": [
     "bin",

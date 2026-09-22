@@ -166,7 +166,7 @@ export function main() {
     const found = checkFile(file, from, renames, spans);
     total += found.length;
     for (const f of found)
-      console.log(`${file}:${f.line}  [rule ${f.rule}]  ${f.message}`);
+      console.log(`${file}:${f.line}  [${f.rule}]  ${f.message}`);
   }
 
   if (total === 0) {

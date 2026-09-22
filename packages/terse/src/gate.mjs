@@ -8,7 +8,6 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, relative } from 'node:path';
-
 import { repoRoot } from '@euanmsm/devkit-core';
 
 // A dynamic import keeps a broken config inside this file's own fail-open path.
@@ -96,7 +95,7 @@ export function applyEdit(source, toolInput) {
 export function format(findings, path, docs = {}) {
   const count = findings.length;
   const lines = findings.map(
-    (f) => `  line ${f.line}  [rule ${f.rule}]  ${f.message}`,
+    (f) => `  line ${f.line}  [${f.rule}]  ${f.message}`,
   );
   const pointers = [
     docs.rulesDoc && `The rules are in ${docs.rulesDoc}`,

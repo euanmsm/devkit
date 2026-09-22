@@ -2,9 +2,9 @@
 // Comment Budget
 // ============================================================================
 //
-// Checks every governed source file against the comment contract. Caps, banned
-// phrases and scope all come from .devkit/terse.json. Findings carry
-// the rule number they break.
+// Checks every governed source file against the comment contract. Which rules
+// run, the caps they apply and the phrases they ban all come from
+// .devkit/terse.json. Findings carry the name of the rule they break.
 
 import { readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
@@ -16,6 +16,51 @@ import { compile, loadConfig } from '@euanmsm/devkit-core';
 // Config
 // ============================================================================
 
+/**
+ * Every rule, in the order a reader meets them. The key is the name a finding
+ * reports and a config file switches off; `number` ties back to the written
+ * contract.
+ */
+export const RULES = {
+  'file-header': {
+    number: 1,
+    about: 'Every file opens with a `// ====` header',
+  },
+  'exported-jsdoc': { number: 2, about: 'Every exported symbol has JSDoc' },
+  'property-jsdoc': {
+    number: 3,
+    about: 'Every property has JSDoc, of one sentence',
+  },
+  'header-cap': {
+    number: 5,
+    about: 'A file header is capped and has no subsections',
+  },
+  'jsdoc-cap': {
+    number: 6,
+    about: 'JSDoc prose is capped and its tags do not wrap',
+  },
+  'logic-comment-length': { number: 7, about: 'A logic comment is one line' },
+  'no-history': { number: 9, about: 'No narrating what the code used to do' },
+  'no-conversation': {
+    number: 10,
+    about: 'No referencing the conversation that wrote it',
+  },
+  'no-issue-id': { number: 11, about: 'No issue ids in comments' },
+  'no-justification': {
+    number: 12,
+    about: 'State what is true, do not argue for it',
+  },
+  'comment-length': {
+    number: 13,
+    about: 'One sentence, under the character cap',
+  },
+  'no-person': { number: 14, about: 'No first or second person' },
+  'no-commented-code': { number: 15, about: 'No commented-out code' },
+  'todo-form': { number: 16, about: 'A marker carries an issue id' },
+  'jsdoc-tags': { number: 17, about: 'Only the allowed JSDoc tags' },
+  'section-banner': { number: 18, about: 'No section banners in a small file' },
+};
+
 const DEFAULTS = {
   governed: '\\.(tsx?|mjs|cjs|js)$',
   exclude: ['(^|/)node_modules/', '\\.min\\.[cm]?js$', '\\.d\\.ts$'],
@@ -24,37 +69,61 @@ const DEFAULTS = {
   commentMaxChars: 100,
   bannerMinCode: 150,
   todoPrefix: '[A-Z]{2,}',
+  allowedTags: ['@param', '@returns', '@throws', '@deprecated'],
   rulesDoc: '',
   examplesDoc: '',
+  rules: Object.fromEntries(Object.keys(RULES).map((name) => [name, true])),
   bans: [
     {
-      rule: 9,
+      name: 'no-history',
       label: 'history',
       pattern:
         '\\b(previously|used to|no longer|now that|was originally|is now|has been (renamed|moved|replaced|removed))\\b',
     },
     {
-      rule: 10,
+      name: 'no-conversation',
       label: 'conversation',
       pattern:
         '\\b(as requested|per the plan|as discussed|this wave|we decided|phase \\d)\\b',
     },
-    { rule: 11, label: 'issue id', pattern: '\\b[A-Z]{2,}-\\d+\\b', flags: '' },
     {
-      rule: 12,
+      name: 'no-issue-id',
+      label: 'issue id',
+      pattern: '\\b[A-Z]{2,}-\\d+\\b',
+      flags: '',
+    },
+    {
+      name: 'no-justification',
       label: 'justification or consequence',
       pattern:
         '\\b(so that|rather than|which is what|the reason|deliberately|on purpose|prevents|defaults to|falls back)\\b',
     },
     {
-      rule: 14,
+      name: 'no-person',
       label: 'first or second person',
       pattern: '\\b(we|our|ours|us|you|your)\\b',
     },
   ],
 };
 
-export const config = { ...DEFAULTS, ...(loadConfig('terse.json', {}) ?? {}) };
+const FILE = loadConfig('terse.json', {}) ?? {};
+
+export const config = {
+  ...DEFAULTS,
+  ...FILE,
+  // A config naming only the rules it turns off keeps the rest switched on.
+  rules: { ...DEFAULTS.rules, ...(FILE.rules ?? {}) },
+};
+
+/**
+ * True when a repo leaves a rule switched on.
+ *
+ * @param name - The rule's name, as `RULES` keys it
+ * @returns Whether findings against it are reported
+ */
+export function enabled(name) {
+  return config.rules[name] !== false;
+}
 
 // ============================================================================
 // Scope
@@ -86,7 +155,7 @@ const TODO_FORM = new RegExp(`\\bTODO\\(${config.todoPrefix}-\\d+\\):`);
 const TODO_EXAMPLE = `TODO(${config.todoPrefix === '[A-Z]{2,}' ? 'ABC' : config.todoPrefix}-1234): one line`;
 
 const BANS = config.bans.map((ban) => ({
-  rule: ban.rule,
+  rule: ban.name,
   label: ban.label,
   re: new RegExp(ban.pattern, ban.flags ?? 'i'),
 }));
@@ -95,7 +164,7 @@ const BANS = config.bans.map((ban) => ({
 const EXPORTED =
   /^export\s+(?:default\s+)?(?:async\s+)?(?:abstract\s+)?(?:const|let|var|function|class|interface|type|enum)\s+[A-Za-z_$]/;
 
-const ALLOWED_TAGS = new Set(['@param', '@returns', '@throws', '@deprecated']);
+const ALLOWED_TAGS = new Set(config.allowedTags);
 const CODE_SHAPE =
   /^(import |export |const |let |var |return |await |if \(|for \(|\w+\.\w+\(|\}|\{)/;
 const DECLARATION = /^(export\s+)?(interface\s+\w+|type\s+\w+(<[^>]*>)?\s*=)/;
@@ -205,9 +274,9 @@ function closingDelimiter(line, start, delimiter) {
 
 // ======== Findings ==========================================================
 
-/** Builds one finding against a numbered rule. */
+/** Builds one finding against a named rule. */
 function finding(rule, line, message) {
-  return { rule, line, message };
+  return { rule, number: RULES[rule]?.number, line, message };
 }
 
 // ============================================================================
@@ -228,7 +297,7 @@ function checkHeader(lines) {
 
   if (!lines[top]?.startsWith('//'))
     return {
-      findings: [finding(1, top + 1, 'No `// ====` file header.')],
+      findings: [finding('file-header', top + 1, 'No `// ====` file header.')],
       next: top,
     };
 
@@ -242,7 +311,7 @@ function checkHeader(lines) {
   if (header.length > HEADER_MAX)
     findings.push(
       finding(
-        5,
+        'header-cap',
         top + HEADER_MAX + 1,
         `File header is ${header.length} lines, cap is ${HEADER_MAX}.`,
       ),
@@ -254,7 +323,7 @@ function checkHeader(lines) {
   if (underline !== -1)
     findings.push(
       finding(
-        5,
+        'header-cap',
         top + underline + 1,
         'File header has a subsection. Subsections are banned.',
       ),
@@ -285,21 +354,29 @@ function checkContent(text, lineNo, options = {}) {
 
   if (/\b(TODO|FIXME|XXX|HACK)\b/.test(text)) {
     if (!TODO_FORM.test(text))
-      out.push(finding(16, lineNo, `Marker must be \`${TODO_EXAMPLE}\`.`));
+      out.push(
+        finding('todo-form', lineNo, `Marker must be \`${TODO_EXAMPLE}\`.`),
+      );
     return out;
   }
 
   if (prose && text.length > COMMENT_MAX_CHARS)
     out.push(
       finding(
-        13,
+        'comment-length',
         lineNo,
         `Comment is ${text.length} chars, cap is ${COMMENT_MAX_CHARS}.`,
       ),
     );
 
   if (prose && /\.\s+\S/.test(text))
-    out.push(finding(13, lineNo, 'More than one sentence. One clause only.'));
+    out.push(
+      finding(
+        'comment-length',
+        lineNo,
+        'More than one sentence. One clause only.',
+      ),
+    );
 
   for (const ban of BANS)
     if (ban.re.test(text))
@@ -324,12 +401,16 @@ function checkJsdoc(lines, start, end) {
     if (tag) {
       openTag = tag[1];
       if (!ALLOWED_TAGS.has(openTag))
-        out.push(finding(17, n + 1, `\`${openTag}\` is not an allowed tag.`));
+        out.push(
+          finding('jsdoc-tags', n + 1, `\`${openTag}\` is not an allowed tag.`),
+        );
       continue;
     }
 
     if (openTag && text) {
-      out.push(finding(6, n + 1, `\`${openTag}\` wraps onto a second line.`));
+      out.push(
+        finding('jsdoc-cap', n + 1, `\`${openTag}\` wraps onto a second line.`),
+      );
       continue;
     }
 
@@ -345,7 +426,7 @@ function checkJsdoc(lines, start, end) {
   if (prose > JSDOC_PROSE_MAX)
     out.push(
       finding(
-        6,
+        'jsdoc-cap',
         capLine,
         `JSDoc has ${prose} prose lines, cap is ${JSDOC_PROSE_MAX}.`,
       ),
@@ -364,7 +445,7 @@ function checkExport(lines, n) {
     break;
   }
 
-  return [finding(2, n + 1, 'Exported symbol has no JSDoc.')];
+  return [finding('exported-jsdoc', n + 1, 'Exported symbol has no JSDoc.')];
 }
 
 // ======== Properties ========================================================
@@ -375,20 +456,26 @@ function checkProperty(lines, n) {
 
   if (/^\/\*\*.*\*\/$/.test(prev)) {
     if (/\.\s+\S/.test(body(prev)))
-      return [finding(3, n + 1, 'Property JSDoc has a second sentence.')];
+      return [
+        finding(
+          'property-jsdoc',
+          n + 1,
+          'Property JSDoc has a second sentence.',
+        ),
+      ];
     return [];
   }
 
   if (prev.endsWith('*/'))
     return [
       finding(
-        3,
+        'property-jsdoc',
         n + 1,
         'Property JSDoc must be the single-line `/** … */` form.',
       ),
     ];
 
-  return [finding(3, n + 1, 'Property has no JSDoc.')];
+  return [finding('property-jsdoc', n + 1, 'Property has no JSDoc.')];
 }
 
 // ============================================================================
@@ -440,7 +527,7 @@ export function scan(source) {
       if (code < BANNER_MIN_CODE && n > start)
         out.push(
           finding(
-            18,
+            'section-banner',
             n + 1,
             `Section banner in a ${code}-line file, minimum is ${BANNER_MIN_CODE}.`,
           ),
@@ -451,7 +538,7 @@ export function scan(source) {
     if (trimmed.startsWith('//')) {
       const text = body(raw);
       if (CODE_SHAPE.test(text))
-        out.push(finding(15, n + 1, 'Commented-out code.'));
+        out.push(finding('no-commented-code', n + 1, 'Commented-out code.'));
       else out.push(...checkContent(text, n + 1));
 
       if (run === 0) runStart = n;
@@ -461,7 +548,11 @@ export function scan(source) {
 
     if (run > 1)
       out.push(
-        finding(7, runStart + 1, `Logic comment runs ${run} lines, cap is 1.`),
+        finding(
+          'logic-comment-length',
+          runStart + 1,
+          `Logic comment runs ${run} lines, cap is 1.`,
+        ),
       );
     run = 0;
 
@@ -481,11 +572,12 @@ export function scan(source) {
     )
       out.push(...checkProperty(lines, n));
 
-    // Clamping stops one miscounted line disabling rule 2 for the rest of the file.
+    // Clamping stops one miscounted line disabling exported-jsdoc for the rest of the file.
     depth = Math.max(0, depth + open - close);
   }
 
-  return out.sort((a, b) => a.line - b.line);
+  // Filtering here, rather than at each check, keeps one place a rule can be off.
+  return out.filter((f) => enabled(f.rule)).sort((a, b) => a.line - b.line);
 }
 
 // ============================================================================
@@ -571,7 +663,7 @@ if (
     const found = scan(source);
     total += found.length;
     for (const f of found)
-      console.log(`${file}:${f.line}  [rule ${f.rule}]  ${f.message}`);
+      console.log(`${file}:${f.line}  [${f.rule}]  ${f.message}`);
   }
 
   console.log(`\n${total} finding(s) across ${files.length} file(s).`);

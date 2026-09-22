@@ -1,12 +1,77 @@
 {
-  "_readme": "Every field is optional — anything omitted falls back to the built-in default. `bans` REPLACES the defaults rather than adding to them, so copy the ones you want to keep.",
-
-  "exclude": ["(^|/)node_modules/", "^tmp/", "\\.min\\.[cm]?js$", "\\.d\\.ts$"],
+  "_readme": "Every rule and cap this repository applies. Set a rule to false to switch it off. `bans` replaces the defaults rather than adding to them.",
+  "_rules": {
+    "file-header": "Every file opens with a `// ====` header (rule 1)",
+    "exported-jsdoc": "Every exported symbol has JSDoc (rule 2)",
+    "property-jsdoc": "Every property has JSDoc, of one sentence (rule 3)",
+    "header-cap": "A file header is capped and has no subsections (rule 5)",
+    "jsdoc-cap": "JSDoc prose is capped and its tags do not wrap (rule 6)",
+    "logic-comment-length": "A logic comment is one line (rule 7)",
+    "no-history": "No narrating what the code used to do (rule 9)",
+    "no-conversation": "No referencing the conversation that wrote it (rule 10)",
+    "no-issue-id": "No issue ids in comments (rule 11)",
+    "no-justification": "State what is true, do not argue for it (rule 12)",
+    "comment-length": "One sentence, under the character cap (rule 13)",
+    "no-person": "No first or second person (rule 14)",
+    "no-commented-code": "No commented-out code (rule 15)",
+    "todo-form": "A marker carries an issue id (rule 16)",
+    "jsdoc-tags": "Only the allowed JSDoc tags (rule 17)",
+    "section-banner": "No section banners in a small file (rule 18)"
+  },
+  "rules": {
+    "file-header": true,
+    "exported-jsdoc": true,
+    "property-jsdoc": true,
+    "header-cap": true,
+    "jsdoc-cap": true,
+    "logic-comment-length": true,
+    "no-history": true,
+    "no-conversation": true,
+    "no-issue-id": true,
+    "no-justification": true,
+    "comment-length": true,
+    "no-person": true,
+    "no-commented-code": true,
+    "todo-form": true,
+    "jsdoc-tags": true,
+    "section-banner": true
+  },
+  "governed": "\\.(tsx?|mjs|cjs|js)$",
+  "exclude": ["(^|/)node_modules/", "\\.min\\.[cm]?js$", "\\.d\\.ts$"],
   "headerMax": 8,
   "jsdocProseMax": 4,
   "commentMaxChars": 100,
   "bannerMinCode": 150,
-  "todoPrefix": "SHS",
-  "rulesDoc": "_CONVENTIONS/comments/1-comments.md",
-  "examplesDoc": "_CONVENTIONS/comments/2-examples.md"
+  "todoPrefix": "[A-Z]{2,}",
+  "allowedTags": ["@param", "@returns", "@throws", "@deprecated"],
+  "rulesDoc": "",
+  "examplesDoc": "",
+  "bans": [
+    {
+      "name": "no-history",
+      "label": "history",
+      "pattern": "\\b(previously|used to|no longer|now that|was originally|is now|has been (renamed|moved|replaced|removed))\\b"
+    },
+    {
+      "name": "no-conversation",
+      "label": "conversation",
+      "pattern": "\\b(as requested|per the plan|as discussed|this wave|we decided|phase \\d)\\b"
+    },
+    {
+      "name": "no-issue-id",
+      "label": "issue id",
+      "pattern": "\\b[A-Z]{2,}-\\d+\\b",
+      "flags": ""
+    },
+    {
+      "name": "no-justification",
+      "label": "justification or consequence",
+      "pattern": "\\b(so that|rather than|which is what|the reason|deliberately|on purpose|prevents|defaults to|falls back)\\b"
+    },
+    {
+      "name": "no-person",
+      "label": "first or second person",
+      "pattern": "\\b(we|our|ours|us|you|your)\\b"
+    }
+  ]
 }
