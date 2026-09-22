@@ -134,3 +134,19 @@ describe('build', () => {
     assert.match(doc, /`logic-comment-exception`/);
   });
 });
+
+describe('scope', () => {
+  test('reads which files are governed off the config', () => {
+    const doc = buildWith({ governed: '\\.ts$', exclude: ['^vendor/'] });
+
+    assert.match(doc, /## Scope/);
+    assert.match(doc, /governs every file matching `\\\.ts\$`/);
+    assert.match(doc, /- `\^vendor\/`/);
+  });
+
+  test('says nothing about exclusions when a repo has none', () => {
+    const doc = buildWith({ exclude: [] });
+
+    assert.equal(doc.includes('These paths are outside it'), false);
+  });
+});

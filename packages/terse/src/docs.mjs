@@ -126,9 +126,30 @@ export function build() {
     }
   }
 
-  parts.push(fill(chunk('_outro')), enforcement(on));
+  parts.push(scope(), fill(chunk('_outro')), enforcement(on));
 
   return `${parts.join('\n\n')}\n`;
+}
+
+/** Reads which files the contract covers straight off the config. */
+function scope() {
+  const lines = [
+    '## Scope',
+    '',
+    `The contract governs every file matching \`${config.governed}\`, wherever it ` +
+      'sits in the repository. Tests are included.',
+  ];
+
+  if (config.exclude.length > 0) {
+    lines.push(
+      '',
+      'These paths are outside it:',
+      '',
+      ...config.exclude.map((p) => `- \`${p}\``),
+    );
+  }
+
+  return lines.join('\n');
 }
 
 /** Names which rules a machine catches and which stay review rules. */
