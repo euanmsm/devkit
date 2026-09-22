@@ -1,6 +1,6 @@
 {
   "name": "@euanmsm/secure",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Pre-commit and CI security scanning \u2014 gitleaks, semgrep, lockfile-lint and a config-integrity check",
   "type": "module",
   "license": "MIT",
@@ -22,6 +22,6 @@
     "node": ">=22.11"
   },
   "dependencies": {
-    "@euanmsm/devkit-core": "0.0.0"
+    "@euanmsm/devkit-core": "0.1.0"
   }
 }

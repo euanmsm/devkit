@@ -1,6 +1,6 @@
 {
   "name": "@euanmsm/preflight",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Claude Code PreToolUse hook that blocks an edit until the file's governing convention skill has been loaded",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,6 @@
     "node": ">=22.11"
   },
   "dependencies": {
-    "@euanmsm/devkit-core": "0.0.0"
+    "@euanmsm/devkit-core": "0.1.0"
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@euanmsm/vouch",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Runs lifecycle scripts for named packages while .npmrc's ignore-scripts blocks everyone else",
   "type": "module",
   "license": "MIT",
@@ -24,6 +24,6 @@
     "node": ">=22.11"
   },
   "dependencies": {
-    "@euanmsm/devkit-core": "0.0.0"
+    "@euanmsm/devkit-core": "0.1.0"
   }
 }
