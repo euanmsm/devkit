@@ -15,7 +15,8 @@ mean fixing a thousand comments before you can merge anything.
 
 ```sh
 npm i -D @euanmsm/terse
-npx terse-init
+npx terse-init   # writes .devkit/terse.json
+npx terse-docs   # writes the contract your agents read
 ```
 
 For CI, add the check to your scripts:
@@ -98,6 +99,49 @@ Findings report the name, not a number:
 ```
 src/server.ts:14  [exported-jsdoc]  Exported symbol has no JSDoc.
 ```
+
+## The written contract
+
+A scanner that rejects a comment is only half the job — the agent writing the
+comment needs the rules in front of it. `terse-docs` builds that document from
+your config:
+
+```sh
+npx terse-docs
+```
+
+It assembles one prose chunk per rule, including only the rules you have
+switched on, and writes the result to the path in `rulesDoc` (or
+`.devkit/comment-rules.md` if you have not set one). Caps are written into the
+prose as you configured them — set `commentMaxChars` to 140 and the document
+says "one sentence, one clause, 140 characters".
+
+Switch a rule off and its section disappears. Switch off every rule in a section
+and the heading goes too. The document ends by naming which rules `terse`
+catches mechanically and which remain review rules, so a reader knows what is
+enforced and what is trusted.
+
+This matters because a hand-written contract drifts. An agent told to write a
+file header for a repo that switched `file-header` off wastes its time and adds
+a comment nobody wanted. Generating the document means the instructions and the
+scanner cannot disagree.
+
+Keep it honest in CI:
+
+```json
+{ "scripts": { "check:comment-docs": "terse-docs --check" } }
+```
+
+That fails if the document no longer matches the config, the same way a stale
+lockfile fails.
+
+### Rules with no scanner
+
+Five rules are prose only — `logic-comment-exception`, `what-not-why`,
+`comment-ages-with-code`, `cut-is-deleted` and `migration-exception`. No script
+can judge whether a comment earned its place, so these never produce a finding.
+They exist so the generated contract can carry them, and you can switch them off
+like any other.
 
 ### The caps
 

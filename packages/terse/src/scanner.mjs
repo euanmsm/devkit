@@ -17,9 +17,9 @@ import { compile, loadConfig } from '@euanmsm/devkit-core';
 // ============================================================================
 
 /**
- * Every rule, in the order a reader meets them. The key is the name a finding
- * reports and a config file switches off; `number` ties back to the written
- * contract.
+ * Every rule a scanner can judge, in the order a reader meets them. The key is
+ * the name a finding reports and a config file switches off; `number` ties back
+ * to the written contract.
  */
 export const RULES = {
   'file-header': {
@@ -61,6 +61,36 @@ export const RULES = {
   'section-banner': { number: 18, about: 'No section banners in a small file' },
 };
 
+/**
+ * Rules no scanner can judge. They never produce a finding, and exist so the
+ * generated contract can carry them, or leave them out, alongside the rest.
+ */
+export const GUIDANCE = {
+  'logic-comment-exception': {
+    number: 4,
+    about: 'A `//` comment is written only for the five triggers',
+  },
+  'what-not-why': {
+    number: 8,
+    about: 'A comment says what the code is, right now',
+  },
+  'comment-ages-with-code': {
+    number: 19,
+    about: 'A comment changes with its code, or goes',
+  },
+  'cut-is-deleted': {
+    number: 21,
+    about: 'Cut content is deleted, never relocated',
+  },
+  'migration-exception': {
+    number: 22,
+    about: 'A migration header is exempt from the cap',
+  },
+};
+
+/** Every rule the generated contract can carry, checked or not. */
+export const ALL_RULES = { ...RULES, ...GUIDANCE };
+
 const DEFAULTS = {
   governed: '\\.(tsx?|mjs|cjs|js)$',
   exclude: ['(^|/)node_modules/', '\\.min\\.[cm]?js$', '\\.d\\.ts$'],
@@ -72,7 +102,12 @@ const DEFAULTS = {
   allowedTags: ['@param', '@returns', '@throws', '@deprecated'],
   rulesDoc: '',
   examplesDoc: '',
-  rules: Object.fromEntries(Object.keys(RULES).map((name) => [name, true])),
+  rules: Object.fromEntries(
+    [...Object.keys(RULES), ...Object.keys(GUIDANCE)].map((name) => [
+      name,
+      true,
+    ]),
+  ),
   bans: [
     {
       name: 'no-history',
