@@ -12,7 +12,12 @@ import { config, newFindings, governs } from './scanner.mjs';
 // A missed rename reads a moved file's existing debt as new.
 const RENAMES = '--find-renames=20%';
 
-/** Runs git, throwing an error carrying its stderr. */
+/**
+ * Runs git, throwing an error carrying its stderr.
+ *
+ * @param args - Arguments after `git`
+ * @returns What the command wrote to stdout
+ */
 function run(args) {
   return execFileSync('git', args, {
     encoding: 'utf8',
@@ -21,7 +26,12 @@ function run(args) {
   });
 }
 
-// `git show <base>:<file>` exits non-zero on a file the branch adds.
+/**
+ * Runs git, swallowing the failure `git show` reports on a file the branch adds.
+ *
+ * @param args - Arguments after `git`
+ * @returns What the command wrote to stdout, or null when it failed
+ */
 function git(...args) {
   try {
     return run(args);
@@ -30,12 +40,22 @@ function git(...args) {
   }
 }
 
-/** Names the commit the branch diverged from, or null. */
+/**
+ * Names the commit the branch diverged from.
+ *
+ * @param base - The branch to compare against
+ * @returns The merge base, or null when there is none
+ */
 export function mergeBase(base) {
   return git('merge-base', base, 'HEAD')?.trim() || null;
 }
 
-/** Lists in-scope files the diff touches. */
+/**
+ * Lists in-scope files the diff touches.
+ *
+ * @param from - The commit to diff against
+ * @returns Repo-relative paths the contract governs
+ */
 export function changedFiles(from) {
   return run(['diff', '--name-only', '--diff-filter=d', from, 'HEAD'])
     .split('\n')
@@ -126,7 +146,15 @@ export function addedRangesByFile(from, paths) {
   return out;
 }
 
-/** Finds contract violations one file's diff introduces. */
+/**
+ * Finds contract violations one file's diff introduces.
+ *
+ * @param file - Repo-relative path
+ * @param from - The commit to diff against
+ * @param renames - New path to old path, for a file the branch moved
+ * @param spans - Added line ranges per file, from the batched diff
+ * @returns Findings the diff adds
+ */
 function checkFile(file, from, renames, spans) {
   // A moved file's base version sits under its old path.
   const was = renames.get(file) ?? file;
@@ -140,9 +168,10 @@ function checkFile(file, from, renames, spans) {
   const before = git('show', `${from}:${was}`) ?? '';
   const after = run(['show', `HEAD:${file}`]);
 
-  return newFindings(before, after, span);
+  return newFindings(before, after, span, file);
 }
 
+/** Checks the branch and exits non-zero when it adds a violation. */
 export function main() {
   const base = process.argv[2] || 'origin/main';
   const from = mergeBase(base);

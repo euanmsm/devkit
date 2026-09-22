@@ -129,8 +129,9 @@ is a valid one. `init` refuses to overwrite a config you already have; pass
 | Name                   | What it requires                               |
 | ---------------------- | ---------------------------------------------- |
 | `file-header`          | Every file opens with a `// ====` header       |
-| `exported-jsdoc`       | Every exported symbol has JSDoc                |
+| `exported-jsdoc`       | Every exported symbol and function has JSDoc   |
 | `property-jsdoc`       | Every property has JSDoc, of one sentence      |
+| `jsdoc-tag-coverage`   | JSDoc documents the parameters, return, throws |
 | `header-cap`           | A file header is capped and has no subsections |
 | `jsdoc-cap`            | JSDoc prose is capped and its tags do not wrap |
 | `logic-comment-length` | A logic comment is one line                    |
@@ -145,13 +146,13 @@ is a valid one. `init` refuses to overwrite a config you already have; pass
 | `jsdoc-tags`           | Only the allowed JSDoc tags                    |
 | `section-banner`       | No section banners in a small file             |
 
-The first six are house style — a repo that writes its files differently will
+The first seven are house style — a repo that writes its files differently will
 turn some off. The rest are closer to universal, and most repos keep them.
 
 Findings report the name, not a number:
 
 ```
-src/server.ts:14  [exported-jsdoc]  Exported symbol has no JSDoc.
+src/server.ts:14  [exported-jsdoc]  Declaration has no JSDoc.
 ```
 
 ## The written contract
@@ -209,6 +210,8 @@ like any other.
 | `bannerMinCode`           | 150                                   | File size below which banners are noise |
 | `todoPrefix`              | any 2+ capitals                       | Issue prefix a `TODO()` must carry      |
 | `allowedTags`             | `@param @returns @throws @deprecated` | JSDoc tags that pass                    |
+| `jsdocScope`              | `all`                                 | `all` covers functions, `exported` does not |
+| `jsdocScopeExclude`       | `.test.`, `.spec.`                    | Paths where only exports need JSDoc     |
 | `bans`                    | five phrase sets                      | Phrases the content rules reject        |
 | `rulesDoc`, `examplesDoc` | none                                  | Files the failure message points at     |
 

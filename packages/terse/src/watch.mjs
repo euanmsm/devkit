@@ -15,7 +15,13 @@ import { repoRoot } from '@euanmsm/devkit-core';
 import { addedRanges } from './check.mjs';
 import { config, governs, newFindings } from './scanner.mjs';
 
-/** Runs git, returning null rather than throwing. */
+/**
+ * Runs git, reporting a failure as null.
+ *
+ * @param root - The repository to run in
+ * @param args - Arguments after `git`
+ * @returns What the command wrote to stdout, or null when it failed
+ */
 function git(root, ...args) {
   try {
     return execFileSync('git', args, {
@@ -66,15 +72,27 @@ function findingsFor(root, file) {
   const span = patch ? addedRanges(patch) : null;
   if (span && span.length === 0) return [];
 
-  return newFindings(before, after, span);
+  return newFindings(before, after, span, file);
 }
 
-/** Identifies a finding across runs, so one is reported once. */
+/**
+ * Identifies a finding across runs, so one is reported once.
+ *
+ * @param file - Repo-relative path the finding sits in
+ * @param f - The finding
+ * @returns A key two runs of the same finding share
+ */
 function key(file, f) {
   return `${file}|${f.rule}|${f.message.replace(/\d+/g, '#')}`;
 }
 
-/** Where the set of already-reported findings lives, per session. */
+/**
+ * Says where the set of already-reported findings lives.
+ *
+ * @param root - The repository
+ * @param session - The Claude Code session id
+ * @returns An absolute path
+ */
 function seenPath(root, session) {
   return join(root, '.git', 'terse', `seen-${session ?? 'default'}.json`);
 }
@@ -123,7 +141,12 @@ export function unreported(root, session) {
   return fresh;
 }
 
-/** Builds the note the agent reads. */
+/**
+ * Builds the note the agent reads.
+ *
+ * @param lines - One formatted finding per line
+ * @returns The note's text
+ */
 export function format(lines) {
   const count = lines.length;
   const pointer = config.rulesDoc

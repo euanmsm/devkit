@@ -23,6 +23,7 @@ const ORDER = [
   'header-cap',
   'exported-jsdoc',
   'property-jsdoc',
+  'jsdoc-tag-coverage',
   'jsdoc-cap',
   'jsdoc-tags',
   'logic-comment-exception',
@@ -46,7 +47,13 @@ const ORDER = [
 const SECTIONS = [
   {
     title: 'Coverage',
-    rules: ['file-header', 'header-cap', 'exported-jsdoc', 'property-jsdoc'],
+    rules: [
+      'file-header',
+      'header-cap',
+      'exported-jsdoc',
+      'property-jsdoc',
+      'jsdoc-tag-coverage',
+    ],
   },
   { title: 'JSDoc', rules: ['jsdoc-cap', 'jsdoc-tags'] },
   {
@@ -85,6 +92,7 @@ const SECTIONS = [
  * @returns The same markdown with every `{{cap}}` replaced
  */
 export function fill(text) {
+  const all = config.jsdocScope !== 'exported';
   const values = {
     headerMax: config.headerMax,
     jsdocProseMax: config.jsdocProseMax,
@@ -93,6 +101,10 @@ export function fill(text) {
     todoPrefix: config.todoPrefix === '[A-Z]{2,}' ? 'ABC' : config.todoPrefix,
     allowedTags: config.allowedTags.map((t) => `\`${t}\``).join(', '),
     governed: config.governed,
+    jsdocScopeHeading: all
+      ? 'Every exported symbol and every function carries JSDoc'
+      : 'Every exported symbol carries JSDoc',
+    jsdocScopeBody: all ? scopeAll() : SCOPE_EXPORTED,
   };
 
   return text.replace(/\{\{(\w+)\}\}/g, (whole, key) =>
@@ -100,7 +112,37 @@ export function fill(text) {
   );
 }
 
-/** Reads one chunk, or null when the package ships none by that name. */
+const SCOPE_EXPORTED =
+  'Const, type, interface, function — anything the file exports. A function the ' +
+  'file keeps to itself needs none.';
+
+/**
+ * Builds the scope paragraph when the contract covers unexported functions too.
+ *
+ * @returns One or two paragraphs of markdown
+ */
+function scopeAll() {
+  const text =
+    'Const, type, interface, function — anything the file exports, and every ' +
+    'function besides, so hovering any of them shows what it does. A plain ' +
+    'value the file keeps to itself needs none.';
+
+  if (config.jsdocScopeExclude.length === 0) return text;
+
+  return (
+    `${text}\n\nIn a file matching ` +
+    `${config.jsdocScopeExclude.map((p) => `\`${p}\``).join(' or ')} the ` +
+    '`describe` and `it` names are the documentation, so there this binds only ' +
+    'exported symbols.'
+  );
+}
+
+/**
+ * Reads one chunk.
+ *
+ * @param name - The rule the chunk documents
+ * @returns Its markdown, or null when the package ships none by that name
+ */
 function chunk(name) {
   const path = join(CHUNKS, `${name}.md`);
   return existsSync(path) ? readFileSync(path, 'utf8').trim() : null;
@@ -131,7 +173,11 @@ export function build() {
   return `${parts.join('\n\n')}\n`;
 }
 
-/** Reads which files the contract covers straight off the config. */
+/**
+ * Reads which files the contract covers straight off the config.
+ *
+ * @returns The `Scope` section's markdown
+ */
 function scope() {
   const lines = [
     '## Scope',
@@ -152,7 +198,12 @@ function scope() {
   return lines.join('\n');
 }
 
-/** Names which rules a machine catches and which stay review rules. */
+/**
+ * Names which rules a machine catches and which stay review rules.
+ *
+ * @param on - Every rule this repository switches on
+ * @returns The `Enforcement` section's markdown
+ */
 function enforcement(on) {
   const checked = on.filter((name) => name in RULES);
   const review = on.filter((name) => !(name in RULES));
@@ -176,7 +227,11 @@ function enforcement(on) {
   return lines.join('\n');
 }
 
-/** Where the contract is written, which the failure message also points at. */
+/**
+ * Says where the contract is written, which the failure message points at too.
+ *
+ * @returns A repo-relative path
+ */
 export function target() {
   return config.rulesDoc || DEFAULT_PATH;
 }

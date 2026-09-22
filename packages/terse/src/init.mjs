@@ -41,6 +41,8 @@ export function template() {
     bannerMinCode: config.bannerMinCode,
     todoPrefix: config.todoPrefix,
     allowedTags: config.allowedTags,
+    jsdocScope: config.jsdocScope,
+    jsdocScopeExclude: config.jsdocScopeExclude,
     rulesDoc: '',
     examplesDoc: '',
     bans: config.bans,

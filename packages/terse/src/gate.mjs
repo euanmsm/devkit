@@ -25,7 +25,11 @@ function allow() {
   process.exit(0);
 }
 
-/** Blocks the tool call, showing the agent what to fix. */
+/**
+ * Blocks the tool call, showing the agent what to fix.
+ *
+ * @param reason - What the edit breaks, and how to fix it
+ */
 function deny(reason) {
   process.stdout.write(
     JSON.stringify({
@@ -39,7 +43,13 @@ function deny(reason) {
   process.exit(0);
 }
 
-/** Line number, 1-based, of a character offset in a source. */
+/**
+ * Finds which line a character offset falls on.
+ *
+ * @param source - The whole file
+ * @param offset - A character offset into it
+ * @returns The line number, 1-based
+ */
 function lineAt(source, offset) {
   let line = 1;
   for (let i = 0; i < offset && i < source.length; i++)
@@ -90,6 +100,7 @@ export function applyEdit(source, toolInput) {
  *
  * @param findings - Violations the edit introduces
  * @param path - Repo-relative path of the edited file
+ * @param docs - The config's `rulesDoc` and `examplesDoc`
  * @returns The message the agent reads
  */
 export function format(findings, path, docs = {}) {
@@ -130,7 +141,7 @@ export function main() {
   const edit = applyEdit(source, input.tool_input);
   if (!edit) allow();
 
-  const found = contract.newFindings(source, edit.after, edit.span);
+  const found = contract.newFindings(source, edit.after, edit.span, rel);
   if (found.length === 0) allow();
 
   deny(format(found, rel, contract.config));
