@@ -1,5 +1,13 @@
 # @euanmsm/preflight
 
+## 0.2.0
+
+### Minor Changes
+
+- ef61a5e: Gate any tool call by name with a `tools` block in
+  `.devkit/preflight.json`, so calls that write no file, such as Linear MCP
+  saves, can require a skill too.
+
 ## 0.1.0
 
 ### Minor Changes
