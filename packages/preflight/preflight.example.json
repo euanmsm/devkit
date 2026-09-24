@@ -1,5 +1,12 @@
 {
-  "_readme": "Path-to-skill map. Patterns are JS regexes tested against the repo-relative path. `primary` is first-match-wins, so order matters — most specific first. `universal` rules always add on top.",
+  "_readme": "Skill map. `tools` patterns are JS regexes tested against the tool name, and a match gates the call whatever file it touches. Every other pattern is tested against the repo-relative path. `tools` and `primary` are first-match-wins, so order matters — most specific first. `universal` rules always add on top.",
+
+  "tools": [
+    {
+      "pattern": "^mcp__.*[Ll]inear.*__save_(issue|comment|document|project)$",
+      "skills": ["linear"]
+    }
+  ],
 
   "exclude": [
     "node_modules/",
