@@ -14,20 +14,17 @@ import {
 } from '../src/learn/progress.mjs';
 
 const scratch = () => ({
-  CHEAT_STATE: join(
-    mkdtempSync(join(tmpdir(), 'cheat-test-')),
-    'progress.json',
-  ),
+  CRIB_STATE: join(mkdtempSync(join(tmpdir(), 'crib-test-')), 'progress.json'),
 });
 
 describe('statePath', () => {
-  it('prefers CHEAT_STATE, then XDG_STATE_HOME, then the home directory', () => {
-    equal(statePath({ CHEAT_STATE: '/x/p.json' }), '/x/p.json');
+  it('prefers CRIB_STATE, then XDG_STATE_HOME, then the home directory', () => {
+    equal(statePath({ CRIB_STATE: '/x/p.json' }), '/x/p.json');
     equal(
       statePath({ XDG_STATE_HOME: '/x/state' }),
-      '/x/state/cheat/progress.json',
+      '/x/state/crib/progress.json',
     );
-    match(statePath({}), /\.local\/state\/cheat\/progress\.json$/);
+    match(statePath({}), /\.local\/state\/crib\/progress\.json$/);
   });
 });
 
@@ -52,7 +49,7 @@ describe('marking a lesson read', () => {
   it('writes JSON a person can open', () => {
     const env = scratch();
     markRead(env, 'shell/history', '2026-08-14');
-    match(readFileSync(env.CHEAT_STATE, 'utf8'), /"shell\/history"/);
+    match(readFileSync(env.CRIB_STATE, 'utf8'), /"shell\/history"/);
   });
 });
 
@@ -100,13 +97,13 @@ describe('failing soft', () => {
 
   it('starts fresh from a corrupt file', () => {
     const env = scratch();
-    writeFileSync(env.CHEAT_STATE, '{ not json');
+    writeFileSync(env.CRIB_STATE, '{ not json');
     deepEqual(loadProgress(env), empty);
   });
 
   it('starts fresh from a file of the wrong shape', () => {
     const env = scratch();
-    writeFileSync(env.CHEAT_STATE, JSON.stringify({ read: null }));
+    writeFileSync(env.CRIB_STATE, JSON.stringify({ read: null }));
     deepEqual(loadProgress(env), empty);
   });
 
@@ -114,7 +111,7 @@ describe('failing soft', () => {
   it('reads an older file that has no cards at all', () => {
     const env = scratch();
     writeFileSync(
-      env.CHEAT_STATE,
+      env.CRIB_STATE,
       JSON.stringify({ version: 1, read: { 'shell/history': '2026-08-01' } }),
     );
     deepEqual(loadProgress(env), {
@@ -125,7 +122,7 @@ describe('failing soft', () => {
   });
 
   it('never throws for an unwritable path', () => {
-    const env = { CHEAT_STATE: '/dev/null/nope/progress.json' };
+    const env = { CRIB_STATE: '/dev/null/nope/progress.json' };
     doesNotThrow(() => markRead(env, 'shell/history', '2026-08-14'));
     doesNotThrow(() => recordAnswer(env, 'a/b/c', true, '2026-08-14'));
     deepEqual(loadProgress(env), empty);

@@ -17,7 +17,7 @@ code growth (`plan/architecture.md`, "The scaling contract").
 
 ## What happens on a run
 
-Take `cheat learn shell --line-editor`:
+Take `crib learn shell --line-editor`:
 
 1. `cli.mjs` sees the reserved first word `learn` and hands the rest to
    `learnScreen()` in `index.mjs` — imported lazily, so reference runs never
@@ -49,7 +49,7 @@ Take `cheat learn shell --line-editor`:
 | `session.mjs`   | The question loop: ask, judge, say why, record.          |
 | `ask.mjs`       | Readline, and the test double that replaces it.          |
 | `practice.mjs`  | A run, from either way in — shared with the menus.       |
-| `run.mjs`       | `--practice` and `cheat drill` from the command line.    |
+| `run.mjs`       | `--practice` and `crib drill` from the command line.     |
 | `courses/`      | The content. One directory per course.                   |
 
 ## Practice and drills
@@ -72,20 +72,20 @@ note straight away, and the comeback is the queue, never a retry ten seconds
 later.
 
 Every answer schedules the card — right moves it up a box (1 day, 3, a week, 3
-weeks, 8), wrong drops it to box one. `cheat drill` asks whatever is due, oldest
+weeks, 8), wrong drops it to box one. `crib drill` asks whatever is due, oldest
 first. `scheduler.mjs` is a pure function of `(cards, today)`, so it is
 table-tested and instant.
 
 Sessions are transcripts, not screens: `ask.mjs` uses cooked-mode readline and
 everything stays in scrollback. When one is launched from a menu the keyboard
 has to change hands — `select()` closes its raw-mode reader before presenting,
-readline takes over, and closing it hands stdin back. Ctrl-C leaves cheat
+readline takes over, and closing it hands stdin back. Ctrl-C leaves crib
 entirely, the same as it does in a menu.
 
 ## The markdown subset
 
 Lessons are prose, so they are written in markdown — but a small subset,
-rendered here rather than by a library, so lessons look like the rest of cheat:
+rendered here rather than by a library, so lessons look like the rest of crib:
 `##` headings, paragraphs, `**bold**` and `` `code` `` spans, `-` bullets,
 fenced code blocks, and `---` rules. Nothing else — no links, tables, images,
 nesting or other heading levels. `npm test` renders every lesson and fails on
@@ -95,7 +95,7 @@ If the subset feels tight, simplify the lesson. The parser doesn't grow.
 
 ## Progress
 
-`~/.local/state/cheat/progress.json` (honouring `XDG_STATE_HOME`; `CHEAT_STATE`
+`~/.local/state/crib/progress.json` (honouring `XDG_STATE_HOME`; `CRIB_STATE`
 overrides the whole path). Printing a lesson marks it read — "read" means
 exactly "was printed at least once", which is all that can be known. The file is
 a convenience, not a database: corrupt or missing means starting fresh,

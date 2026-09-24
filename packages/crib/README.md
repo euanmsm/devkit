@@ -1,22 +1,22 @@
-# cheat
+# crib
 
 Quick reference sheets for the CLIs I use daily, in the terminal, without
 opening a browser.
 
 ```
-cheat                    the tools with guides
-cheat gh                 gh's topics
-cheat gh --pr            the pull request commands
-cheat gh --all           the whole gh guide
+crib                    the tools with guides
+crib gh                 gh's topics
+crib gh --pr            the pull request commands
+crib gh --all           the whole gh guide
 ```
 
 ## Using it
 
-At a terminal, `cheat` on its own — or a tool on its own — opens a menu you
-drive with the keyboard:
+At a terminal, `crib` on its own — or a tool on its own — opens a menu you drive
+with the keyboard:
 
 ```
-$ cheat gh
+$ crib gh
 
   gh — GitHub CLI
 
@@ -32,57 +32,57 @@ $ cheat gh
 Enter prints the topic (paged when long) and brings the menu back when you quit
 the pager; typing filters the list the way fzf does; esc walks up a level. Piped
 or redirected output skips the menus entirely and prints the plain lists
-instead, so `cheat gh | cat` and scripts see exactly what they always did — and
+instead, so `crib gh | cat` and scripts see exactly what they always did — and
 `--print` forces those printed screens at a terminal too.
 
 Everything below works identically whether you reached it by menu or by typing.
-The leading `--` is optional, so `cheat gh pr` and `cheat gh --pr` are the same.
-Any prefix that matches one topic works, so `cheat gh --bro` finds `browse`; a
+The leading `--` is optional, so `crib gh pr` and `crib gh --pr` are the same.
+Any prefix that matches one topic works, so `crib gh --bro` finds `browse`; a
 prefix matching several lists them instead of guessing. Several topics at once
-is fine: `cheat gh --pr --issue`.
+is fine: `crib gh --pr --issue`.
 
 Colour is dropped when the output isn't going to a terminal, so
-`cheat gh --pr > notes.txt` gives a clean file. `NO_COLOR=1` turns it off
+`crib gh --pr > notes.txt` gives a clean file. `NO_COLOR=1` turns it off
 anywhere, `FORCE_COLOR=1` turns it back on.
 
 Screens are drawn to fit the window, up to a hundred columns.
-`CHEAT_WIDTH=60 cheat gh --pr` renders at a width you aren't sitting at, which
-is handy for checking a layout.
+`CRIB_WIDTH=60 crib gh --pr` renders at a width you aren't sitting at, which is
+handy for checking a layout.
 
 Anything longer than the terminal is tall goes through your pager, the same way
 `man` does — so it scrolls, and the screen is yours again when you quit. In the
 menus every screen pages, however short, so enter always opens the same view and
 q always brings the menu back — no guessing which you'll get. `NO_PAGER=1` or
 `--no-pager` prints it straight out instead, redirected output is never paged,
-and `CHEAT_PAGER` overrides `PAGER` if you want something different here than
+and `CRIB_PAGER` overrides `PAGER` if you want something different here than
 everywhere else.
 
 Tools covered: `gh`, `git`, `infisical`, `lsof`, `openclaw`, `rg`, `supabase`.
 
 ## Learning
 
-Reference is for things you already know; `cheat learn` is for getting them into
+Reference is for things you already know; `crib learn` is for getting them into
 your head — courses read in the terminal, one lesson at a time, with progress
 remembered between runs.
 
 ```
-cheat learn                       the courses, with your progress
-cheat learn shell                 one course's lessons
-cheat learn shell --line-editor   read a lesson
+crib learn                       the courses, with your progress
+crib learn shell                 one course's lessons
+crib learn shell --line-editor   read a lesson
 ```
 
 The same conventions as the rest: the `--` is optional, prefixes resolve, long
 lessons page. A lesson you've printed is marked ✓ on the menus, remembered in
-`~/.local/state/cheat/progress.json` — delete the file to start over. Each
-lesson ends by pointing at the next one, and at the guide topic that serves you
-after the course is forgotten.
+`~/.local/state/crib/progress.json` — delete the file to start over. Each lesson
+ends by pointing at the next one, and at the guide topic that serves you after
+the course is forgotten.
 
 Reading is half of it. The other half is being asked:
 
 ```
-cheat learn shell --practice   questions on the lessons you've read
-cheat drill                    whatever's due for review today
-cheat drill shell              just that course
+crib learn shell --practice   questions on the lessons you've read
+crib drill                    whatever's due for review today
+crib drill shell              just that course
 ```
 
 Practice is a conversation rather than a screen — a question, your answer, the
@@ -92,7 +92,7 @@ practice revises rather than skipping ahead, and the menus offer it as a
 
 Every answer schedules the question's return: right pushes it further out (a
 day, three, a week, three weeks, eight), wrong brings it back tomorrow.
-`cheat drill` is the two-minute habit that makes the rest stick — it says so in
+`crib drill` is the two-minute habit that makes the rest stick — it says so in
 one line and exits when nothing is due. Sessions need a terminal on both ends;
 piped or redirected, they refuse rather than printing answers next to their
 questions.
@@ -117,7 +117,7 @@ The content is data and the printing is code, and the two don't know about each
 other.
 
 ```
-bin/cheat.mjs        launcher, hands over to src/cli.mjs
+bin/crib.mjs        launcher, hands over to src/cli.mjs
 src/
   types.mjs          what a guide, topic, section and item are
   registry.mjs       which tools exist and how to load one
@@ -148,7 +148,7 @@ line. Flags and notes nest under the command they belong to, which is how they
 read on screen.
 
 Nothing is generated and there is nothing to rebuild. Edit a topic file and the
-next `cheat` run has it.
+next `crib` run has it.
 
 Each directory has its own README going a level deeper: [`src/`](src/README.md)
 for how a run flows through the code, [`src/guides/`](src/guides/README.md) for
@@ -201,8 +201,8 @@ it's short enough to print in full — `lsof` does.
 From the devkit root:
 
 ```bash
-npm test          # every package's tests, cheat's included
-node packages/crib/bin/cheat.mjs gh --pr
+npm test          # every package's tests, crib's included
+node packages/crib/bin/crib.mjs gh --pr
 ```
 
 Plain JavaScript with no build step, so nothing checks a guide's shape except
@@ -211,7 +211,8 @@ readers; `test/guides.test.mjs` is what actually catches a guide that drifts.
 
 ## History
 
-This started as a single 3,000-line bash script, then became TypeScript in its
-own repository, then moved here as plain JavaScript. Both moves were checked the
-same way: render every screen before and after and diff them. Both matched byte
-for byte.
+This started as a single 3,000-line bash script called `cheat`, then became
+TypeScript in its own repository, then moved here as plain JavaScript. It was
+renamed `crib` on the way in, because npm refuses "cheat" in a package name.
+Both moves were checked the same way: render every screen before and after and
+diff them. Both matched byte for byte.

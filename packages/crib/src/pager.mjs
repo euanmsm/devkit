@@ -1,8 +1,8 @@
 // Handing long output to a pager.
 //
-// `cheat openclaw --all` is over nine hundred lines. On a terminal that is
+// `crib openclaw --all` is over nine hundred lines. On a terminal that is
 // worth paging; piped or redirected it must stay exactly as it was, because
-// `cheat gh --pr > notes.txt` and the recorded lsof fixture both depend on it.
+// `crib gh --pr > notes.txt` and the recorded lsof fixture both depend on it.
 
 import { spawn } from 'node:child_process';
 
@@ -37,7 +37,7 @@ const LESS_ARGS = ['-R'];
  * is run exactly as they wrote it.
  */
 export function pagerCommand(env) {
-  const chosen = env['CHEAT_PAGER'] ?? env['PAGER'] ?? 'less';
+  const chosen = env['CRIB_PAGER'] ?? env['PAGER'] ?? 'less';
   const parts = chosen.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return undefined;
   const [command, ...args] = parts;

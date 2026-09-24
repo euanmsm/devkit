@@ -8,7 +8,7 @@
 //
 // Everything here is a pure function of (cards, today) — today is passed in,
 // never read from the clock — so the whole thing is table-testable and
-// `cheat drill` never has to think.
+// `crib drill` never has to think.
 
 /** Days until a card in each box comes back. Index 0 is unused; boxes are 1-5. */
 const INTERVALS = [0, 1, 3, 7, 21, 56];

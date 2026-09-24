@@ -23,7 +23,7 @@ export function renderTopic(paint, layout, topic) {
   );
 }
 
-/** Everything a guide knows — `cheat gh --all`, and all of `cheat lsof`. */
+/** Everything a guide knows — `crib gh --all`, and all of `crib lsof`. */
 export function renderWholeGuide(paint, layout, guide) {
   return [
     ...renderIntro(paint, layout, guide),

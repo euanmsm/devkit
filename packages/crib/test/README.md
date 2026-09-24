@@ -44,7 +44,7 @@ exists.
 
 ## The lsof fixture
 
-`fixtures/lsof.txt` is the entire `cheat lsof` screen, recorded. `cli.test.mjs`
+`fixtures/lsof.txt` is the entire `crib lsof` screen, recorded. `cli.test.mjs`
 compares against it byte for byte, which makes it the tripwire for accidental
 layout changes: a stray space or a moved column fails this one test loudly
 rather than quietly changing all 89 screens.
@@ -53,13 +53,13 @@ rather than quietly changing all 89 screens.
 exercises the full-guide path in a single short screen.
 
 It is recorded at 80 columns, which is what redirected output always uses —
-`cheat` reads `process.stdout.columns` and there isn't one when the output is a
+`crib` reads `process.stdout.columns` and there isn't one when the output is a
 file, so the recording does not depend on the window you made it in.
 
 When you change the layout on purpose, regenerate it:
 
 ```bash
-node bin/cheat.mjs lsof > test/fixtures/lsof.txt
+node bin/crib.mjs lsof > test/fixtures/lsof.txt
 ```
 
 Then read the diff before committing — that diff is the change to every screen,

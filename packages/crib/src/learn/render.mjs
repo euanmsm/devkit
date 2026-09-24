@@ -94,11 +94,11 @@ export function renderLesson(paint, layout, course, lesson, blocks, next) {
       { text, padding: [0, 0, 0, 0] },
     );
   for (const ref of lesson.reference ?? [])
-    pointer('Reference:', `cheat ${ref}`);
+    pointer('Reference:', `crib ${ref}`);
   if (next)
     pointer(
       'Next:',
-      `cheat learn ${course.name} --${next.name}  ` +
+      `crib learn ${course.name} --${next.name}  ` +
         paint(next.description, 'dim'),
     );
   else pointer('Done', paint(`— the last lesson in ${course.name}.`, 'dim'));
@@ -121,7 +121,7 @@ export function renderLesson(paint, layout, course, lesson, blocks, next) {
 export function renderCourseMenu(paint, layout, course, read) {
   return [
     ...renderHeader(paint, layout, course.title),
-    `  ${paint('Lessons, in order:', 'bold')}  cheat learn ${course.name} --<lesson>`,
+    `  ${paint('Lessons, in order:', 'bold')}  crib learn ${course.name} --<lesson>`,
     '',
     ...rows(
       paint,
@@ -136,12 +136,12 @@ export function renderCourseMenu(paint, layout, course, read) {
   ];
 }
 
-/** The `cheat learn` screen: every course, with progress where it exists. */
+/** The `crib learn` screen: every course, with progress where it exists. */
 export function renderCourseList(paint, layout, entries) {
   return [
-    ...renderHeader(paint, layout, 'cheat learn — Courses'),
-    `  ${paint('Usage:', 'bold')}  cheat learn <course>             Lesson menu for a course`,
-    '          cheat learn <course> --<lesson>  Read one lesson',
+    ...renderHeader(paint, layout, 'crib learn — Courses'),
+    `  ${paint('Usage:', 'bold')}  crib learn <course>             Lesson menu for a course`,
+    '          crib learn <course> --<lesson>  Read one lesson',
     '',
     `  ${paint('Courses:', 'bold')}`,
     '',

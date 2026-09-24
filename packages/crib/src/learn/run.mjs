@@ -1,4 +1,4 @@
-// The `--practice` and `cheat drill` entry points.
+// The `--practice` and `crib drill` entry points.
 //
 // Sessions are conversations, so they need a terminal on both ends: piped or
 // redirected, they refuse with one line rather than printing questions next
@@ -21,7 +21,7 @@ import { renderUnknownCourse } from './render.mjs';
  */
 
 const refusal = (what) => ({
-  errors: [`cheat: ${what} needs a terminal`],
+  errors: [`crib: ${what} needs a terminal`],
   code: 1,
 });
 
@@ -31,7 +31,7 @@ function context(paint, env, width) {
   return { ctx: { io, paint, env, width, today: todayISO() }, close };
 }
 
-/** `cheat learn <course> --practice`. */
+/** `crib learn <course> --practice`. */
 export async function practiceRun(courseArg, paint, env, width, isTTY) {
   const resolved = resolveTopic(courses, courseArg);
   if (resolved.status !== 'found')
@@ -56,7 +56,7 @@ export async function practiceRun(courseArg, paint, env, width, isTTY) {
   return { errors: [], code: 0 };
 }
 
-/** `cheat drill [course]`. */
+/** `crib drill [course]`. */
 export async function drillRun(args, paint, env, width, isTTY) {
   let only;
   if (args.length > 0) {

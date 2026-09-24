@@ -1,8 +1,8 @@
 // Which tools have guides, and how to load one.
 //
-// Summaries live here rather than in the guides so that `cheat` with no
+// Summaries live here rather than in the guides so that `crib` with no
 // arguments can print the list without loading any content. Guides are
-// imported lazily, so `cheat gh --pr` reads gh and nothing else.
+// imported lazily, so `crib gh --pr` reads gh and nothing else.
 //
 // To add a tool: create src/guides/<name>/, then add a line here.
 

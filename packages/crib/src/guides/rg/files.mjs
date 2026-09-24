@@ -75,7 +75,7 @@ export const files = {
         },
         {
           kind: 'note',
-          text: 'Over 200 types are built in, and you can add your own — see cheat rg --config.',
+          text: 'Over 200 types are built in, and you can add your own — see crib rg --config.',
         },
       ],
     },

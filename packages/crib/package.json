@@ -10,7 +10,7 @@
     "directory": "packages/crib"
   },
   "bin": {
-    "cheat": "bin/cheat.mjs"
+    "crib": "bin/crib.mjs"
   },
   "files": [
     "bin",

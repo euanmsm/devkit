@@ -147,7 +147,7 @@ provided test passes — shellcheck-shaped puzzles without needing shellcheck.
 Phase 1 ships `shell` complete (lessons only), proving the reading experience.
 Phase 2 adds its exercises plus the recall/choice/typed formats. Phase 3
 (drills) lands with `debug` and `macos` — the card-heavy courses that make a
-daily `cheat drill` worth having — plus the first `drill: true` pass over the gh
+daily `crib drill` worth having — plus the first `drill: true` pass over the gh
 and git guides. Phase 4 (sandboxes) lands with `git`, its best customer, then
 backfills sandboxes into `pipeline`. From there, one course at a time, each
 bringing its guide along.

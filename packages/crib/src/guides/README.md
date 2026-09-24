@@ -9,7 +9,7 @@ project are made here.
 A **guide** is one tool, e.g. `gh`. It has a banner title, a one-line summary,
 an intro of global flags and standing caveats, and a list of topics.
 
-A **topic** is one slice of that tool, reached by `cheat gh --pr`. It has the
+A **topic** is one slice of that tool, reached by `crib gh --pr`. It has the
 name you type, a one-line description for the menu, and one or more sections.
 
 A **section** is a heading plus a list of items. Most topics have exactly one;

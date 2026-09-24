@@ -14,7 +14,7 @@ This is the change that moves them there.
   mixes all three, so you cannot revise the one you just read.
 - Finishing a lesson leads nowhere. The footer points at the next lesson and at
   a guide, and says nothing about the questions on what you just read.
-- `cheat learn shell --line-editor --practice` **silently practises the whole
+- `crib learn shell --line-editor --practice` **silently practises the whole
   course** — `cli.mjs` takes `rest[0]` as the course and drops every lesson
   argument on the floor. A bug, not just a gap.
 - Nothing tells you a lesson has questions until you go looking.
@@ -40,8 +40,8 @@ line.
 Enter reads, `p` practises that lesson. The count appears only once the lesson
 is read, because unread lessons are not in the pool — practice revises, it does
 not run ahead of the prose. The course-wide `practise` row goes away;
-`cheat drill` is what mixes lessons, and it does so on a schedule rather than
-all at once. Practising a whole course in one sitting stays available from the
+`crib drill` is what mixes lessons, and it does so on a schedule rather than all
+at once. Practising a whole course in one sitting stays available from the
 command line, which is the deliberate trade: the menus get the lesson-shaped
 thing, the command line keeps the bulk one.
 
@@ -64,14 +64,14 @@ exactly as it does now. Shown only when the lesson has exercises.
 path carries the same signpost the menus do:
 
 ```
-  Practice:   cheat learn shell --line-editor --practice   7 questions
+  Practice:   crib learn shell --line-editor --practice   7 questions
 ```
 
 ### 4. The command line means what it says
 
-- `cheat learn shell --line-editor --practice` — that lesson's questions
-- `cheat learn shell --line-editor --history --practice` — both lessons'
-- `cheat learn shell --practice` — the whole course, as today
+- `crib learn shell --line-editor --practice` — that lesson's questions
+- `crib learn shell --line-editor --history --practice` — both lessons'
+- `crib learn shell --practice` — the whole course, as today
 - An unrecognised lesson name reports itself rather than quietly widening to the
   course, which is the bug above in its general form.
 
@@ -149,8 +149,8 @@ count.
 ## What this does not do
 
 **It does not put questions inside the lesson text.** While you read, `less`
-owns the screen and cheat is blocked waiting for it, so "embedded" here means
-_at the end of reading_, not _interleaved with the prose_. Going further means
+owns the screen and crib is blocked waiting for it, so "embedded" here means _at
+the end of reading_, not _interleaved with the prose_. Going further means
 dropping the pager for lessons and scrolling them ourselves — a separate change
 with a real cost: losing `less`'s search, half-page jumps and mouse-wheel
 scrolling, and writing a pager to get them back.
@@ -177,15 +177,15 @@ Each step ends green.
 
 ```bash
 npm test && npm run typecheck && npm run format:check
-node bin/cheat.js lsof > /tmp/x && diff /tmp/x test/fixtures/lsof.txt
-node bin/cheat.js learn shell --line-editor --practice | cat   # refuses, exit 1
+node bin/crib.js lsof > /tmp/x && diff /tmp/x test/fixtures/lsof.txt
+node bin/crib.js learn shell --line-editor --practice | cat   # refuses, exit 1
 ```
 
 By hand at a terminal, since the keyboard hand-off is the risk: read a lesson
 from the menu, take the offer, answer a question, land back on the menu; press
 `p` on a read lesson and on an unread one; type a filter and check `p` types
-rather than fires; check `cheat` and `cheat gh` still look exactly as they do
-now, since the row renderer changed underneath them.
+rather than fires; check `crib` and `crib gh` still look exactly as they do now,
+since the row renderer changed underneath them.
 
 The one behaviour to watch for that no test will catch: `less` reads its
 keystrokes straight from the terminal while our stdin holds the piped content,

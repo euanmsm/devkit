@@ -47,7 +47,7 @@ export function rows(paint, layout, entries) {
 export function renderMenu(paint, layout, guide) {
   return [
     '',
-    `  ${paint('Topics:', 'bold')}  cheat ${guide.name} --<topic>`,
+    `  ${paint('Topics:', 'bold')}  crib ${guide.name} --<topic>`,
     '',
     ...rows(paint, layout, [
       ...guide.topics.map((t) => ({ name: t.name, desc: t.description })),
@@ -60,11 +60,11 @@ export function renderMenu(paint, layout, guide) {
 /** The no-argument screen: how to call it, and which tools are covered. */
 export function renderOverview(paint, layout, guides) {
   return [
-    ...renderHeader(paint, layout, 'cheat — CLI Quick Reference'),
-    `  ${paint('Usage:', 'bold')}  cheat <tool>            Topic menu for a tool`,
-    '          cheat <tool> --<topic>  One topic',
-    '          cheat <tool> --all      The whole guide',
-    '          cheat learn             Courses to work through, with progress',
+    ...renderHeader(paint, layout, 'crib — CLI Quick Reference'),
+    `  ${paint('Usage:', 'bold')}  crib <tool>            Topic menu for a tool`,
+    '          crib <tool> --<topic>  One topic',
+    '          crib <tool> --all      The whole guide',
+    '          crib learn             Courses to work through, with progress',
     '',
     `  ${paint('Available guides:', 'bold')}`,
     '',

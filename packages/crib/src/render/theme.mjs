@@ -2,7 +2,7 @@
 
 /**
  * Colour is on for a terminal and off when the output is being piped or
- * redirected, so `cheat gh --pr > notes.txt` gives a clean file. `NO_COLOR=1`
+ * redirected, so `crib gh --pr > notes.txt` gives a clean file. `NO_COLOR=1`
  * forces it off, `FORCE_COLOR=1` forces it back on.
  *
  * https://no-color.org

@@ -1,11 +1,11 @@
 // Arguments in, screens out.
 //
-//   cheat                    the list of tools
-//   cheat gh                 gh's topic menu
-//   cheat gh --pr            one topic (the -- is optional)
-//   cheat gh --pr --issue    several topics
-//   cheat gh --all           the whole guide
-//   cheat learn ...          the learning half — see learn/index.mjs
+//   crib                    the list of tools
+//   crib gh                 gh's topic menu
+//   crib gh --pr            one topic (the -- is optional)
+//   crib gh --pr --issue    several topics
+//   crib gh --all           the whole guide
+//   crib learn ...          the learning half — see learn/index.mjs
 //
 // A screen is built in full before any of it is written, because whether it
 // goes to a pager depends on how many lines it turned out to be.
@@ -50,7 +50,7 @@ import { terminalKeys } from './interact/keys.mjs';
 /** Redirected output has no width of its own, and must not vary with the window. */
 const FILE_WIDTH = 80;
 
-/** Writing to a closed pipe — `cheat gh | head` — is not an error worth a stack trace. */
+/** Writing to a closed pipe — `crib gh | head` — is not an error worth a stack trace. */
 function writeLine(stream, line) {
   try {
     stream.write(line + '\n');
@@ -65,10 +65,10 @@ const FILE_ROWS = 24;
 // sized reports 0 rather than undefined, and a zero here would mean a column of
 // nothing and a pager for every screen.
 const terminalWidth = () =>
-  // CHEAT_WIDTH is an override for looking at a layout you are not sitting at.
+  // CRIB_WIDTH is an override for looking at a layout you are not sitting at.
   // COLUMNS is deliberately ignored — shells export it inconsistently, and it
   // would make redirected output vary from one machine to the next.
-  Number(process.env['CHEAT_WIDTH']) || process.stdout.columns || FILE_WIDTH;
+  Number(process.env['CRIB_WIDTH']) || process.stdout.columns || FILE_WIDTH;
 
 const terminalRows = () => process.stdout.rows || FILE_ROWS;
 
@@ -199,7 +199,7 @@ export async function run(allArgv, io = defaultIo) {
   const guide = await entry.load();
   const layout = layoutFor(guide, io.width);
 
-  // Short guides print in full and have no menu — `cheat lsof`.
+  // Short guides print in full and have no menu — `crib lsof`.
   if (guide.menu === false) {
     write(renderWholeGuide(paint, layout, guide));
     return finish(0);

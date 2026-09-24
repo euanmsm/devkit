@@ -32,14 +32,14 @@ import { afterAnswer } from './scheduler.mjs';
  */
 
 /**
- * ~/.local/state/cheat/progress.json, honouring XDG_STATE_HOME. CHEAT_STATE
+ * ~/.local/state/crib/progress.json, honouring XDG_STATE_HOME. CRIB_STATE
  * overrides the whole path, which is how the tests stay out of a real home.
  */
 export function statePath(env) {
-  const override = env['CHEAT_STATE'];
+  const override = env['CRIB_STATE'];
   if (override) return override;
   const base = env['XDG_STATE_HOME'] || join(homedir(), '.local', 'state');
-  return join(base, 'cheat', 'progress.json');
+  return join(base, 'crib', 'progress.json');
 }
 
 /** A map of the right shape, or an empty one — never a crash. */

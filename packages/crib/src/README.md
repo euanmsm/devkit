@@ -14,9 +14,9 @@ a single guide.
 
 ## What happens on a run
 
-Take `cheat gh --pr`:
+Take `crib gh --pr`:
 
-1. `bin/cheat.mjs` hands `["gh", "--pr"]` to `run()` in `cli.mjs`.
+1. `bin/crib.mjs` hands `["gh", "--pr"]` to `run()` in `cli.mjs`.
 2. `cli.mjs` asks `registry.mjs` whether a tool called `gh` exists. It does, so
    it loads it — and only it. `git`, `supabase` and the rest are never read.
 3. `resolve.mjs` works out that `--pr` means the topic named `pr`.
@@ -57,11 +57,11 @@ Errors still go out line by line through `Io.err`.
 
 **Nothing reads `COLUMNS`.** Width comes from `process.stdout.columns`, falling
 back to 80 whenever the output is not a terminal, so a redirected screen is the
-same on every machine and `test/fixtures/lsof.txt` stays stable. `CHEAT_WIDTH`
+same on every machine and `test/fixtures/lsof.txt` stays stable. `CRIB_WIDTH`
 overrides it for looking at a layout you are not sitting at.
 
 **Guides are imported lazily.** `registry.mjs` holds each tool's name and
 one-line summary directly, and the guide itself behind a function that imports
-it. So `cheat` with no arguments can list every tool without reading any of
-their content, and `cheat gh --pr` reads `gh` alone. Adding another tool does
-not slow down the ones already there.
+it. So `crib` with no arguments can list every tool without reading any of their
+content, and `crib gh --pr` reads `gh` alone. Adding another tool does not slow
+down the ones already there.

@@ -1,6 +1,6 @@
-# Learning in cheat
+# Learning in crib
 
-The plan for a second half of this tool. Today `cheat` answers "what was that
+The plan for a second half of this tool. Today `crib` answers "what was that
 flag again?" — reference, for things you already know. The learning feature
 answers "how do I get this into my head in the first place?" — courses you read
 in the terminal, then practise in it, with the tool remembering what you've
@@ -24,14 +24,14 @@ through it rather than read it once and forget it.
 ## The four pieces
 
 1. **Lessons** — prose you read, organised into courses, rendered like the rest
-   of cheat and paged like `man`. `cheat learn shell --line-editor`.
+   of crib and paged like `man`. `crib learn shell --line-editor`.
 2. **Practice** — short interactive sessions after a lesson: recall cards,
    multiple choice, type-the-command.
-   `cheat learn shell --line-editor --practice`.
+   `crib learn shell --line-editor --practice`.
 3. **Drills** — spaced repetition across everything you've practised, so the
-   commands you don't use daily stay in your head. `cheat drill`, a two-minute
+   commands you don't use daily stay in your head. `crib drill`, a two-minute
    habit.
-4. **Sandboxes** — real exercises in a throwaway directory: cheat builds a repo
+4. **Sandboxes** — real exercises in a throwaway directory: crib builds a repo
    with a lost commit, drops you into a shell there, you rescue it with
    `reflog`, exit, and it checks your work. The reason to build any of this.
 
@@ -94,7 +94,7 @@ check the _outcome_, not the keystrokes.
   flow needing more than a list with a cursor gets redesigned, not a framework.
 - **Answer-checking strictness.** Covered above; it will kill the feature if we
   get it wrong, so the formats are designed so exact matching is rarely needed.
-- **Sandbox safety.** Exercises only ever touch a directory cheat created under
+- **Sandbox safety.** Exercises only ever touch a directory crib created under
   the system temp dir. Nothing reads or writes the user's own files, no
   exceptions, enforced by construction (the checker gets the sandbox path and
   nothing else).
@@ -104,10 +104,10 @@ check the _outcome_, not the keystrokes.
 
 ## Status
 
-Phases 1–3 are built. `cheat learn` reads lessons and remembers what you've
-read; `--practice` and the `practise` menu row ask questions on the lessons
-you've read; `cheat drill` resurfaces what's due on Leitner boxes. The `shell`
-course has two lessons with thirteen exercises between them.
+Phases 1–3 are built. `crib learn` reads lessons and remembers what you've read;
+`--practice` and the `practise` menu row ask questions on the lessons you've
+read; `crib drill` resurfaces what's due on Leitner boxes. The `shell` course
+has two lessons with thirteen exercises between them.
 
 Phase 4 (sandboxes) remains design, and so does the guide-derived drill deck —
 `drill: true` on `Item`, which needs an editorial pass over the guides rather

@@ -71,7 +71,7 @@ which is how you fix a mangled twelve-line command instead of retyping it.
 
 You have none. The rule for what earns one: anything you type more than a few
 times a day, and anything you have ever got wrong. Candidates from your own work
-— `g` for git, `gs` for `git status -sb`, `nrd` for `npm run dev`, `cheat` you
+— `g` for git, `gs` for `git status -sb`, `nrd` for `npm run dev`, `crib` you
 already symlink. Your `nbs` and `supabase-prod` functions show you already know
 how to write these; you just haven't done it for the small stuff.
 
@@ -139,8 +139,8 @@ try.
 genuinely the answer rather than a way to make an error message go away.
 
 **Getting help.** `man`, `--help | rg <thing>`, `type`/`which`/`command -v`, and
-`less` navigation — `/` to search, `n`/`N`, `g`/`G`, `q` — since your own
-`cheat` pages through it.
+`less` navigation — `/` to search, `n`/`N`, `g`/`G`, `q` — since your own `crib`
+pages through it.
 
 ---
 
@@ -184,7 +184,7 @@ Ranked by how often you'd touch them. Everything here is one `brew install`.
 
 ### Tier 1 — you'll use these hourly
 
-- **zoxide** — `z cheat` jumps to `~/Coding/cheat` from anywhere, learning from
+- **zoxide** — `z crib` jumps to `~/Coding/crib` from anywhere, learning from
   the directories you actually visit. Replaces most `cd`.
 - **bat** — `cat` with syntax highlighting, line numbers and paging. Its real
   value is as fzf's preview command, which turns file-picking into
@@ -197,7 +197,7 @@ Ranked by how often you'd touch them. Everything here is one `brew install`.
   `~/.gitconfig` and every `git diff`, `git show` and `git log -p` improves.
 - **eza** — `ls` with colours, icons, a `--tree` mode, and git status per file.
 - **tldr** — the practical examples a man page doesn't give you. Note that this
-  is `cheat`'s nearest relative; worth reading a few of its pages for how they
+  is `crib`'s nearest relative; worth reading a few of its pages for how they
   present things.
 
 ### Tier 2 — real force multipliers, slightly more to learn
@@ -317,7 +317,7 @@ lying to you.
 
 Small, and you'll use them constantly once you know them.
 
-- **`pbcopy` / `pbpaste`** — the clipboard as a pipe. `cheat gh --pr | pbcopy`.
+- **`pbcopy` / `pbpaste`** — the clipboard as a pipe. `crib gh --pr | pbcopy`.
   Probably the most-used item in this section.
 - **`open`** — `open .` in Finder, `open -a "Google Chrome" file.html`,
   `open https://…`.
@@ -355,7 +355,7 @@ The last step is that anything you do three times becomes a script.
 
 ---
 
-## Part 9 — What this means for `cheat`
+## Part 9 — What this means for `crib`
 
 Which of the above deserve a guide in this repo, and in what order. The test is
 whether the tool has more flags than you can hold in your head _and_ you use it
@@ -411,5 +411,4 @@ when you need them.
 ask whether `sort | uniq -c | sort -rn` or an `xargs` does it. Add `watchexec`.
 
 **After that,** add tools as jobs demand them rather than on a schedule, and
-write the `cheat` guide for each one as you adopt it. The guide is how it
-sticks.
+write the `crib` guide for each one as you adopt it. The guide is how it sticks.

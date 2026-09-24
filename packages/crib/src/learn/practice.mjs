@@ -1,6 +1,6 @@
 // Running a practice or drill session, from either way in.
 //
-// The CLI (`--practice`, `cheat drill`) and the menus both land here, so the
+// The CLI (`--practice`, `crib drill`) and the menus both land here, so the
 // two routes cannot drift. This module owns the two things a session itself
 // should not: where the questions came from, and writing the answers down.
 

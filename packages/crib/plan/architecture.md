@@ -95,7 +95,7 @@ which is why their vocabulary is declarative (see `exercises.md`).
 Guides are TS data because items are tabular. Lessons are paragraphs, and
 authoring paragraphs in template strings is miserable, so lesson bodies are
 `.md` files beside the course index. But we render them ourselves — no external
-markdown library, and output must match cheat's theme — so the subset is
+markdown library, and output must match crib's theme — so the subset is
 deliberately small:
 
 - `##` headings (rendered like section titles)
@@ -144,8 +144,8 @@ Two consequences the reference side never had:
 One JSON file, small enough to read whole and rewrite whole on every change:
 
 ```
-~/.local/state/cheat/progress.json     (XDG_STATE_HOME respected,
-                                        CHEAT_STATE overrides for tests)
+~/.local/state/crib/progress.json     (XDG_STATE_HOME respected,
+                                        CRIB_STATE overrides for tests)
 ```
 
 ```json
@@ -206,7 +206,7 @@ Matching the phases in `README.md`:
    form.
 2. **Practice**: `session.mjs`, the recall/choice/typed formats, progress
    recording. First exercises for the shipped course.
-3. **Drills**: `scheduler.mjs`, `cheat drill`, due counts on the learn screens.
+3. **Drills**: `scheduler.mjs`, `crib drill`, due counts on the learn screens.
 4. **Sandboxes**: `sandbox.mjs`, `check.ts`, the first git sandbox exercises.
 
 Each phase ends with the tests above extended to cover it, and nothing in a

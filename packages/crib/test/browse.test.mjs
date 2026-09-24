@@ -37,7 +37,7 @@ async function journey(start, names) {
     },
     err: () => {},
     env: {
-      CHEAT_STATE: join(mkdtempSync(join(tmpdir(), 'cheat-test-')), 'p.json'),
+      CRIB_STATE: join(mkdtempSync(join(tmpdir(), 'crib-test-')), 'p.json'),
     },
     isTTY: true,
     width: 80,
@@ -146,11 +146,11 @@ describe('learn', () => {
 
   it('offers practice under the lessons, once one has been read', async () => {
     let drawn = '';
-    const state = join(mkdtempSync(join(tmpdir(), 'cheat-test-')), 'p.json');
+    const state = join(mkdtempSync(join(tmpdir(), 'crib-test-')), 'p.json');
     const io = {
       present: () => {},
       err: () => {},
-      env: { CHEAT_STATE: state },
+      env: { CRIB_STATE: state },
       isTTY: true,
       width: 80,
       rows: 24,

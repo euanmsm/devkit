@@ -1,7 +1,7 @@
 ---
 name: writing-guides
 description:
-  'Load this BEFORE adding or editing any guide under src/guides/ in the cheat
+  'Load this BEFORE adding or editing any guide under src/guides/ in the crib
   repo — new tool, new topic, or reworking an existing one. Covers the five item
   kinds and how each renders, the flag-over-note density rule that decides
   whether a guide looks right, the leading-space trick that indents a nested
@@ -197,11 +197,11 @@ test. Getting the flags right, and the density right, is on you.
 Rendering is the only real review:
 
 ```bash
-NO_PAGER=1 CHEAT_WIDTH=100 ./bin/cheat.mjs rg            # the menu
-NO_PAGER=1 CHEAT_WIDTH=100 ./bin/cheat.mjs rg --regex    # one topic
-NO_PAGER=1 CHEAT_WIDTH=80  ./bin/cheat.mjs rg --all      # the lot, narrow
+NO_PAGER=1 CRIB_WIDTH=100 ./bin/crib.mjs rg            # the menu
+NO_PAGER=1 CRIB_WIDTH=100 ./bin/crib.mjs rg --regex    # one topic
+NO_PAGER=1 CRIB_WIDTH=80  ./bin/crib.mjs rg --all      # the lot, narrow
 ```
 
-Put a topic of yours beside `cheat gh --gist` — the reference for what dense and
+Put a topic of yours beside `crib gh --gist` — the reference for what dense and
 scannable looks like — and if yours has visibly more grey in it, convert notes
 to flags until it doesn't.

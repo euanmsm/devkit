@@ -1,9 +1,9 @@
 # interact
 
-The menus. At a terminal, `cheat`, `cheat gh` and `cheat learn` open an
-arrow-key selector instead of printing a list of commands to retype; anything
-piped, redirected, given real topic arguments, or run with `--print` takes the
-printing paths untouched.
+The menus. At a terminal, `crib`, `crib gh` and `crib learn` open an arrow-key
+selector instead of printing a list of commands to retype; anything piped,
+redirected, given real topic arguments, or run with `--print` takes the printing
+paths untouched.
 
 ## The one rule here
 
@@ -52,5 +52,5 @@ keypress — size is re-read every draw, and that's deliberate v1 simplicity.
 `scriptedKeys` and `press("down", "return")` in `keys.mjs` drive everything
 without a terminal: `test/select.test.mjs` covers the selector's behaviour,
 `test/browse.test.mjs` scripts whole journeys and asserts the sequence of
-presented screens. The real-PTY run (spawn cheat under `expect`, walk the menus,
+presented screens. The real-PTY run (spawn crib under `expect`, walk the menus,
 check the ✓ appears) is a manual check, not part of `npm test`.

@@ -97,7 +97,7 @@ setup already includes "run a command", the ceiling is genuinely about _checks_
 vocabulary has from day one.
 
 Safety, by construction: setup and check receive a path under the system temp
-dir that cheat just created, and nothing else — no cwd, no home. Setup `run`
+dir that crib just created, and nothing else — no cwd, no home. Setup `run`
 steps execute with the sandbox as cwd and a scrubbed environment (so a git
 exercise isn't warped by the user's global config: `HOME` pointed into the
 sandbox, identity and `init.defaultBranch` provided explicitly). The user's
@@ -131,10 +131,10 @@ tomorrow. Box 5 cards that stay right just repeat at 8 weeks — long enough to 
 cheap, short enough to catch decay. That's the whole algorithm; SM-2 and friends
 tune ease factors per card, and that sophistication isn't worth its complexity
 here. The scheduler is a pure function of (cards, today), so it's table-testable
-and `cheat drill` stays instant.
+and `crib drill` stays instant.
 
 Sandbox cards schedule like any other but cap their box lower (they cost
-minutes, not seconds) and `cheat drill` puts them last in a session, flagged, so
+minutes, not seconds) and `crib drill` puts them last in a session, flagged, so
 a two-minute drill isn't ambushed by a ten-minute repo puzzle. A `--quick` flag
 skips them outright.
 
@@ -148,7 +148,7 @@ Auto-generating from everything would produce a junk deck (nobody needs to drill
 `--help`), so it's opt-in per item: a `drill?: true` field on `Item`, added by
 hand to the ones worth knowing cold. Curating a topic's drill-worthy items takes
 minutes and doubles as an editorial pass on the guide. These cards carry keys
-like `guide:gh/pr/checkout`, live in the same scheduler, and mean `cheat drill`
+like `guide:gh/pr/checkout`, live in the same scheduler, and mean `crib drill`
 covers tools that have no course at all — the reference half feeding the
 learning half directly.
 

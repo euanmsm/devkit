@@ -1,8 +1,8 @@
 // The learn side's entry point: arguments in, one screen out.
 //
-//   cheat learn                       the courses, with progress
-//   cheat learn shell                 one course's lesson menu
-//   cheat learn shell --line-editor   read a lesson (the -- is optional,
+//   crib learn                       the courses, with progress
+//   crib learn shell                 one course's lesson menu
+//   crib learn shell --line-editor   read a lesson (the -- is optional,
 //                                     prefixes resolve, several at once work)
 //
 // Returns a screen rather than printing it, so cli.mjs keeps the single
@@ -52,7 +52,7 @@ const complaint = (errors) => ({
 const readKey = (course, lesson) => `${course.name}/${lesson.name}`;
 
 /**
- * The whole learn side: everything after `cheat learn` in, one screen out.
+ * The whole learn side: everything after `crib learn` in, one screen out.
  * Rendering a lesson is what marks it read — all we can know is that it was
  * printed.
  */

@@ -17,8 +17,8 @@ describe('pagerCommand', () => {
     equal(pagerCommand({}).includes('-X'), false);
   });
 
-  it('prefers CHEAT_PAGER over PAGER', () => {
-    deepEqual(pagerCommand({ PAGER: 'more', CHEAT_PAGER: 'bat' }), ['bat']);
+  it('prefers CRIB_PAGER over PAGER', () => {
+    deepEqual(pagerCommand({ PAGER: 'more', CRIB_PAGER: 'bat' }), ['bat']);
   });
 
   it('leaves a pager someone spelled out themselves alone', () => {

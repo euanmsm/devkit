@@ -3,7 +3,7 @@
 // guides live by.
 
 /**
- * One readable unit, reached by `cheat learn <course> --<name>`.
+ * One readable unit, reached by `crib learn <course> --<name>`.
  *
  * @typedef {object} Lesson
  * @property {string} name Lowercase, no spaces — this is what the user types.

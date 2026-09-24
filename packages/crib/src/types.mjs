@@ -27,7 +27,7 @@
  */
 
 /**
- * One slice of a tool, reached by `cheat <tool> --<name>`.
+ * One slice of a tool, reached by `crib <tool> --<name>`.
  *
  * @typedef {object} Topic
  * @property {string} name Lowercase, no spaces — this is what the user types.
@@ -44,6 +44,6 @@
  * @property {string} summary One line, shown on the no-argument screen.
  * @property {Item[]} intro Global flags and standing caveats, printed above the menu.
  * @property {Topic[]} topics
- * @property {boolean} [menu] Short guides can skip the menu and print in full — `cheat lsof` does.
+ * @property {boolean} [menu] Short guides can skip the menu and print in full — `crib lsof` does.
  *   Defaults to true.
  */

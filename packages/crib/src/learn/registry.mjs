@@ -1,7 +1,7 @@
 // Which courses exist, and how to load one.
 //
 // The same arrangement as ../registry.mjs for guides: names and summaries live
-// here so `cheat learn` can print the list without loading any content, and
+// here so `crib learn` can print the list without loading any content, and
 // each course is imported lazily behind a function.
 //
 // To add a course: create courses/<name>/ with an index.mjs exporting a

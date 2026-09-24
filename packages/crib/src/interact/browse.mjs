@@ -28,7 +28,7 @@ import { select } from './select.mjs';
  */
 
 /**
- * Which menu to open first, from how cheat was invoked.
+ * Which menu to open first, from how crib was invoked.
  *
  * @typedef {(
  *   | { at: "root" }
@@ -120,7 +120,7 @@ async function root(ctx) {
     const picked = await select(
       ctx.paint,
       ctx.sel,
-      'cheat — pick a guide',
+      'crib — pick a guide',
       items,
     );
     if (picked.kind === 'quit') return 'quit';
@@ -153,7 +153,7 @@ async function guideMenu(ctx, guide) {
       );
       continue;
     }
-    // The same lines `cheat gh --pr` prints, so both modes stay identical.
+    // The same lines `crib gh --pr` prints, so both modes stay identical.
     const topic = guide.topics.find((t) => t.name === picked.item.name);
     await ctx.io.present(
       [...renderTopic(ctx.paint, layout, topic), ''],
@@ -187,7 +187,7 @@ async function practiseFromMenu(ctx, course) {
       course,
     );
     if (!outcome.ran) io.write(`\n  ${outcome.because}\n\n`);
-    // Ctrl-C out of a session means out of cheat, the same as it does in a
+    // Ctrl-C out of a session means out of crib, the same as it does in a
     // menu — asking "enter to go back" now would be asking on a closed
     // readline, and would contradict what ctrl-c means everywhere else.
     if (outcome.ran && outcome.cancelled) return 'quit';
@@ -228,7 +228,7 @@ async function courseMenu(ctx) {
     const dueNow = due(progress.cards, todayISO()).length;
     const title =
       dueNow > 0
-        ? `learn — pick a course  ·  ${dueNow} due, run cheat drill`
+        ? `learn — pick a course  ·  ${dueNow} due, run crib drill`
         : 'learn — pick a course';
     const picked = await select(ctx.paint, ctx.sel, title, items);
     if (picked.kind !== 'chosen') return picked.kind;
