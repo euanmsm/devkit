@@ -1,7 +1,8 @@
 # @euanmsm/preflight
 
 A Claude Code hook that blocks an edit until the agent has read the conventions
-governing the file it is about to change.
+governing the file it is about to change — or blocks any other tool call, such
+as an MCP write, until it has read the conventions for that tool.
 
 The problem it solves: an agent that has not opened your conventions writes code
 from memory of how code is usually written, not how _your_ code is written. You
@@ -25,11 +26,19 @@ Then register it as a `PreToolUse` hook in `.claude/settings.json`:
       {
         "matcher": "Edit|Write",
         "hooks": [{ "type": "command", "command": "npx preflight" }]
+      },
+      {
+        "matcher": "mcp__.*[Ll]inear.*__save_(issue|comment|document|project)",
+        "hooks": [{ "type": "command", "command": "npx preflight" }]
       }
     ]
   }
 }
 ```
+
+The second entry is only needed for `tools` rules. The hook only runs for tools
+its `matcher` lets through, so a `tools` rule for a tool no matcher covers never
+fires. Keep the matcher and the rule's pattern in step.
 
 ## The map
 
@@ -52,6 +61,27 @@ most specific pattern first — `^src/api/` above `^src/`, never the other way
 round. `universal` rules always add on top of whichever primary rule matched.
 
 A path no rule names requires nothing, so the gate is opt-in per directory.
+
+### Gating a tool by name
+
+`tools` rules match the tool name instead of a path, so they can gate calls that
+write no file at all:
+
+```json
+{
+  "tools": [
+    {
+      "pattern": "^mcp__.*[Ll]inear.*__save_(issue|comment|document|project)$",
+      "skills": ["linear"]
+    }
+  ]
+}
+```
+
+`tools` is first match wins, like `primary`. When a tool rule matches, its
+skills are the only ones the call needs — path rules are not checked for that
+call. The deny message names the tool when a tool rule matched and the file when
+a path rule did.
 
 ## When it does not block
 
