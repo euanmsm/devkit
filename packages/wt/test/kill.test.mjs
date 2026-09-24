@@ -16,6 +16,7 @@ import {
   lanePorts,
   parseDockerPorts,
   parseLsof,
+  programName,
 } from '../src/kill.mjs';
 import { makeRepo, wt } from './repo.mjs';
 
@@ -221,6 +222,11 @@ describe('kill helpers', () => {
       3100,
       ...Array.from({ length: 10 }, (_, k) => 55320 + k),
     ]);
+  });
+
+  test('names a process by its program, not its thread name', () => {
+    assert.equal(programName('/usr/local/bin/node -e x', 'MainThread'), 'node');
+    assert.equal(programName(undefined, 'next-server'), 'next-server');
   });
 
   test('protects shells, editors and Claude sessions', () => {

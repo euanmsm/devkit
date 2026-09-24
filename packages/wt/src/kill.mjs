@@ -196,6 +196,36 @@ function ancestors() {
 }
 
 /**
+ * Reads the full command line of each process.
+ *
+ * @param pids - Process ids
+ * @returns Each id mapped to its command line
+ */
+function commandLines(pids) {
+  const lines = new Map();
+  if (pids.length === 0) return lines;
+
+  const out = probe('ps', ['-o', 'pid=,args=', '-p', pids.join(',')]) ?? '';
+  for (const line of out.split('\n')) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (m) lines.set(Number(m[1]), m[2]);
+  }
+  return lines;
+}
+
+/**
+ * Names a process by the program its command line runs.
+ *
+ * @param line - The full command line, if known
+ * @param fallback - The short name lsof reported
+ * @returns The program's file name, or the fallback
+ */
+export function programName(line, fallback) {
+  const program = line?.trim().split(/\s+/)[0];
+  return program ? basename(program) : fallback;
+}
+
+/**
  * True for a shell, editor or agent session, judged by name and command line.
  *
  * @param command - The process's short name
@@ -222,18 +252,7 @@ export function folderProcesses(root) {
   if (inside.length === 0) return [];
 
   const skip = ancestors();
-  const lines = new Map();
-  const ps =
-    probe('ps', [
-      '-o',
-      'pid=,command=',
-      '-p',
-      inside.map((p) => p.pid).join(','),
-    ]) ?? '';
-  for (const line of ps.split('\n')) {
-    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
-    if (m) lines.set(Number(m[1]), m[2]);
-  }
+  const lines = commandLines(inside.map((p) => p.pid));
 
   return inside
     .filter(
@@ -358,8 +377,12 @@ export async function stopWorktree(
   const covered = new Set(containers.flatMap((c) => c.ports));
   const targets = new Map();
 
-  for (const holder of portHolders(ports)) {
-    if (DOCKER.test(holder.command)) {
+  const holders = portHolders(ports);
+  const lines = commandLines(holders.map((h) => h.pid));
+
+  for (const holder of holders) {
+    const line = lines.get(holder.pid) ?? '';
+    if (DOCKER.test(holder.command) || DOCKER.test(line)) {
       const loose = holder.ports.filter((p) => !covered.has(p));
       if (!dryRun && loose.length > 0) {
         console.log(
@@ -370,10 +393,8 @@ export async function stopWorktree(
     }
 
     const where = holder.ports.map((p) => `${labels.get(p)} :${p}`).join(', ');
-    targets.set(
-      holder.pid,
-      `${holder.command} (pid ${holder.pid}) on ${where}`,
-    );
+    const name = programName(line, holder.command);
+    targets.set(holder.pid, `${name} (pid ${holder.pid}) on ${where}`);
   }
 
   if (folder) {
