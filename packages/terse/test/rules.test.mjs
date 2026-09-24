@@ -110,8 +110,7 @@ describe('jsdoc scope', () => {
 });
 
 describe('tag coverage', () => {
-  const THROWER =
-    `${HEADER}/** Does a thing. */\nfunction f(): void {\n\tthrow new Error('no');\n}\n`;
+  const THROWER = `${HEADER}/** Does a thing. */\nfunction f(): void {\n\tthrow new Error('no');\n}\n`;
 
   test('asks for a @throws by default', () => {
     assert.deepEqual(scanFile({}, THROWER), [
@@ -161,5 +160,87 @@ describe('rule switches', () => {
 
   test('ignores a name no rule uses rather than failing the scan', () => {
     assert.equal(scanWith({ 'no-such-rule': false }).length, 4);
+  });
+});
+
+const RULE = `// ${'='.repeat(76)}`;
+const BANNER = `${RULE}\n// Helpers\n${RULE}\n`;
+const PADDING = Array.from(
+  { length: 200 },
+  (_, i) => `const p${i} = ${i};`,
+).join('\n');
+
+const SHORT = `${HEADER}const a = 1;\n\n${BANNER}\nconst b = 2;\n`;
+const LONG = `${HEADER}const a = 1;\n\n${BANNER}\n${PADDING}\n`;
+
+describe('section banners', () => {
+  test('flags a banner in a short file by default', () => {
+    assert.equal(scanFile({}, SHORT).length, 2);
+  });
+
+  test('leaves one alone in a long file by default', () => {
+    assert.deepEqual(scanFile({}, LONG), []);
+  });
+
+  test('leaves a short file alone when a repo welcomes banners', () => {
+    assert.deepEqual(scanFile({ sectionBanners: 'always' }, SHORT), []);
+  });
+
+  test('flags a long file when a repo bans banners outright', () => {
+    const found = scanFile({ sectionBanners: 'off' }, LONG);
+
+    assert.deepEqual(found, [
+      'Section banner inside a file.',
+      'Section banner inside a file.',
+    ]);
+  });
+
+  test('spares the file header even when banners are banned', () => {
+    const doc = scanFile({ sectionBanners: 'off' }, `${HEADER}const a = 1;\n`);
+
+    assert.deepEqual(doc, []);
+  });
+
+  test('falls back to the default when the value names no mode', () => {
+    assert.equal(scanFile({ sectionBanners: 'yes' }, SHORT).length, 2);
+  });
+});
+
+/**
+ * Runs `newFindings` over two sources inside a repo configured the given way.
+ *
+ * @param config - The whole `.devkit/terse.json`
+ * @param before - The file as it stood
+ * @param after - The file after the edit
+ * @returns Messages of the findings the edit introduced
+ */
+function newFindingsWith(config, before, after) {
+  const root = mkdtempSync(join(tmpdir(), 'terse-'));
+  mkdirSync(join(root, '.git'));
+  mkdirSync(join(root, '.devkit'));
+  writeFileSync(join(root, '.devkit', 'terse.json'), JSON.stringify(config));
+
+  const script =
+    `const m = await import(${JSON.stringify(SCANNER)});` +
+    `console.log(JSON.stringify(m.newFindings(${JSON.stringify(before)}, ${JSON.stringify(after)}).map((f) => f.message)));`;
+
+  return JSON.parse(
+    execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: root,
+      encoding: 'utf8',
+    }),
+  );
+}
+
+describe('a banner message that moves with the file', () => {
+  test('is not a new finding merely because the file grew', () => {
+    const grown = Array.from({ length: 40 }, (_, i) => `const g${i} = ${i};`);
+    const before = `${HEADER}const a = 1;\n${BANNER}const b = 2;\n`;
+    const after = `${before}${grown.join('\n')}\n`;
+
+    assert.deepEqual(
+      newFindingsWith({ sectionBanners: 'large-files' }, before, after),
+      [],
+    );
   });
 });

@@ -39,6 +39,7 @@ export function template() {
     jsdocProseMax: config.jsdocProseMax,
     commentMaxChars: config.commentMaxChars,
     bannerMinCode: config.bannerMinCode,
+    sectionBanners: config.sectionBanners,
     todoPrefix: config.todoPrefix,
     allowedTags: config.allowedTags,
     jsdocScope: config.jsdocScope,

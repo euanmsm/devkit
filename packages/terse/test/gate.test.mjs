@@ -61,7 +61,10 @@ describe('the hook end to end', () => {
   });
 
   test('allows the same edit to a test file', () => {
-    assert.equal(hook('a.test.ts', `${HEADER}\nfunction local(): void {}\n`), '');
+    assert.equal(
+      hook('a.test.ts', `${HEADER}\nfunction local(): void {}\n`),
+      '',
+    );
   });
 
   test('denies an edit whose JSDoc documents no parameter', () => {

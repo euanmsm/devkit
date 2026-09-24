@@ -46,6 +46,7 @@ describe('template', () => {
       'jsdocProseMax',
       'commentMaxChars',
       'bannerMinCode',
+      'sectionBanners',
       'todoPrefix',
       'allowedTags',
       'bans',

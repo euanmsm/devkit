@@ -200,20 +200,25 @@ like any other.
 
 ### The caps
 
-| Setting                   | Default                               | Controls                                |
-| ------------------------- | ------------------------------------- | --------------------------------------- |
-| `governed`                | `.ts .tsx .js .mjs .cjs`              | Which extensions are covered            |
-| `exclude`                 | node_modules, `.min.js`, `.d.ts`      | Paths skipped entirely                  |
-| `headerMax`               | 8                                     | Longest file header, in lines           |
-| `jsdocProseMax`           | 4                                     | Longest prose run in one JSDoc block    |
-| `commentMaxChars`         | 100                                   | Longest comment                         |
-| `bannerMinCode`           | 150                                   | File size below which banners are noise |
-| `todoPrefix`              | any 2+ capitals                       | Issue prefix a `TODO()` must carry      |
-| `allowedTags`             | `@param @returns @throws @deprecated` | JSDoc tags that pass                    |
+| Setting                   | Default                               | Controls                                    |
+| ------------------------- | ------------------------------------- | ------------------------------------------- |
+| `governed`                | `.ts .tsx .js .mjs .cjs`              | Which extensions are covered                |
+| `exclude`                 | node_modules, `.min.js`, `.d.ts`      | Paths skipped entirely                      |
+| `headerMax`               | 8                                     | Longest file header, in lines               |
+| `jsdocProseMax`           | 4                                     | Longest prose run in one JSDoc block        |
+| `commentMaxChars`         | 100                                   | Longest comment                             |
+| `bannerMinCode`           | 150                                   | File size below which banners are noise     |
+| `sectionBanners`          | `large-files`                         | `always` welcomes banners, `off` bans them  |
+| `todoPrefix`              | any 2+ capitals                       | Issue prefix a `TODO()` must carry          |
+| `allowedTags`             | `@param @returns @throws @deprecated` | JSDoc tags that pass                        |
 | `jsdocScope`              | `all`                                 | `all` covers functions, `exported` does not |
-| `jsdocScopeExclude`       | `.test.`, `.spec.`                    | Paths where only exports need JSDoc     |
-| `bans`                    | five phrase sets                      | Phrases the content rules reject        |
-| `rulesDoc`, `examplesDoc` | none                                  | Files the failure message points at     |
+| `jsdocScopeExclude`       | `.test.`, `.spec.`                    | Paths where only exports need JSDoc         |
+| `bans`                    | five phrase sets                      | Phrases the content rules reject            |
+| `rulesDoc`, `examplesDoc` | none                                  | Files the failure message points at         |
+
+`sectionBanners` set to `always` is not the same as switching `section-banner`
+off. Off drops banners from the generated contract entirely; `always` keeps a
+section there saying what a banner should separate.
 
 `bans` **replaces** the defaults rather than adding to them, which is why `init`
 writes all five out in full — edit the list rather than rebuilding it.
