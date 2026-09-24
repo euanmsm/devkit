@@ -15,8 +15,7 @@
       "app": 3000,
       "storybook": 6006
     },
-    "offsetEnv": null,
-    "killOnDelete": ["app"]
+    "offsetEnv": null
   },
 
   "hooks": {

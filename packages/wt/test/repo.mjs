@@ -109,6 +109,8 @@ export function wt(cwd, args, extraPath = []) {
     dirname(process.execPath),
     '/usr/bin',
     '/bin',
+    '/usr/sbin',
+    '/sbin',
   ].join(':');
   const env = { ...process.env, PATH };
   delete env.WORKTREE_PORT_OFFSET;

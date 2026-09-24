@@ -16,11 +16,13 @@ export const LOCAL_NAME = 'wt.local.json';
 
 const OPEN_MODES = ['window', 'workspace', 'none'];
 
+const SECTIONS = ['env', 'ports', 'hooks', 'supabase'];
+
 const DEFAULTS = {
   dir: '../{repo}-wt',
   remote: 'origin',
   env: { copy: ['.env*'], maxDepth: 3 },
-  ports: { step: 100, services: {}, offsetEnv: null, killOnDelete: [] },
+  ports: { step: 100, services: {}, offsetEnv: null },
   hooks: { postCreate: [], preDelete: [] },
   open: 'window',
   workspaceFile: null,
@@ -54,7 +56,14 @@ export function loadWtConfig(root, main = root) {
   const local = loadConfig(LOCAL_NAME, {}, main) ?? {};
   const config = merge(shared, local);
 
-  const problems = validate(config, { ...shared, ...local });
+  const raw = { ...shared, ...local };
+  for (const section of SECTIONS) {
+    if (shared[section] || local[section]) {
+      raw[section] = { ...shared[section], ...local[section] };
+    }
+  }
+
+  const problems = validate(config, raw);
   if (problems.length > 0) {
     throw new Error(
       `.devkit/${CONFIG_NAME} is not usable:\n${problems.map((p) => `  - ${p}`).join('\n')}`,
@@ -186,6 +195,17 @@ export function validate(config, raw = {}) {
   for (const key of Object.keys(strip(raw))) {
     if (!(key in DEFAULTS)) problems.push(`"${key}" is not a known setting`);
   }
+  for (const section of SECTIONS) {
+    const known =
+      section === 'supabase' ? SUPABASE_DEFAULTS : DEFAULTS[section];
+    const given = raw[section];
+    if (typeof given !== 'object' || given === null) continue;
+
+    for (const key of Object.keys(strip(given))) {
+      if (!(key in known))
+        problems.push(`"${section}.${key}" is not a known setting`);
+    }
+  }
 
   if (typeof config.dir !== 'string' || !config.dir) bad('dir', 'a path');
   if (typeof config.remote !== 'string') bad('remote', 'a remote name');
@@ -216,15 +236,6 @@ export function validate(config, raw = {}) {
   } else {
     for (const [name, port] of Object.entries(ports.services)) {
       if (!isPort(port)) bad(`ports.services.${name}`, 'a port number');
-    }
-  }
-  if (!isStrings(ports.killOnDelete)) {
-    bad('ports.killOnDelete', 'a list of service names');
-  } else {
-    for (const name of ports.killOnDelete) {
-      if (!(name in (ports.services ?? {}))) {
-        bad(`ports.killOnDelete`, `names from ports.services, not "${name}"`);
-      }
     }
   }
   if (ports.offsetEnv !== null) {

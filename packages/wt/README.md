@@ -58,9 +58,39 @@ On create, `wt`:
 5. boots, migrates and stops the Supabase stack;
 6. opens the worktree.
 
-On delete, it runs the `preDelete` hooks, stops the Supabase stack and deletes
-its data, stops anything still listening on the `killOnDelete` ports, removes
-the workspace entry, then the folder and the branch.
+On delete, it runs the `preDelete` hooks, stops everything `wt kill --all`
+would, deletes the Supabase data, removes the workspace entry, then the folder
+and the branch.
+
+## Stopping a worktree
+
+```sh
+wt kill recall-ui             # stop what recall-ui is running
+wt kill                       # the same, for the worktree you are in
+wt kill --every               # every worktree
+wt kill recall-ui --all       # also stop processes running inside the folder
+wt kill recall-ui --dry-run   # list what would be stopped, stop nothing
+```
+
+`wt kill` leaves the worktree, its branch and its database data in place. It
+stops:
+
+- whatever is listening on the worktree's ports, meaning every service in
+  `ports.services` moved by its slot, plus its Supabase range;
+- its Supabase stack, stopped with its data kept, so `wt supabase start` brings
+  it back as it was;
+- any other Docker container publishing one of those ports.
+
+You don't list what to stop. Whatever holds the worktree's ports is stopped,
+however it was started. Something with no port, such as `vitest --watch`, is
+only stopped with `--all`, which also stops any process whose working folder is
+inside the worktree. `--all` never stops shells, editors, Claude sessions, or
+the command you ran `wt` from.
+
+Each process gets `SIGTERM`, then `SIGKILL` if it is still running five seconds
+later. The main checkout is never touched, and neither is any port it uses.
+Docker's own process, which holds every port a container publishes, is never
+signalled either: those ports are freed by stopping the container.
 
 ## Ports in your scripts
 
@@ -101,8 +131,7 @@ it is laid over the tracked file, one section at a time.
     "offsetEnv": {
       "name": "WORKTREE_PORT_OFFSET",
       "files": ["apps/main/.env.local"]
-    },
-    "killOnDelete": ["app"]
+    }
   },
   "hooks": {
     "postCreate": [
@@ -116,20 +145,19 @@ it is laid over the tracked file, one section at a time.
 }
 ```
 
-| Setting              | Default          | What it controls                                                                   |
-| -------------------- | ---------------- | ---------------------------------------------------------------------------------- |
-| `dir`                | `"../{repo}-wt"` | Where worktrees go, relative to the main checkout. `{repo}` is its folder name     |
-| `remote`             | `"origin"`       | The remote checked for a branch that is not local                                  |
-| `env.copy`           | `[".env*"]`      | File-name patterns copied from the main checkout. Tracked files are never copied   |
-| `env.maxDepth`       | `3`              | How many folders deep to look for them                                             |
-| `ports.step`         | `100`            | How far each slot moves every port                                                 |
-| `ports.services`     | `{}`             | Each service's port in the main checkout                                           |
-| `ports.offsetEnv`    | `null`           | A variable written into `files` on create, and read back as a hand-set offset      |
-| `ports.killOnDelete` | `[]`             | Services whose leftover server is stopped when a worktree is deleted               |
-| `hooks.postCreate`   | `[]`             | Commands run in a new worktree, in order                                           |
-| `hooks.preDelete`    | `[]`             | Commands run in a worktree before it is deleted                                    |
-| `open`               | `"window"`       | `window` opens a new VS Code window, `workspace` adds to a saved workspace, `none` |
-| `workspaceFile`      | `null`           | The `.code-workspace` file used when `open` is `workspace`                         |
+| Setting            | Default          | What it controls                                                                   |
+| ------------------ | ---------------- | ---------------------------------------------------------------------------------- |
+| `dir`              | `"../{repo}-wt"` | Where worktrees go, relative to the main checkout. `{repo}` is its folder name     |
+| `remote`           | `"origin"`       | The remote checked for a branch that is not local                                  |
+| `env.copy`         | `[".env*"]`      | File-name patterns copied from the main checkout. Tracked files are never copied   |
+| `env.maxDepth`     | `3`              | How many folders deep to look for them                                             |
+| `ports.step`       | `100`            | How far each slot moves every port                                                 |
+| `ports.services`   | `{}`             | Each service's port in the main checkout                                           |
+| `ports.offsetEnv`  | `null`           | A variable written into `files` on create, and read back as a hand-set offset      |
+| `hooks.postCreate` | `[]`             | Commands run in a new worktree, in order                                           |
+| `hooks.preDelete`  | `[]`             | Commands run in a worktree before it is deleted                                    |
+| `open`             | `"window"`       | `window` opens a new VS Code window, `workspace` adds to a saved workspace, `none` |
+| `workspaceFile`    | `null`           | The `.code-workspace` file used when `open` is `workspace`                         |
 
 Hooks run with `WT_NAME`, `WT_PATH`, `WT_BRANCH`, `WT_BASE`, `WT_SLOT` and
 `WT_OFFSET` set. A hook written as a plain string is required: if it fails, `wt`

@@ -142,6 +142,19 @@ export async function provision(worktree, { mode, slot, resetCommand }) {
 }
 
 /**
+ * Stops a worktree's stack when its config carries this slot's project id.
+ *
+ * @param worktree - The worktree's root
+ * @param slot - The slot the worktree runs in
+ * @param dropData - True to delete the Docker volumes as well
+ * @returns Whether a stack was found and stopped
+ */
+export async function stopStack(worktree, slot, dropData) {
+  if (!ownProjectId(worktree, slot) || !onPath('supabase')) return false;
+  return stop(worktree, dropData);
+}
+
+/**
  * Stops a worktree's stack and deletes its Docker volumes.
  *
  * @param worktree - The worktree's root

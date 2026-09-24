@@ -11,6 +11,7 @@ import { parseArgs } from 'node:util';
 import { repoRoot } from '@euanmsm/devkit-core';
 import { CONFIG_NAME, LOCAL_NAME, loadWtConfig } from './config.mjs';
 import { create } from './create.mjs';
+import { kill } from './kill.mjs';
 import { list } from './list.mjs';
 import { port } from './ports.mjs';
 import { remove } from './remove.mjs';
@@ -48,6 +49,17 @@ Create
 Delete
   wt -d <name>                     Delete the worktree and its branch
   wt -d <name> --save-branch       Delete the worktree, keep the branch
+
+Stop
+  wt kill [<name>]                 Stop what a worktree runs: servers on its ports,
+                                   its Supabase stack (data kept), containers on its ports
+  wt kill --every                  Do that for every worktree
+  --all                            Also stop processes running inside the folder,
+                                   except shells, editors and Claude sessions
+  --dry-run                        List what would be stopped, stop nothing
+
+  With no name, wt kill stops the worktree it is run from. The main checkout
+  is never touched.
 
 Other
   wt list                          Every checkout with its slot and path
@@ -146,6 +158,9 @@ export async function run(argv) {
       'keep-supabase': { type: 'boolean' },
       'no-supabase': { type: 'boolean' },
       force: { type: 'boolean' },
+      every: { type: 'boolean' },
+      all: { type: 'boolean' },
+      'dry-run': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -159,6 +174,20 @@ export async function run(argv) {
     return 0;
   }
   if (positionals[0] === 'init') return init(Boolean(values.force));
+  if (positionals[0] === 'kill') {
+    if (positionals.length > 2)
+      throw new Error('Give at most one worktree name.');
+    if (values.every && positionals[1]) {
+      throw new Error('Give a worktree name or --every, not both.');
+    }
+    await kill({
+      name: positionals[1],
+      every: Boolean(values.every),
+      all: Boolean(values.all),
+      dryRun: Boolean(values['dry-run']),
+    });
+    return 0;
+  }
   if (positionals.length !== 1)
     throw new Error('Give exactly one worktree name. See wt --help.');
 

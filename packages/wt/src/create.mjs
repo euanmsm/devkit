@@ -35,7 +35,14 @@ import { provision } from './supabase/stack.mjs';
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** Names taken by wt's own commands. */
-export const RESERVED = new Set(['list', 'port', 'supabase', 'init', 'help']);
+export const RESERVED = new Set([
+  'list',
+  'port',
+  'kill',
+  'supabase',
+  'init',
+  'help',
+]);
 
 /**
  * Checks a worktree name can be used as a single folder.

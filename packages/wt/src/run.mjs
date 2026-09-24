@@ -79,18 +79,3 @@ export async function runHooks(hooks, cwd, env) {
 export function onPath(program) {
   return !spawnSync(program, ['--version'], { stdio: 'ignore' }).error;
 }
-
-/**
- * Lists the process ids listening on a TCP port.
- *
- * @param port - The port
- * @returns The listening process ids, empty when none or `lsof` is missing
- */
-export function listeners(port) {
-  const result = spawnSync('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], {
-    encoding: 'utf8',
-  });
-  if (result.error || !result.stdout) return [];
-
-  return result.stdout.split('\n').map(Number).filter(Boolean);
-}

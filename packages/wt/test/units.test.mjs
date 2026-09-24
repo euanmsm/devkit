@@ -61,7 +61,7 @@ describe('config', () => {
 
     assert.match(problems, /"workspaceFile" must be set/);
     assert.match(problems, /"ports.services.app" must be a port/);
-    assert.match(problems, /not "web"/);
+    assert.match(problems, /"ports.killOnDelete" is not a known setting/);
     assert.match(problems, /"supabase.dir"/);
     assert.match(problems, /"hooks.postCreate"/);
   });
