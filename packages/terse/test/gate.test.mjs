@@ -8,8 +8,79 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { applyEdit, format } from '../src/gate.mjs';
+
+const BIN = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'bin',
+  'terse-gate.mjs',
+);
+
+const HEADER =
+  '// ============================================================================\n' +
+  '// Fixture\n' +
+  '// ============================================================================\n';
+
+/**
+ * Runs the hook over a Write of the given contents, in a throwaway repository.
+ *
+ * @param name - Repo-relative path the write targets
+ * @param contents - What the edit writes
+ * @returns What the hook wrote to stdout, empty when it allowed the edit
+ */
+function hook(name, contents) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'terse-')));
+  mkdirSync(join(root, '.git'));
+  mkdirSync(join(root, '.devkit'));
+  writeFileSync(join(root, '.devkit', 'terse.json'), '{}');
+
+  const payload = JSON.stringify({
+    tool_input: { file_path: join(root, name), content: contents },
+  });
+
+  return execFileSync(process.execPath, [BIN], {
+    cwd: root,
+    input: payload,
+    encoding: 'utf8',
+  });
+}
+
+describe('the hook end to end', () => {
+  test('denies an edit adding an undocumented local function', () => {
+    const out = hook('a.ts', `${HEADER}\nfunction local(): void {}\n`);
+
+    assert.match(out, /"permissionDecision":"deny"/);
+    assert.match(out, /Declaration has no JSDoc/);
+  });
+
+  test('allows the same edit to a test file', () => {
+    assert.equal(hook('a.test.ts', `${HEADER}\nfunction local(): void {}\n`), '');
+  });
+
+  test('denies an edit whose JSDoc documents no parameter', () => {
+    const out = hook(
+      'a.ts',
+      `${HEADER}\n/** Does a thing. */\nexport function f(id: string): void {}\n`,
+    );
+
+    assert.match(out, /has no @param/);
+  });
+
+  test('allows an edit whose JSDoc is complete', () => {
+    const complete =
+      `${HEADER}\n/**\n * Does a thing.\n *\n * @param id - The id\n */\n` +
+      'export function f(id: string): void {}\n';
+
+    assert.equal(hook('a.ts', complete), '');
+  });
+});
 
 describe('applyEdit', () => {
   test('replaces the first occurrence only', () => {

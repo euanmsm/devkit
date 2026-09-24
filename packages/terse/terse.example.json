@@ -4,6 +4,7 @@
     "file-header": "Every file opens with a `// ====` header (rule 1)",
     "exported-jsdoc": "Every exported symbol has JSDoc (rule 2)",
     "property-jsdoc": "Every property has JSDoc, of one sentence (rule 3)",
+    "jsdoc-tag-coverage": "JSDoc documents every parameter, the return and the throws (rule 20)",
     "header-cap": "A file header is capped and has no subsections (rule 5)",
     "jsdoc-cap": "JSDoc prose is capped and its tags do not wrap (rule 6)",
     "logic-comment-length": "A logic comment is one line (rule 7)",
@@ -22,6 +23,7 @@
     "file-header": true,
     "exported-jsdoc": true,
     "property-jsdoc": true,
+    "jsdoc-tag-coverage": true,
     "header-cap": true,
     "jsdoc-cap": true,
     "logic-comment-length": true,
@@ -37,13 +39,27 @@
     "section-banner": true
   },
   "governed": "\\.(tsx?|mjs|cjs|js)$",
-  "exclude": ["(^|/)node_modules/", "\\.min\\.[cm]?js$", "\\.d\\.ts$"],
+  "exclude": [
+    "(^|/)node_modules/",
+    "\\.min\\.[cm]?js$",
+    "\\.d\\.ts$"
+  ],
   "headerMax": 8,
   "jsdocProseMax": 4,
   "commentMaxChars": 100,
   "bannerMinCode": 150,
   "todoPrefix": "[A-Z]{2,}",
-  "allowedTags": ["@param", "@returns", "@throws", "@deprecated"],
+  "allowedTags": [
+    "@param",
+    "@returns",
+    "@throws",
+    "@deprecated"
+  ],
+  "jsdocScope": "all",
+  "jsdocScopeExclude": [
+    "\\.test\\.",
+    "\\.spec\\."
+  ],
   "rulesDoc": "",
   "examplesDoc": "",
   "bans": [

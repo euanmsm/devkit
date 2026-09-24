@@ -98,11 +98,27 @@ describe('build', () => {
         'header-cap': false,
         'exported-jsdoc': false,
         'property-jsdoc': false,
+        'jsdoc-tag-coverage': false,
       },
     });
 
     assert.equal(doc.includes('## Coverage'), false);
     assert.match(doc, /## Style/);
+  });
+
+  test('carries the tag-coverage rule', () => {
+    assert.match(build(), /every parameter, the return and the throws/i);
+  });
+
+  test('says functions are covered when the scope is every function', () => {
+    assert.match(build(), /and every\s+function besides/);
+  });
+
+  test('says only exports are covered when a repo narrows the scope', () => {
+    const doc = buildWith({ jsdocScope: 'exported' });
+
+    assert.match(doc, /### Every exported symbol carries JSDoc/);
+    assert.equal(doc.includes('every function besides'), false);
   });
 
   test('writes the repository caps into the prose', () => {
@@ -121,7 +137,7 @@ describe('build', () => {
       rules: { 'no-commented-code': false, 'no-history': false },
     });
 
-    assert.match(doc, /catches 14 of these in CI/);
+    assert.match(doc, /catches 15 of these in CI/);
   });
 
   test('separates rules a scanner catches from rules a reviewer must', () => {

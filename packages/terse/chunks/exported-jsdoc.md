@@ -1,5 +1,6 @@
-### Every exported symbol carries JSDoc
+### {{jsdocScopeHeading}}
 
-Const, type, interface, function — anything the file exports. In a test file the
-`describe` and `it` names are the documentation, so this binds only exported
-helpers.
+{{jsdocScopeBody}}
+
+Only top-level declarations count. A helper nested inside another function is
+invisible to the scanner, which counts braces rather than parsing.

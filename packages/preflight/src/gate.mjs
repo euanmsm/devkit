@@ -18,7 +18,11 @@ function allow() {
   process.exit(0);
 }
 
-/** Blocks the tool call, showing the agent which skills to load. */
+/**
+ * Blocks the tool call, showing the agent which skills to load.
+ *
+ * @param reason - Which skills the edit needs first
+ */
 function deny(reason) {
   process.stdout.write(
     JSON.stringify({
@@ -95,7 +99,13 @@ export function requiredFor(rel, map) {
   return [...required];
 }
 
-/** True when a pattern compiles and matches, false when it does neither. */
+/**
+ * Tests one path against one pattern.
+ *
+ * @param pattern - A regex from the config
+ * @param rel - Repo-relative path
+ * @returns Whether it matches, and false when the pattern will not compile
+ */
 function matches(pattern, rel) {
   return compile([pattern]).some((p) => p.test(rel));
 }
