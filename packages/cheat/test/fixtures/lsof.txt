@@ -1,0 +1,47 @@
+
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  lsof — List Open Files & Network Sockets
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  On Unix, network sockets are files — lsof doubles as a network diagnostic
+  tool. Essential for finding what's using a port.
+
+  ▸ Port Diagnostics
+  ────────────────────────────────────────────────────────────────────────────
+  lsof -i :3000                   Show all processes using port 3000
+  Shows PID, process name, user, socket state (LISTEN/CLOSED/etc)
+  lsof -ti :3000                  PIDs only (terse) — pipe into kill
+    -t                            Terse output: only PIDs, no headers
+    -i :PORT                      Filter to network connections on PORT
+  lsof -i :3000 -sTCP:LISTEN      Only actively LISTENING processes
+  Filters out stale CLOSED sockets — use this to check if a port is free
+    -sTCP:LISTEN                  Filter by TCP socket state
+  lsof -i :3000,:3001,:5432       Check multiple ports at once
+
+  ▸ Kill Processes on a Port
+  ────────────────────────────────────────────────────────────────────────────
+  lsof -ti :3000 | xargs kill     Graceful kill (SIGTERM)
+  -t gives bare PIDs which pipe cleanly into kill
+  lsof -ti :3000 | xargs kill -9  Force kill (SIGKILL)
+  Use for zombie processes that survive SIGTERM
+
+  ▸ System Overview
+  ────────────────────────────────────────────────────────────────────────────
+  lsof -i -P | grep LISTEN        All listening ports on the machine
+    -P                            Show port numbers (not service names)
+  lsof -p 12345                   All files/sockets open by PID 12345
+  Useful for debugging what a specific process is doing
+  lsof -i -P -n                   All network connections (fast, no DNS lookup)
+    -n                            Skip DNS resolution — much faster
+
+  ▸ Flag Reference
+  ────────────────────────────────────────────────────────────────────────────
+    -i [proto][@host][:port]      Filter by network address
+    -t                            Terse: PIDs only, no header — for piping
+    -P                            Port numbers instead of service names
+    -n                            No DNS resolution (faster)
+    -p <PID>                      Filter to specific process ID
+    -sTCP:STATE                   Filter by TCP state (LISTEN, ESTABLISHED,
+                                  CLOSED)
+    -c <name>                     Filter by process name
+    +D <dir>                      All open files under a directory (recursive)
