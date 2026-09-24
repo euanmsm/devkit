@@ -1,6 +1,6 @@
 {
   "name": "@euanmsm/cheat",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Terminal reference sheets for the CLIs used daily, with short courses and spaced-repetition practice alongside",
   "type": "module",
   "license": "MIT",
