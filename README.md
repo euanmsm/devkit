@@ -9,13 +9,14 @@ nothing here ends up in a production bundle.
 
 ## The packages
 
-| Package                                    | What it does                                                                       |
-| ------------------------------------------ | ---------------------------------------------------------------------------------- |
-| [`@euanmsm/preflight`](packages/preflight) | Blocks a Claude Code edit until the conventions governing that file have been read |
-| [`@euanmsm/terse`](packages/terse)         | Stops comments that break the contract, both as an edit gate and as a CI check     |
-| [`@euanmsm/secure`](packages/secure)       | Scans for leaked secrets, malicious patterns and tampered lockfiles                |
-| [`@euanmsm/vouch`](packages/vouch)         | Lets named packages run install scripts while blocking everyone else               |
-| [`@euanmsm/devkit-core`](packages/core)    | Config loading the others share. Not useful on its own                             |
+| Package                                    | What it does                                                                            |
+| ------------------------------------------ | --------------------------------------------------------------------------------------- |
+| [`@euanmsm/preflight`](packages/preflight) | Blocks a Claude Code edit until the conventions governing that file have been read      |
+| [`@euanmsm/terse`](packages/terse)         | Stops comments that break the contract, both as an edit gate and as a CI check          |
+| [`@euanmsm/shellgate`](packages/shellgate) | Blocks Bash commands that edit repository files, leaving Edit and Write the only way in |
+| [`@euanmsm/secure`](packages/secure)       | Scans for leaked secrets, malicious patterns and tampered lockfiles                     |
+| [`@euanmsm/vouch`](packages/vouch)         | Lets named packages run install scripts while blocking everyone else                    |
+| [`@euanmsm/devkit-core`](packages/core)    | Config loading the others share. Not useful on its own                                  |
 
 ## Installing one
 
