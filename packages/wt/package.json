@@ -1,0 +1,36 @@
+{
+  "name": "@euanmsm/wt",
+  "version": "0.0.0",
+  "description": "Git worktrees beside the main checkout, each with its own ports, env files and optional local Supabase stack",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/euanmsm/devkit.git",
+    "directory": "packages/wt"
+  },
+  "bin": {
+    "wt": "bin/wt.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/ports.mjs"
+    },
+    "./supabase": {
+      "types": "./src/supabase.d.ts",
+      "default": "./src/supabase/target.mjs"
+    }
+  },
+  "files": [
+    "bin",
+    "src",
+    "wt.example.json"
+  ],
+  "engines": {
+    "node": ">=22.11"
+  },
+  "dependencies": {
+    "@euanmsm/devkit-core": "0.1.0"
+  }
+}

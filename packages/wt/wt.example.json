@@ -1,0 +1,39 @@
+{
+  "_readme": "Settings for wt. Paths are relative to the main checkout. Personal settings such as \"open\" and \"workspaceFile\" can go in .devkit/wt.local.json instead, which is merged over this file and belongs in .gitignore. Delete the supabase block if the repository has no local Supabase stack.",
+
+  "dir": "../{repo}-wt",
+  "remote": "origin",
+
+  "env": {
+    "copy": [".env*"],
+    "maxDepth": 3
+  },
+
+  "ports": {
+    "step": 100,
+    "services": {
+      "app": 3000,
+      "storybook": 6006
+    },
+    "offsetEnv": null,
+    "killOnDelete": ["app"]
+  },
+
+  "hooks": {
+    "postCreate": ["npm ci"],
+    "preDelete": []
+  },
+
+  "open": "window",
+  "workspaceFile": null,
+
+  "supabase": {
+    "dir": "supabase",
+    "basePort": 54320,
+    "step": 1000,
+    "link": ["migrations", "seed.sql", "functions"],
+    "appService": "app",
+    "resetCommand": null,
+    "envFiles": [".env.local"]
+  }
+}
