@@ -60,13 +60,17 @@ export async function remove({
   const slot = slotOf(path);
   const shift = slot * config.ports.step;
 
-  await runHooks(config.hooks.preDelete, path, {
-    WT_NAME: name,
-    WT_PATH: path,
-    WT_BRANCH: entry.branch ?? '',
-    WT_SLOT: String(slot),
-    WT_OFFSET: String(shift),
-  });
+  try {
+    await runHooks(config.hooks.preDelete, path, {
+      WT_NAME: name,
+      WT_PATH: path,
+      WT_BRANCH: entry.branch ?? '',
+      WT_SLOT: String(slot),
+      WT_OFFSET: String(shift),
+    });
+  } catch (error) {
+    throw new Error(`Delete stopped, nothing removed: ${error.message}`);
+  }
 
   if (slot > 0) {
     await teardown(path, slot);

@@ -146,6 +146,35 @@ describe('creating a worktree', () => {
     assert.match(out, /branch is required/);
   });
 
+  test('stops the whole create when a required hook fails', () => {
+    const { base, root } = fixture({
+      hooks: { postCreate: ['exit 3', 'touch after.out'] },
+      open: 'window',
+    });
+    const bin = fakeCode(base);
+
+    const { status, out } = wt(root, ['feat', '-b', 'feat'], [bin]);
+
+    assert.equal(status, 1);
+    assert.match(out, /Setup failed: "exit 3" exited 3/);
+    assert.equal(existsSync(join(base, 'app-wt', 'feat', 'after.out')), false);
+    assert.equal(existsSync(join(base, 'code.log')), false);
+  });
+
+  test('warns and carries on when an optional hook fails', () => {
+    const { base, root } = fixture({
+      hooks: {
+        postCreate: [{ run: 'exit 3', optional: true }, 'touch after.out'],
+      },
+    });
+
+    const { status, out } = wt(root, ['feat', '-b', 'feat']);
+
+    assert.equal(status, 0, out);
+    assert.match(out, /Warning: "exit 3" exited 3/);
+    assert.equal(existsSync(join(base, 'app-wt', 'feat', 'after.out')), true);
+  });
+
   test('refuses a config with an unknown setting', () => {
     const { root } = fixture({ directory: '../x' });
 
@@ -197,6 +226,15 @@ describe('ports', () => {
       wt(join(base, 'app-wt', 'feat', 'web'), ['port', 'docs']).out,
       '3101',
     );
+  });
+
+  test('uses an offset set by hand in an env file over the slot', () => {
+    const { base, root } = fixture();
+    wt(root, ['feat', '-b', 'feat']);
+    const env = join(base, 'app-wt', 'feat', 'web', '.env.local');
+    write(env, readFileSync(env, 'utf8').replace('OFFSET=100', 'OFFSET=700'));
+
+    assert.equal(wt(join(base, 'app-wt', 'feat'), ['port', 'app']).out, '3700');
   });
 
   test('names the known services for an unknown one', () => {

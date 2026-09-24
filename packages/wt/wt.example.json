@@ -1,5 +1,5 @@
 {
-  "_readme": "Settings for wt. Paths are relative to the main checkout. Personal settings such as \"open\" and \"workspaceFile\" can go in .devkit/wt.local.json instead, which is merged over this file and belongs in .gitignore. Delete the supabase block if the repository has no local Supabase stack.",
+  "_readme": "Settings for wt. Paths are relative to the main checkout. Personal settings such as \"open\" and \"workspaceFile\" can go in .devkit/wt.local.json instead, which is merged over this file and belongs in .gitignore. A hook given as a plain string must succeed or wt stops; mark one { \"run\": ..., \"optional\": true } to only warn. Delete the supabase block if the repository has no local Supabase stack.",
 
   "dir": "../{repo}-wt",
   "remote": "origin",
@@ -20,7 +20,10 @@
   },
 
   "hooks": {
-    "postCreate": ["npm ci"],
+    "postCreate": [
+      "npm ci",
+      { "run": "npm run setup:husky", "optional": true }
+    ],
     "preDelete": []
   },
 

@@ -183,7 +183,13 @@ export async function create({
     WT_SLOT: String(slot),
     WT_OFFSET: String(shift),
   };
-  await runHooks(config.hooks.postCreate, root, env);
+  try {
+    await runHooks(config.hooks.postCreate, root, env);
+  } catch (error) {
+    throw new Error(
+      `Setup failed: ${error.message}\nThe worktree is left at ${root} with nothing booted. Fix the problem, then run wt -d ${name} and create it again.`,
+    );
+  }
 
   const state = stack
     ? await provision(root, {

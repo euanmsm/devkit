@@ -53,7 +53,8 @@ On create, `wt`:
 2. copies every untracked env file matching `env.copy` from the main checkout,
    and rewrites each `:<port>` for a listed service to the shifted port;
 3. writes the Supabase override project, if configured (see below);
-4. runs the `postCreate` hooks inside the new worktree;
+4. runs the `postCreate` hooks inside the new worktree, stopping if a required
+   one fails;
 5. boots, migrates and stops the Supabase stack;
 6. opens the worktree.
 
@@ -78,6 +79,11 @@ import { ports } from '@euanmsm/wt';
 const { app, docs } = ports(); // { app: 3100, docs: 3101 } in slot 1
 ```
 
+Both take the offset from the first place that sets it: the `ports.offsetEnv`
+variable in the environment, then that variable in one of its `files`, then the
+worktree's slot. The main checkout has no slot, so it gets the base ports. To
+move a worktree's ports by hand, edit the variable in its env file.
+
 ## Configuring
 
 `.devkit/wt.json` is tracked and holds facts about the repository.
@@ -99,7 +105,10 @@ it is laid over the tracked file, one section at a time.
     "killOnDelete": ["app"]
   },
   "hooks": {
-    "postCreate": ["npm ci", "npm run setup:husky"],
+    "postCreate": [
+      "npm ci",
+      { "run": "npm run setup:husky", "optional": true }
+    ],
     "preDelete": []
   },
   "open": "window",
@@ -115,16 +124,21 @@ it is laid over the tracked file, one section at a time.
 | `env.maxDepth`       | `3`              | How many folders deep to look for them                                             |
 | `ports.step`         | `100`            | How far each slot moves every port                                                 |
 | `ports.services`     | `{}`             | Each service's port in the main checkout                                           |
-| `ports.offsetEnv`    | `null`           | A variable to write the offset into, for tools that read it from the environment   |
+| `ports.offsetEnv`    | `null`           | A variable written into `files` on create, and read back as a hand-set offset      |
 | `ports.killOnDelete` | `[]`             | Services whose leftover server is stopped when a worktree is deleted               |
-| `hooks.postCreate`   | `[]`             | Commands run in a new worktree. A failure warns and does not stop the create       |
+| `hooks.postCreate`   | `[]`             | Commands run in a new worktree, in order                                           |
 | `hooks.preDelete`    | `[]`             | Commands run in a worktree before it is deleted                                    |
 | `open`               | `"window"`       | `window` opens a new VS Code window, `workspace` adds to a saved workspace, `none` |
 | `workspaceFile`      | `null`           | The `.code-workspace` file used when `open` is `workspace`                         |
 
 Hooks run with `WT_NAME`, `WT_PATH`, `WT_BRANCH`, `WT_BASE`, `WT_SLOT` and
-`WT_OFFSET` set. A misspelt setting stops `wt` with a message naming it, before
-anything is created.
+`WT_OFFSET` set. A hook written as a plain string is required: if it fails, `wt`
+stops there and exits with an error. On create, nothing after it runs, so no
+stack is booted and nothing is opened. The worktree stays on disk, so remove it
+with `wt -d <name>` once the problem is fixed and create it again. On delete,
+nothing is removed. A hook written as `{ "run": "...", "optional": true }` only
+prints a warning when it fails. A misspelt setting stops `wt` with a message
+naming it, before anything is created.
 
 ## Opening in your workspace
 

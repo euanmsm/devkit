@@ -155,6 +155,24 @@ function isStrings(value) {
 }
 
 /**
+ * True for a hook list of command strings or `{ run, optional }` objects.
+ *
+ * @param value - Any value
+ * @returns Whether it is a usable hook list
+ */
+function isHooks(value) {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (h) =>
+        typeof h === 'string' ||
+        (typeof h?.run === 'string' &&
+          ['boolean', 'undefined'].includes(typeof h.optional)),
+    )
+  );
+}
+
+/**
  * Lists everything wrong with a merged config.
  *
  * @param config - The merged config
@@ -217,8 +235,12 @@ export function validate(config, raw = {}) {
   }
 
   for (const hook of ['postCreate', 'preDelete']) {
-    if (!isStrings(config.hooks[hook]))
-      bad(`hooks.${hook}`, 'a list of commands');
+    if (!isHooks(config.hooks[hook])) {
+      bad(
+        `hooks.${hook}`,
+        'a list of commands or { "run", "optional" } objects',
+      );
+    }
   }
 
   if (config.supabase) problems.push(...validateSupabase(config));

@@ -53,6 +53,7 @@ describe('config', () => {
     const raw = {
       open: 'workspace',
       ports: { services: { app: 99999 }, killOnDelete: ['web'] },
+      hooks: { postCreate: ['npm ci', { run: 1 }] },
       supabase: { dir: 'db' },
     };
 
@@ -62,6 +63,7 @@ describe('config', () => {
     assert.match(problems, /"ports.services.app" must be a port/);
     assert.match(problems, /not "web"/);
     assert.match(problems, /"supabase.dir"/);
+    assert.match(problems, /"hooks.postCreate"/);
   });
 
   test('puts the repo folder name into the worktrees folder', () => {

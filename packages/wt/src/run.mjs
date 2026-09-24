@@ -40,26 +40,31 @@ export function exec(program, args, { cwd, env = {}, shell = false } = {}) {
 }
 
 /**
- * Runs each hook command in order, warning on any that fail.
+ * Runs each hook in order, stopping at a required one that fails.
  *
- * @param commands - Shell command lines
+ * @param hooks - Command lines, or `{ run, optional }` objects
  * @param cwd - Directory to run them in
  * @param env - Extra environment for every command
- * @returns How many commands failed
+ * @returns How many optional hooks failed
+ * @throws When a required hook exits non-zero
  */
-export async function runHooks(commands, cwd, env) {
+export async function runHooks(hooks, cwd, env) {
   let failed = 0;
 
-  for (const command of commands) {
-    console.log(`Running ${command}...`);
-    const code = await shell(command, { cwd, env });
+  for (const hook of hooks) {
+    const { run, optional = false } =
+      typeof hook === 'string' ? { run: hook } : hook;
 
-    if (code !== 0) {
-      failed += 1;
-      console.warn(
-        `  Warning: "${command}" exited ${code}. Run it by hand in ${cwd}.`,
-      );
-    }
+    console.log(`Running ${run}...`);
+    const code = await shell(run, { cwd, env });
+    if (code === 0) continue;
+
+    if (!optional) throw new Error(`"${run}" exited ${code} in ${cwd}.`);
+
+    failed += 1;
+    console.warn(
+      `  Warning: "${run}" exited ${code}. Run it by hand in ${cwd}.`,
+    );
   }
 
   return failed;
