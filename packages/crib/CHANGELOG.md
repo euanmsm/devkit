@@ -1,4 +1,4 @@
-# @euanmsm/cheat
+# @euanmsm/crib
 
 ## 0.1.0
 

@@ -1,5 +1,5 @@
 {
-  "name": "@euanmsm/cheat",
+  "name": "@euanmsm/crib",
   "version": "0.1.0",
   "description": "Terminal reference sheets for the CLIs used daily, with short courses and spaced-repetition practice alongside",
   "type": "module",
@@ -7,7 +7,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/euanmsm/devkit.git",
-    "directory": "packages/cheat"
+    "directory": "packages/crib"
   },
   "bin": {
     "cheat": "bin/cheat.mjs"

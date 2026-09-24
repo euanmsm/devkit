@@ -105,7 +105,7 @@ Courses so far: `shell`. Sandboxed exercises — a throwaway repo you fix for re
 Needs Node 22.11 or newer.
 
 ```bash
-npm i -g @euanmsm/cheat
+npm i -g @euanmsm/crib
 ```
 
 The one runtime dependency is `cliui`, which does the column layout and
@@ -202,7 +202,7 @@ From the devkit root:
 
 ```bash
 npm test          # every package's tests, cheat's included
-node packages/cheat/bin/cheat.mjs gh --pr
+node packages/crib/bin/cheat.mjs gh --pr
 ```
 
 Plain JavaScript with no build step, so nothing checks a guide's shape except
