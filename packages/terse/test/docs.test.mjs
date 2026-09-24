@@ -166,3 +166,49 @@ describe('scope', () => {
     assert.equal(doc.includes('These paths are outside it'), false);
   });
 });
+
+describe('section banners', () => {
+  test('names the threshold by default', () => {
+    const doc = buildWith({});
+
+    assert.match(
+      doc,
+      /### Section banners only in files over 150 lines of code/,
+    );
+    assert.equal(doc.includes('### What a banner separates'), false);
+  });
+
+  test('explains what a banner separates when a repo welcomes them', () => {
+    const doc = buildWith({ sectionBanners: 'always' });
+
+    assert.match(doc, /### Section banners split a file into its parts/);
+    assert.match(doc, /### What a banner separates/);
+  });
+
+  test('keeps the guidance under Hygiene rather than opening a section', () => {
+    const doc = buildWith({ sectionBanners: 'always' });
+    const hygiene = doc.indexOf('## Hygiene');
+
+    assert.equal(doc.indexOf('### What a banner separates') > hygiene, true);
+    assert.equal(
+      doc.indexOf('## Scope') > doc.indexOf('### What a banner separates'),
+      true,
+    );
+  });
+
+  test('says banners are out when a repo bans them', () => {
+    const doc = buildWith({ sectionBanners: 'off' });
+
+    assert.match(doc, /### No section banners/);
+    assert.equal(doc.includes('### What a banner separates'), false);
+  });
+
+  test('drops the guidance with the rule it belongs to', () => {
+    const doc = buildWith({
+      sectionBanners: 'always',
+      rules: { 'section-banner': false },
+    });
+
+    assert.equal(doc.includes('### What a banner separates'), false);
+  });
+});

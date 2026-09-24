@@ -38,15 +38,6 @@ function src(...body) {
   return `${HEADER}\n\n${documented([ANCHOR, '', ...body]).join('\n')}\n`;
 }
 
-/** Builds a source long enough for section-banner to permit a banner. */
-function long(...body) {
-  const filler = Array.from(
-    { length: 160 },
-    (_, i) => `export const p${i} = ${i};`,
-  );
-  return src(...body, ...filler);
-}
-
 /** Rule names a source breaks. */
 function rules(source) {
   return [...new Set(scan(source).map((f) => f.rule))].sort();
@@ -226,418 +217,421 @@ describe('rule 3 — property JSDoc', () => {
 });
 
 describe('rule 2 — scope', () => {
-	test('flags a function the file keeps to itself', () => {
-		breaks('exported-jsdoc', src('function local(): void {}'));
-	});
+  test('flags a function the file keeps to itself', () => {
+    breaks('exported-jsdoc', src('function local(): void {}'));
+  });
 
-	test('flags an arrow-function const the file keeps to itself', () => {
-		breaks('exported-jsdoc', src('const local = (): void => {};'));
-	});
+  test('flags an arrow-function const the file keeps to itself', () => {
+    breaks('exported-jsdoc', src('const local = (): void => {};'));
+  });
 
-	test('flags one carrying a TypeScript annotation on its name', () => {
-		breaks('exported-jsdoc', src('const local: Handler = (): void => {};'));
-	});
+  test('flags one carrying a TypeScript annotation on its name', () => {
+    breaks('exported-jsdoc', src('const local: Handler = (): void => {};'));
+  });
 
-	test('leaves a plain value, class, type and interface alone', () => {
-		passes(
-			src(
-				'const MAX_PORT = 3000;',
-				'class Local {}',
-				'type Local2 = string;',
-				'interface Local3 {',
-				'\t/** A name. */',
-				'\tname: string;',
-				'}',
-			),
-		);
-	});
+  test('leaves a plain value, class, type and interface alone', () => {
+    passes(
+      src(
+        'const MAX_PORT = 3000;',
+        'class Local {}',
+        'type Local2 = string;',
+        'interface Local3 {',
+        '\t/** A name. */',
+        '\tname: string;',
+        '}',
+      ),
+    );
+  });
 
-	test('leaves a helper nested inside another function alone', () => {
-		passes(
-			src(
-				'/** Does a thing. */',
-				'function outer(): void {',
-				'\tfunction inner() {}',
-				'\tinner();',
-				'}',
-			),
-		);
-	});
+  test('leaves a helper nested inside another function alone', () => {
+    passes(
+      src(
+        '/** Does a thing. */',
+        'function outer(): void {',
+        '\tfunction inner() {}',
+        '\tinner();',
+        '}',
+      ),
+    );
+  });
 
-	test('accepts JSDoc a blank line separates from its declaration', () => {
-		passes(src('/** Does a thing. */', '', 'function local(): void {}'));
-	});
+  test('accepts JSDoc a blank line separates from its declaration', () => {
+    passes(src('/** Does a thing. */', '', 'function local(): void {}'));
+  });
 
-	test('accepts a documented local function', () => {
-		passes(src('/** Does a thing. */', 'function local(): void {}'));
-	});
+  test('accepts a documented local function', () => {
+    passes(src('/** Does a thing. */', 'function local(): void {}'));
+  });
 });
 
 describe('rule 20 — tag coverage', () => {
-	test('flags a parameter with no @param', () => {
-		breaks(
-			'jsdoc-tag-coverage',
-			src('/** Does a thing. */', 'export function f(id: string): void {}'),
-		);
-	});
+  test('flags a parameter with no @param', () => {
+    breaks(
+      'jsdoc-tag-coverage',
+      src('/** Does a thing. */', 'export function f(id: string): void {}'),
+    );
+  });
 
-	test('flags a @param naming a parameter the signature has lost', () => {
-		const found = scan(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param old - The id',
-				' */',
-				'export function f(fresh: string): void {}',
-			),
-		);
+  test('flags a @param naming a parameter the signature has lost', () => {
+    const found = scan(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param old - The id',
+        ' */',
+        'export function f(fresh: string): void {}',
+      ),
+    );
 
-		assert.deepEqual(
-			found.map((f) => f.message),
-			['`fresh` has no @param.', '@param `old` names no parameter.'],
-		);
-	});
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['`fresh` has no @param.', '@param `old` names no parameter.'],
+    );
+  });
 
-	test('flags a function returning a value with no @returns', () => {
-		const found = scan(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param id - The id',
-				' */',
-				'export function f(id: string): string {',
-				'\treturn id;',
-				'}',
-			),
-		);
+  test('flags a function returning a value with no @returns', () => {
+    const found = scan(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param id - The id',
+        ' */',
+        'export function f(id: string): string {',
+        '\treturn id;',
+        '}',
+      ),
+    );
 
-		assert.deepEqual(
-			found.map((f) => f.message),
-			['Function returns a value but has no @returns.'],
-		);
-	});
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['Function returns a value but has no @returns.'],
+    );
+  });
 
-	test('asks nothing of a void function', () => {
-		passes(src('/** Does a thing. */', 'export function f(): void {}'));
-	});
+  test('asks nothing of a void function', () => {
+    passes(src('/** Does a thing. */', 'export function f(): void {}'));
+  });
 
-	test('flags a function that throws with no @throws', () => {
-		const found = scan(
-			src(
-				'/** Does a thing. */',
-				'export function f(): void {',
-				"\tthrow new Error('no');",
-				'}',
-			),
-		);
+  test('flags a function that throws with no @throws', () => {
+    const found = scan(
+      src(
+        '/** Does a thing. */',
+        'export function f(): void {',
+        "\tthrow new Error('no');",
+        '}',
+      ),
+    );
 
-		assert.deepEqual(
-			found.map((f) => f.message),
-			['Function throws but has no @throws.'],
-		);
-	});
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['Function throws but has no @throws.'],
+    );
+  });
 
-	test('asks nothing of a throw belonging to a nested function', () => {
-		passes(
-			src(
-				'/** Does a thing. */',
-				'export function f(): void {',
-				'\tconst inner = (): void => {',
-				"\t\tthrow new Error('no');",
-				'\t};',
-				'\tinner();',
-				'}',
-			),
-		);
-	});
+  test('asks nothing of a throw belonging to a nested function', () => {
+    passes(
+      src(
+        '/** Does a thing. */',
+        'export function f(): void {',
+        '\tconst inner = (): void => {',
+        "\t\tthrow new Error('no');",
+        '\t};',
+        '\tinner();',
+        '}',
+      ),
+    );
+  });
 
-	test('counts a parameter list split across lines', () => {
-		passes(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param a - One',
-				' * @param b - Two',
-				' */',
-				'export function f(',
-				'\ta: number,',
-				'\tb: number,',
-				'): void {}',
-			),
-		);
-	});
+  test('counts a parameter list split across lines', () => {
+    passes(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param a - One',
+        ' * @param b - Two',
+        ' */',
+        'export function f(',
+        '\ta: number,',
+        '\tb: number,',
+        '): void {}',
+      ),
+    );
+  });
 
-	test('flags a missing @param on a parameter list split across lines', () => {
-		const found = scan(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param a - One',
-				' */',
-				'export function f(',
-				'\ta: number,',
-				'\tb: number,',
-				'): void {}',
-			),
-		);
+  test('flags a missing @param on a parameter list split across lines', () => {
+    const found = scan(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param a - One',
+        ' */',
+        'export function f(',
+        '\ta: number,',
+        '\tb: number,',
+        '): void {}',
+      ),
+    );
 
-		assert.deepEqual(
-			found.map((f) => f.message),
-			['`b` has no @param.'],
-		);
-	});
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['`b` has no @param.'],
+    );
+  });
 
-	test('asks nothing of a block that is not JSDoc', () => {
-		passes(
-			src('/*', ' * Does a thing.', ' */', 'export function f(id: string) {}'),
-		);
-	});
+  test('asks nothing of a block that is not JSDoc', () => {
+    passes(
+      src('/*', ' * Does a thing.', ' */', 'export function f(id: string) {}'),
+    );
+  });
 
-	test('counts a destructured parameter as one', () => {
-		passes(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param options - The options',
-				' */',
-				'export function f({ a, b }: Options): void {}',
-			),
-		);
-	});
+  test('counts a destructured parameter as one', () => {
+    passes(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param options - The options',
+        ' */',
+        'export function f({ a, b }: Options): void {}',
+      ),
+    );
+  });
 
-	test('flags a destructured parameter documented by no @param', () => {
-		const found = scan(
-			src('/** Does a thing. */', 'export function f({ a, b }: Options): void {}'),
-		);
+  test('flags a destructured parameter documented by no @param', () => {
+    const found = scan(
+      src(
+        '/** Does a thing. */',
+        'export function f({ a, b }: Options): void {}',
+      ),
+    );
 
-		assert.deepEqual(
-			found.map((f) => f.message),
-			['A destructured parameter has no @param.'],
-		);
-	});
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['A destructured parameter has no @param.'],
+    );
+  });
 
-	test('counts a default value carrying a comma as one parameter', () => {
-		passes(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param a - One',
-				' * @param b - Two',
-				' */',
-				'export function f(a = g(1, 2), b: number): void {}',
-			),
-		);
-	});
+  test('counts a default value carrying a comma as one parameter', () => {
+    passes(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param a - One',
+        ' * @param b - Two',
+        ' */',
+        'export function f(a = g(1, 2), b: number): void {}',
+      ),
+    );
+  });
 
-	test('asks nothing of an overload, whose body is another function', () => {
-		passes(
-			src(
-				'/** Does a thing. */',
-				'export function f(id: string): void;',
-				'',
-				'/** Does a thing. */',
-				'export function g(): void {',
-				'\th();',
-				'}',
-			),
-		);
-	});
+  test('asks nothing of an overload, whose body is another function', () => {
+    passes(
+      src(
+        '/** Does a thing. */',
+        'export function f(id: string): void;',
+        '',
+        '/** Does a thing. */',
+        'export function g(): void {',
+        '\th();',
+        '}',
+      ),
+    );
+  });
 
-	test('asks nothing of a return type it cannot read', () => {
-		passes(
-			src(
-				'/** Does a thing. */',
-				'export function f(): { a: number } {',
-				'\treturn { a: 1 };',
-				'}',
-			),
-		);
-	});
+  test('asks nothing of a return type it cannot read', () => {
+    passes(
+      src(
+        '/** Does a thing. */',
+        'export function f(): { a: number } {',
+        '\treturn { a: 1 };',
+        '}',
+      ),
+    );
+  });
 
-	test('ignores a comma inside a default string value', () => {
-		const found = scan(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				" * @param sep - The separator",
-				' */',
-				"export function f(sep = ',', n: number): void {}",
-			),
-		);
+  test('ignores a comma inside a default string value', () => {
+    const found = scan(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param sep - The separator',
+        ' */',
+        "export function f(sep = ',', n: number): void {}",
+      ),
+    );
 
-		assert.deepEqual(
-			found.map((f) => f.message),
-			['`n` has no @param.'],
-		);
-	});
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['`n` has no @param.'],
+    );
+  });
 });
 
 describe('rule 20 — harder signatures', () => {
-	test('counts a function-typed parameter as one', () => {
-		passes(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param cb - What to call',
-				' * @param n - How often',
-				' */',
-				'export function f(cb: (a: string) => void, n: number): void {}',
-			),
-		);
-	});
+  test('counts a function-typed parameter as one', () => {
+    passes(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param cb - What to call',
+        ' * @param n - How often',
+        ' */',
+        'export function f(cb: (a: string) => void, n: number): void {}',
+      ),
+    );
+  });
 
-	test('counts a generic parameter list', () => {
-		passes(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param m - The map',
-				' */',
-				'export function f<T>(m: Map<string, T>): void {}',
-			),
-		);
-	});
+  test('counts a generic parameter list', () => {
+    passes(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param m - The map',
+        ' */',
+        'export function f<T>(m: Map<string, T>): void {}',
+      ),
+    );
+  });
 
-	test('asks nothing of an async function returning Promise<void>', () => {
-		passes(
-			src(
-				'/** Does a thing. */',
-				'export async function f(): Promise<void> {',
-				'\tawait g();',
-				'}',
-			),
-		);
-	});
+  test('asks nothing of an async function returning Promise<void>', () => {
+    passes(
+      src(
+        '/** Does a thing. */',
+        'export async function f(): Promise<void> {',
+        '\tawait g();',
+        '}',
+      ),
+    );
+  });
 
-	test('asks for a @returns from an async function returning a value', () => {
-		const found = scan(
-			src(
-				'/** Does a thing. */',
-				'export async function f(): Promise<string> {',
-				'\treturn g();',
-				'}',
-			),
-		);
+  test('asks for a @returns from an async function returning a value', () => {
+    const found = scan(
+      src(
+        '/** Does a thing. */',
+        'export async function f(): Promise<string> {',
+        '\treturn g();',
+        '}',
+      ),
+    );
 
-		assert.deepEqual(
-			found.map((f) => f.message),
-			['Function returns a value but has no @returns.'],
-		);
-	});
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['Function returns a value but has no @returns.'],
+    );
+  });
 
-	test('asks for a @returns from an arrow returning an expression', () => {
-		const found = scan(
-			src('/** Does a thing. */', 'export const f = (n: number) => n + 1;'),
-		);
+  test('asks for a @returns from an arrow returning an expression', () => {
+    const found = scan(
+      src('/** Does a thing. */', 'export const f = (n: number) => n + 1;'),
+    );
 
-		assert.deepEqual(
-			found.map((f) => f.message),
-			['`n` has no @param.', 'Function returns a value but has no @returns.'],
-		);
-	});
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['`n` has no @param.', 'Function returns a value but has no @returns.'],
+    );
+  });
 
-	test('asks nothing of a bare `return` in an unannotated function', () => {
-		passes(
-			src(
-				'/** Does a thing. */',
-				'export function f() {',
-				'\tif (!g()) return;',
-				'\th();',
-				'}',
-			),
-		);
-	});
+  test('asks nothing of a bare `return` in an unannotated function', () => {
+    passes(
+      src(
+        '/** Does a thing. */',
+        'export function f() {',
+        '\tif (!g()) return;',
+        '\th();',
+        '}',
+      ),
+    );
+  });
 
-	test('reads a @param written without a dash', () => {
-		passes(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param id The id',
-				' */',
-				'export function f(id: string): void {}',
-			),
-		);
-	});
+  test('reads a @param written without a dash', () => {
+    passes(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param id The id',
+        ' */',
+        'export function f(id: string): void {}',
+      ),
+    );
+  });
 
-	test('reads a rest parameter and an optional one', () => {
-		passes(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param first - The first',
-				' * @param rest - The others',
-				' */',
-				'export function f(first?: string, ...rest: string[]): void {}',
-			),
-		);
-	});
+  test('reads a rest parameter and an optional one', () => {
+    passes(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param first - The first',
+        ' * @param rest - The others',
+        ' */',
+        'export function f(first?: string, ...rest: string[]): void {}',
+      ),
+    );
+  });
 
-	test('asks nothing of a TypeScript `this` parameter', () => {
-		passes(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param n - The number',
-				' */',
-				'export function f(this: Widget, n: number): void {}',
-			),
-		);
-	});
+  test('asks nothing of a TypeScript `this` parameter', () => {
+    passes(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param n - The number',
+        ' */',
+        'export function f(this: Widget, n: number): void {}',
+      ),
+    );
+  });
 
-	test('reads a default export function', () => {
-		const found = scan(
-			src('/** Does a thing. */', 'export default function f(id: string) {}'),
-		);
+  test('reads a default export function', () => {
+    const found = scan(
+      src('/** Does a thing. */', 'export default function f(id: string) {}'),
+    );
 
-		assert.deepEqual(
-			found.map((f) => f.message),
-			['`id` has no @param.'],
-		);
-	});
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['`id` has no @param.'],
+    );
+  });
 
-	test('asks nothing of a method, which sits below the top level', () => {
-		passes(
-			src(
-				'/** A widget. */',
-				'export class Widget {',
-				'\tresize(width: number): number {',
-				'\t\treturn width;',
-				'\t}',
-				'}',
-			),
-		);
-	});
+  test('asks nothing of a method, which sits below the top level', () => {
+    passes(
+      src(
+        '/** A widget. */',
+        'export class Widget {',
+        '\tresize(width: number): number {',
+        '\t\treturn width;',
+        '\t}',
+        '}',
+      ),
+    );
+  });
 
-	test('flags a documented function whose @param count is short', () => {
-		const found = scan(
-			src(
-				'/**',
-				' * Does a thing.',
-				' *',
-				' * @param a - One',
-				' */',
-				'export function f(a: number, b: number): void {}',
-			),
-		);
+  test('flags a documented function whose @param count is short', () => {
+    const found = scan(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param a - One',
+        ' */',
+        'export function f(a: number, b: number): void {}',
+      ),
+    );
 
-		assert.deepEqual(
-			found.map((f) => f.message),
-			['`b` has no @param.'],
-		);
-	});
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['`b` has no @param.'],
+    );
+  });
 });
 
 describe('rule 2 — brace counting', () => {
@@ -920,19 +914,6 @@ describe('rule 17 — allowed tags', () => {
   });
 });
 
-describe('rule 18 — section banners', () => {
-  test('flags a banner in a short file', () => {
-    breaks(
-      'section-banner',
-      src('export const a = 1;', BAR, '// Section', BAR, 'export const b = 2;'),
-    );
-  });
-
-  test('accepts a banner past 150 lines of code', () => {
-    passes(long('export const a = 1;', BAR, '// Section', BAR));
-  });
-});
-
 // =============================================================================
 // Scan options
 // =============================================================================
@@ -1034,25 +1015,25 @@ describe('newFindings blocks', () => {
 // =============================================================================
 
 describe('newFindings scope', () => {
-	test('flags a local function an edit adds', () => {
-		const found = newFindings(src(), src('function local(): void {}'));
+  test('flags a local function an edit adds', () => {
+    const found = newFindings(src(), src('function local(): void {}'));
 
-		assert.deepEqual(
-			found.map((f) => f.rule),
-			['exported-jsdoc'],
-		);
-	});
+    assert.deepEqual(
+      found.map((f) => f.rule),
+      ['exported-jsdoc'],
+    );
+  });
 
-	test('leaves the same edit alone in a test file', () => {
-		const found = newFindings(
-			src(),
-			src('function local(): void {}'),
-			null,
-			'src/a.test.ts',
-		);
+  test('leaves the same edit alone in a test file', () => {
+    const found = newFindings(
+      src(),
+      src('function local(): void {}'),
+      null,
+      'src/a.test.ts',
+    );
 
-		assert.deepEqual(found, []);
-	});
+    assert.deepEqual(found, []);
+  });
 });
 
 describe('newFindings allows', () => {
@@ -1073,22 +1054,6 @@ describe('newFindings allows', () => {
     const span = [{ from: 8, to: 10 }];
 
     assert.deepEqual(newFindings(before, after, span), []);
-  });
-
-  test('a rule 18 finding whose line count shifts as the file grows', () => {
-    const banner =
-      '// ==========================================================================';
-    const before = `${HEADER}\n\n/** F. */\nexport const a = 1;\n${banner}\n/** F. */\nexport const b = 2;\n`;
-    const padding = Array.from(
-      { length: 40 },
-      (_, i) => `/** F. */\nexport const p${i} = ${i};`,
-    );
-    const after = `${HEADER}\n\n/** F. */\nexport const a = 1;\n${banner}\n/** F. */\nexport const b = 2;\n${padding.join('\n')}\n`;
-
-    // The banner is illegal in both, and its message names a line count that moved.
-    assert.equal(rules(before).includes('section-banner'), true);
-    assert.equal(rules(after).includes('section-banner'), true);
-    assert.deepEqual(newFindings(before, after), []);
   });
 
   test('a clean edit to a file full of debt', () => {

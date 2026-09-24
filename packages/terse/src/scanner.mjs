@@ -102,6 +102,7 @@ const DEFAULTS = {
   jsdocProseMax: 4,
   commentMaxChars: 100,
   bannerMinCode: 150,
+  sectionBanners: 'large-files',
   todoPrefix: '[A-Z]{2,}',
   allowedTags: ['@param', '@returns', '@throws', '@deprecated'],
   jsdocScope: 'all',
@@ -208,6 +209,23 @@ const HEADER_MAX = config.headerMax;
 const JSDOC_PROSE_MAX = config.jsdocProseMax;
 const COMMENT_MAX_CHARS = config.commentMaxChars;
 const BANNER_MIN_CODE = config.bannerMinCode;
+const SECTION_BANNERS = ['always', 'off'].includes(config.sectionBanners)
+  ? config.sectionBanners
+  : 'large-files';
+
+/**
+ * Judges one inline banner against the repository's banner setting.
+ *
+ * @param code - How many lines of the file carry code
+ * @returns The finding's message, or null when the banner is allowed
+ */
+function bannerFinding(code) {
+  if (SECTION_BANNERS === 'always') return null;
+  if (SECTION_BANNERS === 'off') return 'Section banner inside a file.';
+  if (code >= BANNER_MIN_CODE) return null;
+
+  return `Section banner in a ${code}-line file, minimum is ${BANNER_MIN_CODE}.`;
+}
 
 const TODO_FORM = new RegExp(`\\bTODO\\(${config.todoPrefix}-\\d+\\):`);
 const TODO_EXAMPLE = `TODO(${config.todoPrefix === '[A-Z]{2,}' ? 'ABC' : config.todoPrefix}-1234): one line`;
@@ -1072,14 +1090,8 @@ export function scan(source, path = '') {
     }
 
     if (isBannerRule(raw)) {
-      if (code < BANNER_MIN_CODE && n > start)
-        out.push(
-          finding(
-            'section-banner',
-            n + 1,
-            `Section banner in a ${code}-line file, minimum is ${BANNER_MIN_CODE}.`,
-          ),
-        );
+      const message = n > start ? bannerFinding(code) : null;
+      if (message) out.push(finding('section-banner', n + 1, message));
       continue;
     }
 

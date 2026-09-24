@@ -39,27 +39,16 @@
     "section-banner": true
   },
   "governed": "\\.(tsx?|mjs|cjs|js)$",
-  "exclude": [
-    "(^|/)node_modules/",
-    "\\.min\\.[cm]?js$",
-    "\\.d\\.ts$"
-  ],
+  "exclude": ["(^|/)node_modules/", "\\.min\\.[cm]?js$", "\\.d\\.ts$"],
   "headerMax": 8,
   "jsdocProseMax": 4,
   "commentMaxChars": 100,
   "bannerMinCode": 150,
+  "sectionBanners": "large-files",
   "todoPrefix": "[A-Z]{2,}",
-  "allowedTags": [
-    "@param",
-    "@returns",
-    "@throws",
-    "@deprecated"
-  ],
+  "allowedTags": ["@param", "@returns", "@throws", "@deprecated"],
   "jsdocScope": "all",
-  "jsdocScopeExclude": [
-    "\\.test\\.",
-    "\\.spec\\."
-  ],
+  "jsdocScopeExclude": ["\\.test\\.", "\\.spec\\."],
   "rulesDoc": "",
   "examplesDoc": "",
   "bans": [

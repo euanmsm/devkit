@@ -105,11 +105,46 @@ export function fill(text) {
       ? 'Every exported symbol and every function carries JSDoc'
       : 'Every exported symbol carries JSDoc',
     jsdocScopeBody: all ? scopeAll() : SCOPE_EXPORTED,
+    sectionBannerHeading: BANNERS[banners()].heading,
+    sectionBannerBody: BANNERS[banners()].body,
   };
 
   return text.replace(/\{\{(\w+)\}\}/g, (whole, key) =>
     key in values ? String(values[key]) : whole,
   );
+}
+
+/** The heading and body the banner rule carries under each setting. */
+const BANNERS = {
+  'large-files': {
+    heading: `Section banners only in files over ${config.bannerMinCode} lines of code`,
+    body:
+      'A table of contents for a short file is scaffolding. If the file is small ' +
+      'enough\nto read top to bottom, the banners are noise between you and the code.',
+  },
+  always: {
+    heading: 'Section banners split a file into its parts',
+    body:
+      'A banner is welcome wherever a file has parts worth naming, at any length. ' +
+      'A\nfile a reader takes in top to bottom has one part, and needs none.',
+  },
+  off: {
+    heading: 'No section banners',
+    body:
+      'The header is the only banner a file carries. A file needing a table of\ncontents ' +
+      'needs splitting instead.',
+  },
+};
+
+/**
+ * Reads which banner setting the repository runs, ignoring an unknown value.
+ *
+ * @returns `'large-files'`, `'always'` or `'off'`
+ */
+function banners() {
+  return ['always', 'off'].includes(config.sectionBanners)
+    ? config.sectionBanners
+    : 'large-files';
 }
 
 const SCOPE_EXPORTED =
@@ -165,6 +200,9 @@ export function build() {
     for (const name of included) {
       const text = chunk(name);
       if (text) parts.push(fill(text));
+
+      if (name === 'section-banner' && banners() === 'always')
+        parts.push(fill(chunk('_banner-usage')));
     }
   }
 
