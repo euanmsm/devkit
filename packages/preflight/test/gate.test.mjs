@@ -10,7 +10,12 @@ import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { loadedSkills, requiredFor, requiredForTool } from '../src/gate.mjs';
+import {
+  findAgentTranscript,
+  loadedSkills,
+  requiredFor,
+  requiredForTool,
+} from '../src/gate.mjs';
 
 const BIN = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -20,6 +25,9 @@ const BIN = join(
 );
 
 const LINEAR_SAVE = 'mcp__linear__save_issue';
+
+const SKILL_LINE = (skill) =>
+  `{"content":[{"name":"Skill","input":{"skill":"${skill}"}}]}\n`;
 
 const MAP = {
   exclude: ['^tmp/', '\\.d\\.ts$'],
@@ -107,6 +115,46 @@ describe('loadedSkills', () => {
 });
 
 /**
+ * Writes a subagent transcript beside a session transcript.
+ *
+ * @param sessionTranscript - Path to the session's transcript
+ * @param agentId - The subagent's id
+ * @param content - The transcript's contents
+ * @param run - Workflow run folder, for a workflow agent
+ * @returns Path to the subagent's transcript
+ */
+function writeAgentTranscript(sessionTranscript, agentId, content, run) {
+  const dir = join(
+    sessionTranscript.replace(/\.jsonl$/, ''),
+    'subagents',
+    ...(run ? ['workflows', run] : []),
+  );
+  mkdirSync(dir, { recursive: true });
+
+  const path = join(dir, `agent-${agentId}.jsonl`);
+  writeFileSync(path, content);
+  return path;
+}
+
+describe('findAgentTranscript', () => {
+  const session = join(mkdtempSync(join(tmpdir(), 'devkit-')), 's.jsonl');
+
+  test('finds a subagent transcript', () => {
+    const path = writeAgentTranscript(session, 'a1', '');
+    assert.equal(findAgentTranscript(session, 'a1'), path);
+  });
+
+  test('finds a workflow agent transcript under its run folder', () => {
+    const path = writeAgentTranscript(session, 'a2', '', 'wf_x');
+    assert.equal(findAgentTranscript(session, 'a2'), path);
+  });
+
+  test('returns null when no transcript has that id', () => {
+    assert.equal(findAgentTranscript(session, 'missing'), null);
+  });
+});
+
+/**
  * Creates a throwaway repository with a preflight map and an empty transcript.
  *
  * @returns The repository root and the transcript path
@@ -168,10 +216,7 @@ describe('the hook end to end', () => {
 
   test('allows a matching tool once its skill is loaded', () => {
     const { root, transcript } = makeRepo();
-    writeFileSync(
-      transcript,
-      '{"content":[{"name":"Skill","input":{"skill":"linear"}}]}\n',
-    );
+    writeFileSync(transcript, SKILL_LINE('linear'));
 
     const out = runHook(root, {
       tool_name: LINEAR_SAVE,
@@ -202,5 +247,62 @@ describe('the hook end to end', () => {
     });
 
     assert.match(reason(out), /BLOCKED — src\/x\.ts /);
+  });
+});
+
+describe('the hook inside a subagent', () => {
+  test('denies when only the parent session loaded the skill', () => {
+    const { root, transcript } = makeRepo();
+    writeFileSync(transcript, SKILL_LINE('linear'));
+    writeAgentTranscript(transcript, 'a1', '{"type":"assistant"}\n');
+
+    const out = runHook(root, {
+      tool_name: LINEAR_SAVE,
+      tool_input: {},
+      transcript_path: transcript,
+      agent_id: 'a1',
+    });
+
+    assert.match(reason(out), /parent session do not count/);
+  });
+
+  test('allows once the subagent loaded the skill itself', () => {
+    const { root, transcript } = makeRepo();
+    writeAgentTranscript(transcript, 'a1', SKILL_LINE('linear'));
+
+    const out = runHook(root, {
+      tool_name: LINEAR_SAVE,
+      tool_input: {},
+      transcript_path: transcript,
+      agent_id: 'a1',
+    });
+
+    assert.equal(out, '');
+  });
+
+  test('allows a workflow agent that loaded the skill itself', () => {
+    const { root, transcript } = makeRepo();
+    writeAgentTranscript(transcript, 'a1', SKILL_LINE('linear'), 'wf_x');
+
+    const out = runHook(root, {
+      tool_name: LINEAR_SAVE,
+      tool_input: {},
+      transcript_path: transcript,
+      agent_id: 'a1',
+    });
+
+    assert.equal(out, '');
+  });
+
+  test('allows the call when the subagent transcript cannot be found', () => {
+    const { root, transcript } = makeRepo();
+    const out = runHook(root, {
+      tool_name: LINEAR_SAVE,
+      tool_input: {},
+      transcript_path: transcript,
+      agent_id: 'missing',
+    });
+
+    assert.equal(out, '');
   });
 });

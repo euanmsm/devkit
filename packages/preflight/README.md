@@ -83,11 +83,19 @@ skills are the only ones the call needs — path rules are not checked for that
 call. The deny message names the tool when a tool rule matched and the file when
 a path rule did.
 
+## Subagents
+
+A subagent or workflow agent must load the skills itself. The gate checks the
+calling agent's own transcript, so skills the main session loaded do not count
+for its subagents. That is deliberate: a subagent never sees the main session's
+context, so it has not read those conventions either.
+
 ## When it does not block
 
-The gate fails open. A missing map, an unreadable transcript, a file outside the
-repository or a malformed payload all allow the edit rather than halting work on
-a tool that cannot do its job. `PREFLIGHT=off` disables it for one command.
+The gate fails open. A missing map, an unreadable transcript, a subagent
+transcript it cannot find, a file outside the repository or a malformed payload
+all allow the edit rather than halting work on a tool that cannot do its job.
+`PREFLIGHT=off` disables it for one command.
 
 Deliberate: a gate that breaks your session when its own config has a typo is a
 gate you will remove within the week.
