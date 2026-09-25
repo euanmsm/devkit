@@ -1,6 +1,6 @@
 {
   "name": "@euanmsm/terse",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A comment contract scanner, a Claude Code edit gate and a CI check that fails only on newly added violations",
   "type": "module",
   "license": "MIT",
