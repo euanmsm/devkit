@@ -1,5 +1,14 @@
 # @euanmsm/preflight
 
+## 0.2.1
+
+### Patch Changes
+
+- 81711bb: Check a subagent's own transcript for loaded skills. Until now a
+  subagent or workflow agent was checked against the main session's transcript,
+  so it was blocked however many skills it loaded itself. Skills the main
+  session loaded no longer count for its subagents.
+
 ## 0.2.0
 
 ### Minor Changes

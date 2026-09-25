@@ -1,6 +1,6 @@
 {
   "name": "@euanmsm/preflight",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Claude Code PreToolUse hook that blocks an edit or tool call until its governing convention skill has been loaded",
   "type": "module",
   "license": "MIT",
