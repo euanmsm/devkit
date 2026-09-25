@@ -473,7 +473,7 @@ function paramName(text) {
  *
  * @param lines - Every line of the file
  * @param n - Line the declaration starts on, 0-based
- * @returns `{ params, line, rest }`, or null when the list never closes
+ * @returns `{ params, line, rest, restCol }`, or null when the list never closes
  */
 function readSignature(lines, n) {
   const first = stripLiterals(lines[n]);
@@ -507,6 +507,7 @@ function readSignature(lines, n) {
             })),
             line: i,
             rest: line.slice(c + 1),
+            restCol: c + 1,
           };
       }
 
@@ -532,6 +533,8 @@ function readTail(lines, sig) {
 
   for (let i = sig.line; i < Math.min(lines.length, sig.line + 8); i++) {
     const line = i === sig.line ? sig.rest : stripLiterals(lines[i]);
+    // Columns index `rest`, which starts partway along the signature's line.
+    const offset = i === sig.line ? sig.restCol : 0;
 
     for (let c = 0; c < line.length; c++) {
       const ch = line[c];
@@ -542,10 +545,13 @@ function readTail(lines, sig) {
       else if (ch === '>' && line[c - 1] !== '=' && depth > 0) depth--;
 
       if (depth === 0 && ch === '{')
-        return { returnType: annotation(pre), body: { line: i, col: c } };
+        return {
+          returnType: annotation(pre),
+          body: { line: i, col: c + offset },
+        };
 
       if (depth === 0 && ch === '=' && line[c + 1] === '>') {
-        const body = firstBrace(lines, i, c + 2, sig.line + 8);
+        const body = firstBrace(lines, i, c + 2 + offset, sig.line + 8);
         return { returnType: annotation(pre), body, expression: !body };
       }
 

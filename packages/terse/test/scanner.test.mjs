@@ -634,6 +634,116 @@ describe('rule 20 — harder signatures', () => {
   });
 });
 
+describe('rule 20 — where a body ends', () => {
+  const DOC = [
+    '/**',
+    ' * Does a thing.',
+    ' *',
+    ' * @param x - The input',
+    ' * @returns The output',
+    ' */',
+  ];
+  const VOID_DOC = [
+    '/**',
+    ' * Does a thing.',
+    ' *',
+    ' * @param x - The input',
+    ' */',
+  ];
+
+  test('leaves a function alone when a top-level throw follows it', () => {
+    passes(
+      src(
+        ...DOC,
+        'function a(x) {',
+        '\treturn x;',
+        '}',
+        '',
+        "if (!x) throw new Error('boom');",
+      ),
+    );
+  });
+
+  test('leaves an arrow alone when a top-level throw follows it', () => {
+    passes(
+      src(
+        ...DOC,
+        'const a = (x) => {',
+        '\treturn x;',
+        '};',
+        '',
+        "if (!x) throw new Error('boom');",
+      ),
+    );
+  });
+
+  test("keeps a later function's return out of a void function", () => {
+    passes(
+      src(
+        ...VOID_DOC,
+        'function a(x) {',
+        '\tconsole.log(x);',
+        '}',
+        '',
+        ...DOC,
+        'function b(x) {',
+        '\treturn x;',
+        '}',
+      ),
+    );
+  });
+
+  test("keeps a later arrow's return out of a void arrow", () => {
+    passes(
+      src(
+        ...VOID_DOC,
+        'const a = (x) => {',
+        '\tconsole.log(x);',
+        '};',
+        '',
+        ...DOC,
+        'const b = (x) => {',
+        '\treturn x;',
+        '};',
+      ),
+    );
+  });
+
+  test('flags a function that throws inside its own body', () => {
+    const found = scan(
+      src(
+        ...DOC,
+        'function a(x) {',
+        "\tif (!x) throw new Error('boom');",
+        '\treturn x;',
+        '}',
+      ),
+    );
+
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['Function throws but has no @throws.'],
+    );
+  });
+
+  test('flags an arrow that throws inside its own body', () => {
+    const found = scan(
+      src(
+        ...DOC,
+        'const a = (x) => {',
+        "\tif (!x) throw new Error('boom');",
+        '\treturn x;',
+        '};',
+      ),
+    );
+
+    assert.deepEqual(
+      found.map((f) => f.message),
+      ['Function throws but has no @throws.'],
+    );
+  });
+});
+
 describe('rule 2 — brace counting', () => {
   test('keeps checking exports after a brace inside a string', () => {
     breaks(
