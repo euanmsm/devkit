@@ -3,12 +3,13 @@
 // ============================================================================
 //
 // PreToolUse hook. Blocks a tool call until the skills it needs have been
-// loaded this session — by the tool's name when a tool rule matches, otherwise
-// by the path of the file it writes. Fails open on any error.
+// loaded by the agent making it — by the tool's name when a tool rule matches,
+// otherwise by the path of the file it writes. A subagent is checked against
+// its own transcript, not its parent's. Fails open on any error.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 
 import { compile, loadConfig, repoRoot } from '@euanmsm/devkit-core';
 
@@ -38,12 +39,26 @@ function deny(reason) {
 }
 
 /**
- * Locates the session transcript the hook payload belongs to.
+ * Locates the transcript of the agent making the tool call.
  *
  * @param input - The hook payload
  * @returns Path to the transcript, or null when it cannot be found
  */
 export function findTranscript(input) {
+  const session = findSessionTranscript(input);
+  if (!session || !input.agent_id) return session;
+
+  return findAgentTranscript(session, input.agent_id);
+}
+
+/**
+ * Locates the main session's transcript, which the payload names even when a
+ * subagent makes the call.
+ *
+ * @param input - The hook payload
+ * @returns Path to the transcript, or null when it cannot be found
+ */
+function findSessionTranscript(input) {
   if (input.transcript_path && existsSync(input.transcript_path))
     return input.transcript_path;
 
@@ -56,6 +71,30 @@ export function findTranscript(input) {
   }
 
   return null;
+}
+
+/**
+ * Locates a subagent's transcript beside its session's.
+ *
+ * @param sessionTranscript - Path to the main session's transcript
+ * @param agentId - The subagent's id from the hook payload
+ * @returns Path to the transcript, or null when it cannot be found
+ */
+export function findAgentTranscript(sessionTranscript, agentId) {
+  const subagents = join(
+    dirname(sessionTranscript),
+    basename(sessionTranscript, '.jsonl'),
+    'subagents',
+  );
+  if (!existsSync(subagents)) return null;
+
+  // Workflow agents sit one level down, under workflows/<run>/.
+  const name = `agent-${agentId}.jsonl`;
+  const hit = readdirSync(subagents, { recursive: true }).find(
+    (entry) => basename(entry) === name,
+  );
+
+  return hit ? join(subagents, hit) : null;
 }
 
 /**
@@ -176,9 +215,13 @@ export function main() {
   if (missing.length === 0) allow();
 
   const calls = missing.map((s) => `  Skill(skill: "${s}")`).join('\n');
+  const scope = input.agent_id
+    ? `Skills loaded by the parent session do not count here — load them yourself.\n\n`
+    : '';
 
   deny(
     `BLOCKED — ${gate.subject} is governed by convention skills you have not loaded this session.\n\n` +
+      scope +
       `Load them, then make this call again:\n${calls}\n\n` +
       `These skills hold the conventions this call must follow. Do not work around this by ` +
       `writing from memory. The mapping lives in .devkit/${CONFIG_NAME}.`,
