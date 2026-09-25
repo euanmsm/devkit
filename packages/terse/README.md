@@ -96,6 +96,48 @@ Omitting the `matcher` on the `PostToolUse` entry is deliberate — it matches
 every tool, so a file written through an MCP server or some future tool is
 covered without anyone remembering to add it.
 
+## Scanning the whole repo
+
+`terse` on its own only judges what a branch adds. `terse scan` judges every
+line of every file, against the same config:
+
+```sh
+npx terse scan                      # every governed file in the repository
+npx terse scan src/ lib/util.ts     # folders and files, mixed
+npx terse scan --rule no-person src/
+```
+
+A folder covers every file under it that git knows about, including new files
+not yet committed, minus anything `governed` and `exclude` leave out. A named
+file the config does not govern, such as a `.md`, is reported as skipped rather
+than scanned.
+
+Findings are grouped by file, then counted per rule, so you can see which rules
+carry the backlog:
+
+```
+src/server.ts:14  [exported-jsdoc]  Declaration has no JSDoc.
+src/server.ts:30  [no-person]  Comment mentions first or second person.
+
+By rule
+  exported-jsdoc  1
+  no-person       1
+
+2 findings in 1 of 120 files.
+```
+
+`--rule` (repeatable) shows only the rules you name, which is the easy way to
+clear a backlog one rule at a time. Naming a rule that cannot report anything —
+one that does not exist, one of the prose-only rules, or one your config
+switches off — is an error rather than a quiet pass.
+
+It exits 1 on any finding, so once a repository is clean you can make it a test
+that fails on old violations as well as new ones:
+
+```json
+{ "scripts": { "test:comments": "terse scan" } }
+```
+
 ## Configuring
 
 Run `init` once. It writes a complete config — every rule and every cap spelled

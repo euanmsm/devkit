@@ -70,5 +70,7 @@ export function main() {
   console.log(
     `Wrote .devkit/${CONFIG_NAME} — every rule listed, all switched on.`,
   );
-  console.log('Edit it to turn rules off, then run `terse` to check a branch.');
+  console.log(
+    'Edit it to turn rules off, then run `terse scan` to check every file, or `terse` to check a branch.',
+  );
 }

@@ -20,6 +20,7 @@
     ".": "./src/scanner.mjs",
     "./gate": "./src/gate.mjs",
     "./check": "./src/check.mjs",
+    "./scan": "./src/scan.mjs",
     "./init": "./src/init.mjs",
     "./docs": "./src/docs.mjs",
     "./watch": "./src/watch.mjs"
