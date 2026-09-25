@@ -12,6 +12,7 @@
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"packages/*/test/*.test.mjs\"",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "version-packages": "changeset version && npm install --package-lock-only",
     "release": "npm run test && changeset publish"
   },
   "devDependencies": {

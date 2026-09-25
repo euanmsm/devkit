@@ -31,6 +31,8 @@ jobs:
       - uses: changesets/action@v2.1.2
         with:
           github-token: ${{ secrets.RELEASE_TOKEN }}
+          # Bumps the lockfile alongside each package.json, keeping the two in step.
+          version-script: npm run version-packages
           publish-script: npm run release
           pr-title: Version Packages
           commit-message: Version Packages
