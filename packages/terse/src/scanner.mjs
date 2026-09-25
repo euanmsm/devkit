@@ -6,10 +6,6 @@
 // run, the caps they apply and the phrases they ban all come from
 // .devkit/terse.json. Findings carry the name of the rule they break.
 
-import { readFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
-
 import { compile, loadConfig } from '@euanmsm/devkit-core';
 
 // ============================================================================
@@ -1195,52 +1191,4 @@ export function newFindings(before, after, span, path = '') {
   }
 
   return out;
-}
-
-// ============================================================================
-// CLI
-// ============================================================================
-
-/**
- * Lists the files to scan.
- *
- * @param args - Paths the caller named, empty for the whole tree
- * @returns Repo-relative paths
- */
-function targets(args) {
-  if (args.length) return args;
-  return execSync('git ls-files', { encoding: 'utf8', maxBuffer: 1 << 28 })
-    .trim()
-    .split('\n')
-    .filter(governs);
-}
-
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href
-) {
-  const files = targets(process.argv.slice(2));
-  let total = 0;
-
-  let unreadable = 0;
-
-  for (const file of files) {
-    let source;
-    // One bad path must not suppress the findings for every file after it.
-    try {
-      source = readFileSync(file, 'utf8');
-    } catch (error) {
-      console.error(`${file}  could not be read — ${error.message}`);
-      unreadable++;
-      continue;
-    }
-
-    const found = scan(source, file);
-    total += found.length;
-    for (const f of found)
-      console.log(`${file}:${f.line}  [${f.rule}]  ${f.message}`);
-  }
-
-  console.log(`\n${total} finding(s) across ${files.length} file(s).`);
-  process.exit(total > 0 || unreadable > 0 ? 1 : 0);
 }
