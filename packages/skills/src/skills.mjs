@@ -7,6 +7,9 @@
 
 import { loadConfig } from '@euanmsm/devkit-core';
 
+import { loadReviewConfig } from './review/config.mjs';
+import { skillValues } from './review/roster.mjs';
+
 /** Where `terse-docs` writes the comment contract when `rulesDoc` is unset. */
 const DEFAULT_RULES_DOC = '.devkit/comment-rules.md';
 
@@ -23,8 +26,8 @@ function rulesDocFor(root) {
 /**
  * The installable skills by name.
  *
- * Each `files` entry names a template under `templates/`, the config key of
- * the directory it lands in, and its path inside that directory.
+ * A `files` entry, or a function of the options returning them, names a
+ * template, its directory setting and its path; `engine` marks the workflow.
  */
 export const SKILLS = {
   'clean-commit-history': {
@@ -82,5 +85,39 @@ export const SKILLS = {
         .map((skill) => `  - ${skill}`)
         .join('\n'),
     }),
+  },
+
+  'code-review': {
+    defaults: {
+      name: 'code-review',
+      config: '.devkit/code-review.mjs',
+      githubReview: false,
+    },
+    files: (options) => [
+      {
+        template: 'code-review/SKILL.md',
+        dir: 'skillsDir',
+        path: `${options.name}/SKILL.md`,
+      },
+      {
+        template: 'code-review/review.workflow.js',
+        dir: 'skillsDir',
+        path: `${options.name}/review.workflow.js`,
+        engine: true,
+      },
+      ...(options.githubReview
+        ? [
+            {
+              template: 'code-review/pr-reviews.md',
+              dir: 'rulesDir',
+              path: 'pr-reviews.md',
+            },
+          ]
+        : []),
+    ],
+    values: async (options, root, shared) => {
+      const review = await loadReviewConfig(root, options, shared);
+      return { ...skillValues(review, options, shared), review };
+    },
   },
 };

@@ -17,9 +17,11 @@
   },
   "files": [
     "bin",
+    "docs",
     "src",
     "templates",
-    "skills.example.json"
+    "skills.example.json",
+    "code-review.example.mjs"
   ],
   "engines": {
     "node": ">=22.11"

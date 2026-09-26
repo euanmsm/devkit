@@ -16,8 +16,8 @@ import { generatedOnDisk, isGenerated, plan } from './sync.mjs';
  * @param root - The repository root
  * @returns One `{ path, problem }` per mismatch, empty when in step
  */
-export function check(root) {
-  const files = plan(root);
+export async function check(root) {
+  const files = await plan(root);
   const problems = [];
 
   for (const { path, content } of files) {

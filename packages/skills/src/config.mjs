@@ -16,6 +16,7 @@ export const CONFIG_NAME = 'skills.json';
 const SHARED_DEFAULTS = {
   skillsDir: '.claude/skills',
   agentsDir: '.claude/agents',
+  rulesDir: '.claude/rules',
   baseBranch: 'main',
 };
 
