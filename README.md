@@ -18,6 +18,7 @@ nothing here ends up in a production bundle.
 | [`@euanmsm/vouch`](packages/vouch)         | Lets named packages run install scripts while blocking everyone else                    |
 | [`@euanmsm/wt`](packages/wt)               | Runs git worktrees side by side, each with its own ports, env files and database        |
 | [`@euanmsm/crib`](packages/crib)           | Terminal cheat sheets for everyday CLIs, plus short courses with practice               |
+| [`@euanmsm/skills`](packages/skills)       | Writes shared Claude Code skills into a repository from one config file                 |
 | [`@euanmsm/devkit-core`](packages/core)    | Config loading the others share. Not useful on its own                                  |
 
 ## Installing one
