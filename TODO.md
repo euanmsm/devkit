@@ -18,8 +18,17 @@ them from `.devkit/skills.json` instead of keeping a hand-written copy.
       from the package as `npx skills prepass`. The configs that reproduce each
       repo's current review are in
       [`packages/skills/test/fixtures/review/`](packages/skills/test/fixtures/review/)
+- [x] **Docs** — how `sync` works, and one page per skill covering exactly how
+      it runs and every option, in
+      [`packages/skills/docs/`](packages/skills/docs/)
 
 ## Next
+
+- [ ] **Publish `@euanmsm/skills`** — everything below waits on this
+  - Push `euanmadhar/skills-package` and open a pull request into `main`
+  - Merge it once CI passes
+  - Merge the Version Packages pull request the release workflow then opens,
+    which publishes 0.1.0 to npm
 
 - [ ] **Adopt in Curricular and Sales harness**, once `@euanmsm/skills` is
       published
