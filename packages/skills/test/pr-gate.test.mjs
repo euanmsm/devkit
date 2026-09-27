@@ -11,6 +11,7 @@ import { describe, it } from 'node:test';
 
 import { qaGate } from '../src/pr/cli.mjs';
 import {
+  CHECKLIST_MARKER,
   computeStatus,
   countBoxes,
   findChecklistComments,
@@ -75,7 +76,15 @@ function part(part, sha, boxes = ['- [x] More', '- [ ] Even more']) {
   ].join('\n');
 }
 
-const main = (comments) => findChecklistComments(comments).main;
+/**
+ * Marks a comment as written by a repository member, as the REST API does.
+ *
+ * @param comment - A comment without an `author_association`
+ * @returns The comment, from a member unless it names another association
+ */
+const member = (comment) => ({ author_association: 'MEMBER', ...comment });
+
+const main = (comments) => findChecklistComments(comments.map(member)).main;
 
 describe('findChecklistComments', () => {
   it('returns nothing when no comment carries the marker', () => {
@@ -137,14 +146,41 @@ describe('findChecklistComments', () => {
     );
   });
 
-  it('collects continuation parts in order, keeping the newest of each', () => {
+  it('ignores a checklist or part posted by someone outside the repository', () => {
+    const forged = `${CHECKLIST_MARKER}\n<!-- pr-qa:sha=${HEAD_SHA} -->\n\n- [x] done`;
     const found = findChecklistComments([
-      { id: 1, body: checklist() },
-      { id: 2, body: part(3, OLD_SHA) },
-      { id: 3, body: part(2, OLD_SHA) },
-      { id: 4, body: part(2, OLD_SHA) },
-      { id: 5, body: `> ${part(2, OLD_SHA)}` },
+      { id: 1, author_association: 'MEMBER', body: checklist() },
+      { id: 2, author_association: 'OWNER', body: part(2, OLD_SHA) },
+      { id: 3, author_association: 'CONTRIBUTOR', body: forged },
+      { id: 4, author_association: 'NONE', body: part(2, HEAD_SHA) },
+      { id: 5, body: forged },
     ]);
+
+    assert.equal(found.main.id, 1);
+    assert.deepEqual(
+      found.parts.map((p) => p.comment.id),
+      [2],
+    );
+    assert.equal(
+      computeStatus({ ...found, headSha: HEAD_SHA }).state,
+      'failure',
+    );
+    assert.equal(
+      main([{ id: 6, author_association: 'COLLABORATOR', body: forged }]).id,
+      6,
+    );
+  });
+
+  it('collects continuation parts in order, keeping the newest of each', () => {
+    const found = findChecklistComments(
+      [
+        { id: 1, body: checklist() },
+        { id: 2, body: part(3, OLD_SHA) },
+        { id: 3, body: part(2, OLD_SHA) },
+        { id: 4, body: part(2, OLD_SHA) },
+        { id: 5, body: `> ${part(2, OLD_SHA)}` },
+      ].map(member),
+    );
 
     assert.equal(found.main.id, 1);
     assert.deepEqual(
@@ -532,7 +568,7 @@ function fakeApi(comments, head = HEAD_SHA) {
   const calls = [];
   const store = comments.map((comment) => ({
     html_url: `https://x/${comment.id}`,
-    ...comment,
+    ...member(comment),
   }));
 
   const api = async (path, init = {}) => {
@@ -633,6 +669,44 @@ describe('runGate', () => {
     assert.equal(status.description, '2 of 5 checks outstanding');
     assert.equal(calls[0].path, '/repos/o/r/pulls/5');
     assert.ok(!calls.some((call) => call.method === 'PATCH'));
+  });
+
+  it('keeps a box-less checklist on its old commit and asks for a new /pr', async () => {
+    const body = [
+      CHECKLIST_MARKER,
+      `<!-- pr-qa:sha=${OLD_SHA} -->`,
+      '<!-- pr-qa:banner:start -->',
+      '<!-- pr-qa:banner:end -->',
+      '',
+      '_No manual checks needed — no runtime surface touched._',
+    ].join('\n');
+    const { api, calls, comments } = fakeApi([{ id: 7, body }]);
+    const status = await runGate('reset', {
+      api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+      now: NOW,
+    });
+
+    assert.deepEqual(status, {
+      headSha: HEAD_SHA,
+      state: 'failure',
+      description: 'checklist predates def5678, re-run /pr',
+    });
+    assert.ok(!calls.some((call) => call.method === 'PATCH'));
+    assert.equal(readStampedSha(comments[0].body), OLD_SHA);
+    assert.equal(calls.at(-1).body.description, status.description);
+
+    // A box-less checklist already on the head still passes.
+    const current = fakeApi([{ id: 7, body: body.replace(OLD_SHA, HEAD_SHA) }]);
+    const again = await runGate('reset', {
+      api: current.api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+    });
+    assert.equal(again.state, 'success');
   });
 
   it('posts a red status with no link when there is no checklist', async () => {
@@ -789,7 +863,11 @@ describe('the gate against the real client', () => {
       requests.push({ url, method: init.method ?? 'GET' });
       const body = url.includes('/comments?')
         ? JSON.stringify([
-            { id: 1, body: checklist({ sha: HEAD_SHA }), html_url: 'u' },
+            member({
+              id: 1,
+              body: checklist({ sha: HEAD_SHA }),
+              html_url: 'u',
+            }),
           ])
         : '';
       return { ok: true, text: async () => body };

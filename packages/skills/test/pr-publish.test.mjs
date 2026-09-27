@@ -29,6 +29,7 @@ import { TEMPLATE, prRepo } from './pr-helpers.mjs';
 import { write } from './repo.mjs';
 
 const SHA = 'def5678def5678def5678def5678def5678def56';
+const CHECKLIST = '<!-- pr-qa:manual-checklist';
 const CONFIG = { template: '.github/pull_request_template.md' };
 
 const RESULT = {
@@ -43,10 +44,15 @@ const RESULT = {
 /**
  * A fake `gh` for one branch, recording every call and the files it was handed.
  *
- * @param options - The `open` PR, if any, and the checklist comment `heads` already on it by id
+ * @param options - The `open` PR, if any, the checklist comment `heads` already on it by id, the PR's `remoteHead` on GitHub, and whether the checked commit `contains` that head
  * @returns The `gh` function and its recorded `calls`
  */
-function fakeGh({ open = null, heads = {} } = {}) {
+function fakeGh({
+  open = null,
+  heads = {},
+  remoteHead = SHA,
+  contains = false,
+} = {}) {
   const calls = [];
 
   const gh = (args) => {
@@ -59,19 +65,23 @@ function fakeGh({ open = null, heads = {} } = {}) {
     calls.push(call);
 
     if (args[0] === 'branch-name') return 'feature/thing';
+    if (args[0] === 'is-ancestor') {
+      if (!contains) throw new Error('not an ancestor');
+      return '';
+    }
     if (
       args[0] === 'pr' &&
       args[1] === 'view' &&
-      args.includes('number,state')
+      args.includes('number,state,headRefOid')
     ) {
       if (!open) throw new Error('no pull requests found');
-      return JSON.stringify(open);
+      return JSON.stringify({ headRefOid: remoteHead, ...open });
     }
     if (args[0] === 'pr' && args[1] === 'view') {
       return JSON.stringify({
         number: open?.number ?? 12,
         url: 'https://github.com/o/r/pull/12',
-        headRefOid: SHA,
+        headRefOid: remoteHead,
       });
     }
     if (args[0] === 'api' && args.includes('--paginate')) {
@@ -144,6 +154,19 @@ describe('pr publish — pieces', () => {
     );
   });
 
+  it('refuses a blank summary', () => {
+    const root = prRepo(null);
+    write(
+      root,
+      'tmp/blank.json',
+      JSON.stringify({ ...RESULT, summary: ' \n' }),
+    );
+    assert.throws(
+      () => readResult(join(root, 'tmp/blank.json')),
+      /empty PR summary/,
+    );
+  });
+
   it('builds one comment carrying every marker the gate reads', () => {
     const [body, ...rest] = buildComments(RESULT.checklist, SHA);
 
@@ -155,7 +178,10 @@ describe('pr publish — pieces', () => {
       /<!-- pr-qa:banner:start -->\n<!-- pr-qa:banner:end -->/,
     );
     assert.match(body, /## Manual QA — `def5678`\n\nboot/);
-    assert.equal(findChecklistComments([{ body }]).main.body, body);
+    assert.equal(
+      findChecklistComments([{ author_association: 'OWNER', body }]).main.body,
+      body,
+    );
   });
 
   it('splits a long checklist between sections, each part under the limit', () => {
@@ -174,7 +200,7 @@ describe('pr publish — pieces', () => {
     assert.ok(!bodies[1].includes('banner'));
 
     const found = findChecklistComments(
-      bodies.map((body, id) => ({ id, body })),
+      bodies.map((body, id) => ({ id, author_association: 'OWNER', body })),
     );
     assert.equal(found.parts.length, bodies.length - 1);
     const total = bodies.reduce((sum, body) => sum + countBoxes(body).total, 0);
@@ -215,6 +241,7 @@ describe('pr publish — against a fake gh', () => {
     const outcome = publish(root, CONFIG, {
       result: resultFile(root, RESULT),
       base: 'main',
+      head: SHA,
       gh,
     });
 
@@ -259,18 +286,21 @@ describe('pr publish — against a fake gh', () => {
     const outcome = publish(root, CONFIG, {
       result: resultFile(root, RESULT),
       base: 'main',
+      head: SHA,
       gh,
     });
 
     assert.equal(outcome.created, false);
     assert.ok(!calls.some((c) => c.args[1] === 'create'));
     const edit = calls.find((c) => c.args[1] === 'edit');
-    assert.deepEqual(edit.args.slice(0, 5), [
+    assert.deepEqual(edit.args.slice(0, 7), [
       'pr',
       'edit',
       '12',
       '--title',
       'feature/thing',
+      '--base',
+      'main',
     ]);
 
     const patch = calls.find((c) => c.args.includes('PATCH'));
@@ -284,6 +314,7 @@ describe('pr publish — against a fake gh', () => {
     publish(root, CONFIG, {
       result: resultFile(root, RESULT),
       base: 'main',
+      head: SHA,
       gh,
     });
 
@@ -307,6 +338,7 @@ describe('pr publish — against a fake gh', () => {
     const grown = publish(root, CONFIG, {
       result: resultFile(root, big),
       base: 'main',
+      head: SHA,
       gh: grow.gh,
     });
     assert.equal(grown.parts, 2);
@@ -325,6 +357,7 @@ describe('pr publish — against a fake gh', () => {
     publish(root, CONFIG, {
       result: resultFile(root, RESULT),
       base: 'main',
+      head: SHA,
       gh: shrink.gh,
     });
     const deletes = shrink.calls
@@ -342,6 +375,7 @@ describe('pr publish — against a fake gh', () => {
     publish(root, CONFIG, {
       result: resultFile(root, RESULT),
       base: 'main',
+      head: SHA,
       gh,
     });
 
@@ -351,6 +385,81 @@ describe('pr publish — against a fake gh', () => {
       jq,
       /^\.\[\] \| select\(\.body \| startswith\("<!-- pr-qa:manual-checklist"\)\)/,
     );
+  });
+
+  it('only counts checklist comments from an owner, member or collaborator', () => {
+    const root = prRepo(null);
+    const { gh, calls } = fakeGh();
+    publish(root, CONFIG, {
+      result: resultFile(root, RESULT),
+      base: 'main',
+      head: SHA,
+      gh,
+    });
+
+    const list = calls.find((c) => c.args.includes('--paginate'));
+    const jq = list.args[list.args.indexOf('--jq') + 1];
+    const comments = [
+      { id: 1, author_association: 'MEMBER', body: CHECKLIST },
+      { id: 2, author_association: 'NONE', body: CHECKLIST },
+      { id: 3, author_association: 'CONTRIBUTOR', body: CHECKLIST },
+      {
+        id: 4,
+        author_association: 'COLLABORATOR',
+        body: `${CHECKLIST}:part=2 -->`,
+      },
+      { id: 5, author_association: 'OWNER', body: 'LGTM' },
+    ];
+    const kept = execFileSync('jq', ['-r', jq], {
+      input: JSON.stringify(comments),
+      encoding: 'utf8',
+    })
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line).id);
+
+    assert.deepEqual(kept, [1, 4]);
+  });
+
+  it('refuses when the PR on GitHub is behind the commit /pr checked', () => {
+    const root = prRepo(null);
+    const OLD = 'abc1234abc1234abc1234abc1234abc1234abc12';
+    const { gh, calls } = fakeGh({
+      open: { number: 12, state: 'OPEN' },
+      remoteHead: OLD,
+      contains: true,
+    });
+
+    assert.throws(
+      () =>
+        publish(root, CONFIG, {
+          result: resultFile(root, RESULT),
+          base: 'main',
+          head: SHA,
+          gh,
+        }),
+      /PR #12 is at abc1234 but \/pr checked def5678.*push first/,
+    );
+    assert.ok(!calls.some((c) => c.args[1] === 'edit'));
+    assert.ok(!calls.some((c) => c.args[0] === 'api'));
+  });
+
+  it('refuses when commits landed on GitHub after /pr checked the branch', () => {
+    const root = prRepo(null);
+    const NEW = '1234567123456712345671234567123456712345';
+    const { gh, calls } = fakeGh({ remoteHead: NEW });
+
+    assert.throws(
+      () =>
+        publish(root, CONFIG, {
+          result: resultFile(root, RESULT),
+          base: 'main',
+          head: SHA,
+          gh,
+        }),
+      /is at 1234567 but \/pr checked def5678: commits landed on GitHub.*re-run \/pr/,
+    );
+    assert.ok(!calls.some((c) => c.args.includes('POST')));
   });
 
   it('passes a gh failure through, naming the command', () => {
@@ -368,6 +477,7 @@ describe('pr publish — against a fake gh', () => {
         publish(root, CONFIG, {
           result: resultFile(root, RESULT),
           base: 'main',
+          head: SHA,
           gh,
         }),
       /must first push/,
@@ -394,6 +504,10 @@ describe('the skills pr command', () => {
     await assert.rejects(
       prCommand(['publish', '--base', 'main'], root),
       /skills pr publish: missing --result/,
+    );
+    await assert.rejects(
+      prCommand(['publish', '--result', 'r.json', '--base', 'main'], root),
+      /skills pr publish: missing --head/,
     );
     await assert.rejects(
       prCommand(['prepass'], root),
@@ -444,7 +558,7 @@ describe('the skills pr command, end to end', () => {
 echo "$*" >> "${log}"
 case "$*" in
   *number,state*) exit 1 ;;
-  "pr view"*) echo '{"number":7,"url":"https://x/7","headRefOid":"${SHA}"}' ;;
+  "pr view"*) echo '{"number":7,"url":"https://x/7","headRefOid":"'"$(git rev-parse HEAD)"'"}' ;;
   *--paginate*) ;;
   *) echo ok ;;
 esac
@@ -467,7 +581,15 @@ esac
       write(root, 'tmp/out.json', JSON.stringify({ result: RESULT }));
       assert.equal(
         await prCommand(
-          ['publish', '--result', 'tmp/out.json', '--base', args.base],
+          [
+            'publish',
+            '--result',
+            'tmp/out.json',
+            '--base',
+            args.base,
+            '--head',
+            args.headSha,
+          ],
           root,
         ),
         0,
@@ -509,6 +631,7 @@ esac
           publish(root, CONFIG, {
             result: resultFile(root, RESULT),
             base: 'main',
+            head: SHA,
           }),
         /gh pr create failed: HTTP 401: Bad credentials/,
       );

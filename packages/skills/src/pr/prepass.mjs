@@ -28,7 +28,7 @@ const STORY_FILE = /\.stories\.[cm]?[jt]sx?$/;
  * @param root - The repository root
  * @param config - The resolved PR config
  * @param options - `scratch` folder, `baseBranch` from the shared settings, an optional `base` override, and `run`/`rg` stand-ins for tests
- * @returns The args, or `{ ahead: 0, base, branch }` when the branch has nothing to open a PR for
+ * @returns The args, with the `headSha` publish checks against GitHub, or `{ ahead: 0, base, branch }` when the branch has nothing to open a PR for
  * @throws When the branch is detached or the base cannot be found
  */
 export async function prPrepass(
@@ -46,11 +46,18 @@ export async function prPrepass(
     (config.base === 'stack'
       ? (stackParent(run, root, branch) ?? baseBranch)
       : baseBranch);
+  try {
+    // Offline, or with no remote, the refs already here have to do.
+    git('fetch', '--quiet', 'origin', base);
+  } catch {
+    // Fall through to the refs on disk.
+  }
   const baseRef = resolveRef(git, base);
 
   const ahead = Number(git('rev-list', '--count', `${baseRef}..HEAD`).trim());
   if (ahead === 0) return { ahead: 0, base, branch };
 
+  const headSha = git('rev-parse', 'HEAD').trim();
   const mergeBase = git('merge-base', baseRef, 'HEAD').trim();
   const scratchDir = path.resolve(root, scratch);
   mkdirSync(scratchDir, { recursive: true });
@@ -120,6 +127,7 @@ export async function prPrepass(
     branch,
     base,
     ahead,
+    headSha,
     diffStat,
     diffPath,
     patchDir: path.join(scratchDir, 'pr-qa-patches'),
@@ -165,15 +173,18 @@ export function stackParent(run, root, branch) {
 }
 
 /**
- * Finds the ref to diff against, falling back to the remote branch.
+ * Finds the ref to diff against, preferring the remote branch GitHub diffs against.
+ *
+ * A local base branch is often weeks behind, and diffing against it would
+ * pull every commit merged upstream since into the checklist.
  *
  * @param git - Runs git and returns its stdout
  * @param base - The base branch name
  * @returns A ref git can resolve
- * @throws When neither the branch nor `origin/<branch>` exists
+ * @throws When neither `origin/<branch>` nor the branch exists
  */
 function resolveRef(git, base) {
-  for (const ref of [base, `origin/${base}`]) {
+  for (const ref of [`origin/${base}`, base]) {
     try {
       git('rev-parse', '--verify', '--quiet', `${ref}^{commit}`);
       return ref;
@@ -341,7 +352,12 @@ function readStoryTitle(file) {
 }
 
 /**
- * Finds the files importing each changed module.
+ * Finds the files importing each changed module, in one ripgrep pass.
+ *
+ * ripgrep finds every import whose specifier ends in a changed file's name;
+ * each match then counts only when its path leads to that file. A relative
+ * specifier must resolve to it, and an aliased or package one must end in its
+ * path, not just its name.
  *
  * @param root - The repository root
  * @param files - Repo-relative changed code files
@@ -349,33 +365,100 @@ function readStoryTitle(file) {
  * @returns The importers per file, or null when ripgrep is not installed
  */
 export function findImporters(root, files, rg) {
-  const result = {};
+  if (files.length === 0) return {};
 
-  for (const file of files) {
-    const stem = stemOf(file);
-    const name =
-      stem === 'index' ? path.posix.basename(path.posix.dirname(file)) : stem;
-    const pattern = `(from|import\\(|require\\()\\s*['"][^'"]*\\b${escapeRegExp(name)}(\\.[a-z]+)?['"]`;
+  const targets = files.map((file) => ({ file, segments: importPath(file) }));
+  const names = [...new Set(targets.map((target) => target.segments.at(-1)))];
+  const pattern = `(from|import\\(|require\\()\\s*['"][^'"]*\\b(${names.map(escapeRegExp).join('|')})(\\.[a-z]+)?['"]`;
 
-    const stdout = rg(
-      ['--files-with-matches', '--no-messages', '-e', pattern, '.'],
-      root,
-    );
-    if (stdout === null) return null;
+  const stdout = rg(
+    [
+      '--only-matching',
+      '--with-filename',
+      '--no-heading',
+      '--no-line-number',
+      '--null',
+      '--no-messages',
+      '-e',
+      pattern,
+      '.',
+    ],
+    root,
+  );
+  if (stdout === null) return null;
 
-    const importers = stdout
-      .split('\n')
-      .map((line) => line.trim().replace(/^\.\//, ''))
-      .filter((line) => line && line !== file)
-      .sort();
+  const found = new Map(files.map((file) => [file, new Set()]));
 
-    result[file] = {
-      importers: importers.slice(0, MAX_IMPORTERS),
-      more: Math.max(0, importers.length - MAX_IMPORTERS),
-    };
+  for (const line of stdout.split('\n')) {
+    const split = line.indexOf('\0');
+    if (split === -1) continue;
+
+    const importer = line.slice(0, split).replace(/^\.\//, '');
+    const specifier = /['"]([^'"]+)['"]/.exec(line.slice(split + 1))?.[1];
+    if (!specifier) continue;
+
+    for (const target of targets) {
+      if (
+        importer !== target.file &&
+        importsTarget(importer, specifier, target.segments)
+      ) {
+        found.get(target.file).add(importer);
+      }
+    }
   }
 
-  return result;
+  return Object.fromEntries(
+    files.map((file) => {
+      const importers = [...found.get(file)].sort();
+      return [
+        file,
+        {
+          importers: importers.slice(0, MAX_IMPORTERS),
+          more: Math.max(0, importers.length - MAX_IMPORTERS),
+        },
+      ];
+    }),
+  );
+}
+
+/**
+ * Splits a module path into the segments an import of it would name.
+ *
+ * @param file - A repo-relative path or a resolved specifier
+ * @returns Its segments with any extensions dropped, and a trailing `index` dropped
+ */
+function importPath(file) {
+  const segments = path.posix.normalize(file).split('/');
+  segments[segments.length - 1] = segments.at(-1).split('.')[0];
+  if (segments.length > 1 && segments.at(-1) === 'index') segments.pop();
+  return segments;
+}
+
+/**
+ * Tells whether an import specifier names a changed module.
+ *
+ * @param importer - The importing file, repo-relative
+ * @param specifier - The imported path as written
+ * @param target - The changed module's import segments
+ * @returns Whether a relative specifier resolves to it, or another specifier ends in its folder and name
+ */
+function importsTarget(importer, specifier, target) {
+  if (specifier.startsWith('.')) {
+    const resolved = importPath(
+      path.posix.join(path.posix.dirname(importer), specifier),
+    );
+    return resolved.join('/') === target.join('/');
+  }
+
+  // `@/a/utils`, `~/a/utils` or `pkg/a/utils`: the first segment is the alias
+  // or package. The rest must name the folder too, unless the file sits
+  // directly under a top-level folder, where an alias names it alone.
+  const tail = importPath(specifier).slice(1);
+  return (
+    tail.length >= Math.max(1, Math.min(2, target.length - 1)) &&
+    tail.length <= target.length &&
+    tail.join('/') === target.slice(-tail.length).join('/')
+  );
 }
 
 /**

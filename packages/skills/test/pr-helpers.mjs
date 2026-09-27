@@ -102,11 +102,27 @@ const GOOD_BACKEND = '```bash\ncurl -s "$PORT/x"\n```\n\n**Expect:** `200`';
 const GOOD_HUMAN = 'Open the page.\n\n**Expect:** "Saved"';
 
 /**
+ * Reads the units a verification prompt hands its checker.
+ *
+ * @param prompt - A `verify:` prompt
+ * @returns The units, each with its `id`, `name`, `kind` and `body`
+ */
+export function promptUnits(prompt) {
+  return JSON.parse(
+    prompt.slice(prompt.indexOf('## The units\n') + '## The units\n'.length),
+  );
+}
+
+/**
  * Builds a canned-reply function for one scenario.
  *
  * The scenario sets the `visible` sections, the `backend` and `human` entry
  * counts over `files`, the `claims` and `failClaims` ids, a `verify` verdict
  * function, `badFormat` human steps, and the number of `stories`.
+ *
+ * `verify` is asked about one unit at a time, as `verify:<unit name>` with
+ * `:r<round>` after the first round, and returns `{ verdict, findings,
+ * rewrite }`, or null to leave that unit out of the checker's answer.
  *
  * @param scenario - The knobs above, each optional
  * @returns The reply function for `runWorkflow`
@@ -243,7 +259,18 @@ export function prReplies(scenario = {}) {
       };
     }
 
-    if (label.startsWith('verify:')) return verify(label, prompt);
+    if (label.startsWith('verify:')) {
+      const round = /:r(\d+)(?::b\d+)?$/.exec(label)?.[1];
+      return {
+        verdicts: promptUnits(prompt).flatMap((unit) => {
+          const verdict = verify(
+            `verify:${unit.name}${round ? `:r${round}` : ''}`,
+            unit,
+          );
+          return verdict ? [{ rewrite: null, ...verdict, id: unit.id }] : [];
+        }),
+      };
+    }
 
     if (label.startsWith('claim:')) {
       const id = label.slice('claim:'.length);

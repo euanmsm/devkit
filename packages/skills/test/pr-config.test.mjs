@@ -199,6 +199,14 @@ describe('pr config — refusals', () => {
     );
     rejects({ layers: [LAYER, LAYER] }, /two layers use the key "api"/);
     rejects(
+      { layers: [{ ...LAYER, paths: ['src/', /^src\/api\//g] }] },
+      /layers\[0\]\.paths\[1\] must not use the g or y flag/,
+    );
+    rejects(
+      minimal({ tests: [/\.test\.ts$/, /\.spec\.ts$/y] }),
+      /tests\[1\] must not use the g or y flag.*Use \/\\\.spec\\\.ts\$\//,
+    );
+    rejects(
       { layers: [{ ...LAYER, extra: 1 }] },
       /unknown key "extra" in layers\[0\]/,
     );
@@ -421,6 +429,29 @@ describe('pr skill — sync and check', () => {
     assert.doesNotMatch(skill, /\{\{/);
   });
 
+  it('keeps the frontmatter valid when a section title has an apostrophe', async () => {
+    const root = prRepo('sales', {
+      overrides: {
+        sections: {
+          backend: { title: "Agent's Checks" },
+          tui: { title: "Operator's TUI Checks" },
+        },
+      },
+    });
+    await sync(root);
+    const skill = readFileSync(
+      join(root, '.claude/skills/pr/SKILL.md'),
+      'utf8',
+    );
+
+    // A single-quoted YAML scalar ends at the first `'` that is not doubled.
+    const scalar = /\ndescription:\n\s+'([\s\S]*?)'\nuser-invocable:/.exec(
+      skill,
+    )[1];
+    assert.doesNotMatch(scalar.replace(/''/g, ''), /'/);
+    assert.match(scalar, /\(Agent''s Checks, Operator''s TUI Checks\)/);
+  });
+
   it('writes a plain base rule and links a traps file kept elsewhere', async () => {
     const root = prRepo('sales', {
       overrides: { traps: 'docs/qa/TRAPS.md' },
@@ -526,6 +557,12 @@ describe('pr skill — sync and check', () => {
       yml.includes(`npx --yes @euanmsm/skills@${version} qa-gate status`),
     );
     assert.match(yml, /\$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+    // A deleted checklist recomputes the status; its payload still has the body.
+    assert.match(yml, /issue_comment:\n\s+types: \[created, edited, deleted\]/);
+    assert.match(
+      yml,
+      /contains\(github\.event\.comment\.body, 'pr-qa:manual-checklist'\)/,
+    );
     assert.match(
       readFileSync(join(root, '.claude/skills/pr/SKILL.md'), 'utf8'),
       /\*\*The gate:\*\* `\.github\/workflows\/pr-manual-qa\.yml`/,

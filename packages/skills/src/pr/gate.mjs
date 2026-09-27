@@ -25,6 +25,14 @@ export const BANNER_END = '<!-- pr-qa:banner:end -->';
 /** The commit-status context a branch ruleset requires. */
 const STATUS_CONTEXT = 'Manual QA';
 
+/**
+ * The `author_association` values whose checklist comments count.
+ *
+ * Anyone who can comment could otherwise post a marked, pre-ticked checklist
+ * and turn the gate green.
+ */
+export const TRUSTED_AUTHORS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+
 /** Page cap when reading a PR's comments, as a backstop against a runaway loop. */
 const MAX_COMMENT_PAGES = 50;
 
@@ -151,9 +159,10 @@ function sameCommit(a, b) {
  * Picks the checklist comment and its continuation parts from a PR's comments.
  *
  * A marker must open the comment: a "Quote reply" prefixes every line with
- * `> `, and a quoted checklist must never count as the checklist.
+ * `> `, and a quoted checklist must never count as the checklist. Only
+ * comments from an owner, member or collaborator count.
  *
- * @param comments - Comments in API order, oldest first
+ * @param comments - Comments in API order, oldest first, each with the REST API's `author_association`
  * @returns The last marked `main` comment or null, and the last comment for each part number, in order
  */
 export function findChecklistComments(comments) {
@@ -162,6 +171,7 @@ export function findChecklistComments(comments) {
 
   for (const comment of comments ?? []) {
     if (typeof comment?.body !== 'string') continue;
+    if (!TRUSTED_AUTHORS.includes(comment.author_association)) continue;
 
     const body = comment.body.trimStart();
     if (body.startsWith(CHECKLIST_MARKER)) {
@@ -422,7 +432,9 @@ async function listComments(api, repo, prNumber) {
  *
  * `reset` clears every checklist comment not already stamped against the head,
  * so a `ready_for_review` event or a re-run with an unchanged head leaves the
- * ticks alone.
+ * ticks alone. A checklist with no boxes at all is left on its old commit and
+ * the status asks for a new `/pr`, since the push may have added code worth
+ * checking.
  *
  * @param command - `reset` or `status`
  * @param context - The GitHub `api` client, `repo`, `prNumber`, the `headSha` when the event carries one, and the time `now`
@@ -438,35 +450,49 @@ export async function runGate(
     await listComments(api, repo, prNumber),
   );
 
+  let status = null;
+
   if (command === 'reset' && main) {
     const comments = [main, ...parts.map(({ comment }) => comment)];
     const counts = sumCounts(comments.map((comment) => comment.body ?? ''));
-    const updated = [];
+    const stale = comments.filter(
+      (comment) => !sameCommit(readStampedSha(comment.body ?? ''), head),
+    );
 
-    for (const comment of comments) {
-      if (sameCommit(readStampedSha(comment.body ?? ''), head)) {
-        updated.push(comment);
-        continue;
+    if (stale.length > 0 && counts.total === 0) {
+      // With no boxes to clear, a restamp would pass new code nobody looked at.
+      status = {
+        state: 'failure',
+        description: `checklist predates ${shortSha(head)}, re-run /pr`,
+      };
+    } else {
+      const updated = [];
+
+      for (const comment of comments) {
+        if (!stale.includes(comment)) {
+          updated.push(comment);
+          continue;
+        }
+
+        const body = resetBody(comment.body ?? '', {
+          headSha: head,
+          now,
+          counts,
+        });
+        updated.push(
+          await api(`/repos/${repo}/issues/comments/${comment.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ body }),
+          }),
+        );
       }
 
-      const body = resetBody(comment.body ?? '', {
-        headSha: head,
-        now,
-        counts,
-      });
-      updated.push(
-        await api(`/repos/${repo}/issues/comments/${comment.id}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ body }),
-        }),
-      );
+      [main] = updated;
+      parts = parts.map((part, i) => ({ ...part, comment: updated[i + 1] }));
     }
-
-    [main] = updated;
-    parts = parts.map((part, i) => ({ ...part, comment: updated[i + 1] }));
   }
 
-  const status = computeStatus({ main, parts, headSha: head });
+  status ??= computeStatus({ main, parts, headSha: head });
 
   await api(`/repos/${repo}/statuses/${head}`, {
     method: 'POST',

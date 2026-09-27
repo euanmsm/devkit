@@ -15,7 +15,7 @@ import { publish } from './publish.mjs';
 
 const PR_USAGE = `Usage:
   skills pr prepass --scratch <dir> [--base <branch>]
-  skills pr publish --result <file> --base <branch>`;
+  skills pr publish --result <file> --base <branch> --head <sha>`;
 
 const GATE_USAGE = 'Usage: skills qa-gate <reset|status>';
 
@@ -53,6 +53,7 @@ export async function prCommand(argv, root) {
     const outcome = publish(root, config, {
       result: need('result'),
       base: need('base'),
+      head: need('head'),
     });
     console.log(JSON.stringify(outcome, null, 2));
     return 0;

@@ -17,6 +17,7 @@ import {
   BANNER_END,
   BANNER_START,
   CHECKLIST_MARKER,
+  TRUSTED_AUTHORS,
   partMarker,
 } from './gate.mjs';
 
@@ -28,15 +29,17 @@ export const COMMENT_LIMIT = 60000;
  *
  * @param root - The repository root
  * @param config - The resolved PR config
- * @param options - `result` path, `base` branch, and a `gh` stand-in for tests
+ * @param options - `result` path, `base` branch, the `head` commit the prepass checked, and a `gh` stand-in for tests
  * @returns The PR `url` and `number`, whether it was `created`, the comment `parts`, and the result's `unresolved` units and gap count
- * @throws When the result file is unreadable or a `gh` call fails
+ * @throws When the result file is unreadable or has a blank summary, when the PR's head on GitHub is not `head`, or when a `gh` call fails
  */
 export function publish(
   root,
   config,
-  { result: resultPath, base, gh = runGh },
+  { result: resultPath, base, head, gh = runGh },
 ) {
+  if (!head) throw new Error('publish needs the head commit /pr checked.');
+
   const result = readResult(path.resolve(root, resultPath));
   const run = (...args) => gh(args, root);
   const branch = run('branch-name');
@@ -54,12 +57,16 @@ export function publish(
 
     const open = findOpenPr(run, branch);
     if (open) {
+      // Refused before the edit, so a stale run leaves the PR untouched.
+      assertSameHead(run, open, head);
       run(
         'pr',
         'edit',
         String(open.number),
         '--title',
         branch,
+        '--base',
+        base,
         '--body-file',
         bodyFile,
       );
@@ -80,6 +87,7 @@ export function publish(
     const pr = JSON.parse(
       run('pr', 'view', branch, '--json', 'number,url,headRefOid'),
     );
+    assertSameHead(run, pr, head);
     const bodies = buildComments(result.checklist, pr.headRefOid);
     const existing = listChecklistComments(run, pr.number);
 
@@ -169,6 +177,12 @@ export function readResult(file) {
     );
   }
 
+  if (!result.summary.trim()) {
+    throw new Error(
+      `${file} has an empty PR summary: the summary agent returned nothing. Write one into the result or re-run /pr.`,
+    );
+  }
+
   return result;
 }
 
@@ -184,15 +198,47 @@ export function fillTemplate(template, summary) {
 }
 
 /**
+ * Refuses to go on when the PR's head on GitHub is not the commit /pr checked.
+ *
+ * The checklist is stamped with GitHub's head, so it must describe that code.
+ *
+ * @param run - Runs `gh` and returns its stdout
+ * @param pr - The PR's `number` and `headRefOid`
+ * @param head - The commit the prepass diffed
+ * @throws When they differ, saying whether to push or to re-run /pr
+ */
+function assertSameHead(run, pr, head) {
+  const remote = pr.headRefOid;
+  if (remote && remote.toLowerCase() === head.toLowerCase()) return;
+
+  let unpushed = false;
+  try {
+    run('is-ancestor', remote, head);
+    unpushed = true;
+  } catch {
+    // Not an ancestor, or git has never seen the commit: it landed elsewhere.
+  }
+
+  const where = `PR #${pr.number} is at ${String(remote).slice(0, 7)} but /pr checked ${head.slice(0, 7)}`;
+  throw new Error(
+    unpushed
+      ? `${where}: the branch has commits GitHub does not, so push first, then run publish again.`
+      : `${where}: commits landed on GitHub since then, so re-run /pr.`,
+  );
+}
+
+/**
  * Finds the branch's open pull request.
  *
  * @param run - Runs `gh` and returns its stdout
  * @param branch - The branch name
- * @returns The open PR's `number`, or null when there is none
+ * @returns The open PR's `number` and `headRefOid`, or null when there is none
  */
 function findOpenPr(run, branch) {
   try {
-    const pr = JSON.parse(run('pr', 'view', branch, '--json', 'number,state'));
+    const pr = JSON.parse(
+      run('pr', 'view', branch, '--json', 'number,state,headRefOid'),
+    );
     return pr.state === 'OPEN' ? pr : null;
   } catch {
     return null;
@@ -200,7 +246,8 @@ function findOpenPr(run, branch) {
 }
 
 /**
- * Lists the checklist comments already on a pull request.
+ * Lists the checklist comments already on a pull request, skipping any the
+ * gate would not trust.
  *
  * @param run - Runs `gh` and returns its stdout
  * @param number - The PR number
@@ -212,7 +259,7 @@ function listChecklistComments(run, number) {
     `repos/{owner}/{repo}/issues/${number}/comments`,
     '--paginate',
     '--jq',
-    '.[] | select(.body | startswith("<!-- pr-qa:manual-checklist")) | {id, head: (.body | split("\\n") | .[0])} | @json',
+    `.[] | select(.body | startswith("<!-- pr-qa:manual-checklist")) | select(${TRUSTED_AUTHORS.map((a) => `.author_association == "${a}"`).join(' or ')}) | {id, head: (.body | split("\\n") | .[0])} | @json`,
   );
   const ids = new Map();
 
@@ -334,18 +381,20 @@ function byLines(text, limit) {
 }
 
 /**
- * Runs `gh`, or answers `branch-name` from git.
+ * Runs `gh`, or answers `branch-name` and `is-ancestor <a> <b>` from git.
  *
- * @param args - The arguments, or `['branch-name']`
+ * @param args - The arguments, `['branch-name']`, or `['is-ancestor', a, b]`
  * @param cwd - The repository root
  * @returns The trimmed stdout
- * @throws When the command fails, with its stderr in the message
+ * @throws When the command fails, with its stderr in the message; `is-ancestor` fails when `a` is not an ancestor of `b`
  */
 function runGh(args, cwd) {
   const [command, argv] =
     args[0] === 'branch-name'
       ? ['git', ['branch', '--show-current']]
-      : ['gh', args];
+      : args[0] === 'is-ancestor'
+        ? ['git', ['merge-base', '--is-ancestor', args[1], args[2]]]
+        : ['gh', args];
 
   try {
     return execFileSync(command, argv, {

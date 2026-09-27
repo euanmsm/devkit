@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
+  assertPlainRegex,
   installedPackages,
   isPlainObject,
   isStringList,
@@ -257,6 +258,10 @@ function resolveLayers(raw, sections, fail) {
         `${where}.paths must be a non-empty list of regexes or path prefixes`,
       );
     }
+    paths.forEach((p, i) => {
+      if (p instanceof RegExp)
+        assertPlainRegex(`${where}.paths[${i}]`, p, fail);
+    });
 
     return {
       key: layer.key,
@@ -446,7 +451,7 @@ function stringList(value, where, fail) {
 }
 
 /**
- * Reads an optional list of regexes.
+ * Reads an optional list of regexes, none with the `g` or `y` flag.
  *
  * @param value - The raw value
  * @param where - Its location, for the message
@@ -462,6 +467,7 @@ function regexList(value, where, fail) {
   ) {
     fail(`${where} must be a non-empty list of regexes`);
   }
+  value.forEach((re, i) => assertPlainRegex(`${where}[${i}]`, re, fail));
   return value;
 }
 

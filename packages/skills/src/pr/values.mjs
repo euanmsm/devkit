@@ -44,11 +44,15 @@ export function prValues(pr, options, shared) {
     traps: pr.traps,
     trapsLink: path.posix.relative(skillDir, pr.traps),
     packageVersion: PACKAGE_VERSION,
+    // Only read inside SKILL.md's single-quoted YAML description, where a
+    // lone `'` would end the scalar.
     sectionNames: [
       pr.sections.backend.title,
       ...humanTitles,
       ...(pr.storybook ? ['Storybook Review Checks'] : []),
-    ].join(', '),
+    ]
+      .join(', ')
+      .replace(/'/g, "''"),
     baseRule:
       pr.base === 'stack'
         ? `The base is \`${shared.baseBranch}\`, except on a branch in a \`gh stack\`, which targets the branch directly below it; the prepass works this out. Never open a mid-stack PR against \`${shared.baseBranch}\` — it flattens the stack.`

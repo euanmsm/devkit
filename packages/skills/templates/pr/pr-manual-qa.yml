@@ -8,7 +8,8 @@
 # again against the new head commit.
 #
 # - pull_request      → reset  (un-tick, restamp, re-banner, post the status)
-# - issue_comment     → status (recompute and post the status)
+# - issue_comment     → status (recompute and post the status, including when
+#                       a checklist comment is deleted)
 # - workflow_dispatch → status (unstick a check without pushing)
 #
 # Ticking a box edits the comment, which fires the `issue_comment` half. The
@@ -25,7 +26,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   issue_comment:
-    types: [created, edited]
+    types: [created, edited, deleted]
   workflow_dispatch:
     inputs:
       pr:

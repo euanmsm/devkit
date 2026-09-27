@@ -247,36 +247,79 @@ describe('pr prepass — pure helpers', () => {
     ]);
   });
 
-  it('lists importers from ripgrep, capped, and says when ripgrep is missing', () => {
+  it('finds every importer in one ripgrep pass, capped, and says when ripgrep is missing', () => {
     const many = Array.from(
       { length: 35 },
-      (_, i) => `./src/f${String(i).padStart(2, '0')}.ts`,
+      (_, i) =>
+        `./src/f${String(i).padStart(2, '0')}.ts\0import { Badge } from './ui/Badge'`,
     );
+    const searches = [];
     const rg = (args) => {
-      assert.match(args[3], /\\bBadge/);
-      return [...many, './src/ui/Badge.tsx'].join('\n');
+      searches.push(args);
+      return [
+        ...many,
+        "./src/ui/Badge.tsx\0import { x } from './Badge'",
+        "./src/ui/Page.tsx\0from './Badge.js'",
+        "./src/ui/Page.tsx\0from './util'",
+      ].join('\n');
     };
-    const result = findImporters('/', ['src/ui/Badge.tsx'], rg);
+    const result = findImporters(
+      '/',
+      ['src/ui/Badge.tsx', 'src/ui/util.ts'],
+      rg,
+    );
 
+    assert.equal(searches.length, 1);
+    assert.match(searches[0].join(' '), /\\b\(Badge\|util\)/);
     assert.equal(result['src/ui/Badge.tsx'].importers.length, 30);
-    assert.equal(result['src/ui/Badge.tsx'].more, 5);
+    assert.equal(result['src/ui/Badge.tsx'].more, 6);
     assert.ok(
       !result['src/ui/Badge.tsx'].importers.includes('src/ui/Badge.tsx'),
     );
+    assert.deepEqual(result['src/ui/util.ts'], {
+      importers: ['src/ui/Page.tsx'],
+      more: 0,
+    });
 
     assert.equal(
       findImporters('/', ['src/a.ts'], () => null),
       null,
     );
+    assert.deepEqual(findImporters('/', [], rg), {});
+    assert.equal(searches.length, 1, 'no search with nothing to look for');
   });
 
-  it('searches an index file by its folder name', () => {
-    let searched;
-    findImporters('/', ['src/ui/badge/index.ts'], (args) => {
-      searched = args[3];
-      return '';
-    });
-    assert.match(searched, /\\bbadge/);
+  it('counts an import only when its path leads to the changed file', () => {
+    const rg = () =>
+      [
+        // Relative imports resolve against the importing file.
+        "./src/a/x.ts\0from './utils'",
+        "./src/b/y.ts\0from './utils'",
+        "./src/b/z.ts\0from '../a/utils.js'",
+        // Aliased or package imports must end in the file's own path.
+        "./src/c/w.ts\0from '@/a/utils'",
+        "./src/c/v.ts\0from '@/b/utils'",
+        "./src/c/u.ts\0require('lodash/utils')",
+        // An index file is imported by its folder.
+        "./src/c/t.ts\0import('../ui/badge')",
+        "./src/c/s.ts\0from '../other/badge'",
+        "./src/c/r.ts\0from '@/ui/badge/index'",
+      ].join('\n');
+    const result = findImporters(
+      '/',
+      ['src/a/utils.ts', 'src/ui/badge/index.ts'],
+      rg,
+    );
+
+    assert.deepEqual(result['src/a/utils.ts'].importers, [
+      'src/a/x.ts',
+      'src/b/z.ts',
+      'src/c/w.ts',
+    ]);
+    assert.deepEqual(result['src/ui/badge/index.ts'].importers, [
+      'src/c/r.ts',
+      'src/c/t.ts',
+    ]);
   });
 
   it('writes the facts a model would otherwise rediscover', () => {
@@ -339,6 +382,7 @@ describe('pr prepass — against a real branch', () => {
       assert.equal(args.branch, 'feature/badge');
       assert.equal(args.base, 'main');
       assert.equal(args.ahead, 1);
+      assert.equal(args.headSha, git(root, 'rev-parse', 'HEAD').trim());
       assert.deepEqual(args.layers, {
         db: true,
         api: true,
@@ -425,6 +469,41 @@ describe('pr prepass — against a real branch', () => {
     });
     assert.equal(overridden.base, 'main');
     assert.equal(overridden.ahead, 2);
+  });
+
+  it('fetches the base and diffs against origin over a stale local copy', async () => {
+    const root = branchRepo();
+    // The branch was cut from a newer origin/main than the local main.
+    git(root, 'checkout', '-q', 'main');
+    write(root, 'src/upstream.ts', 'export const up = 1;\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'upstream');
+    git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    git(root, 'checkout', '-q', '-b', 'feature/fresh');
+    write(root, 'src/api/fresh.ts', 'export const fresh = 1;\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'fresh');
+    git(root, 'branch', '-f', 'main', 'HEAD~2');
+
+    const commands = [];
+    const run = (command, args, cwd) => {
+      commands.push([command, ...args].join(' '));
+      return execFileSync(command, args, {
+        cwd,
+        encoding: 'utf8',
+        stdio: 'pipe',
+      });
+    };
+    const args = await prPrepass(root, CONFIG, {
+      scratch: 's',
+      baseBranch: 'main',
+      run,
+      rg: () => '',
+    });
+
+    assert.ok(commands.includes('git fetch --quiet origin main'));
+    assert.equal(args.ahead, 1);
+    assert.doesNotMatch(readFileSync(args.diffPath, 'utf8'), /upstream/);
   });
 
   it('falls back to the remote base, then fails clearly', async () => {

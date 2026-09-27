@@ -8,11 +8,18 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { prArgs, prReplies, prWorkflow, promptEntries } from './pr-helpers.mjs';
+import {
+  prArgs,
+  prReplies,
+  prWorkflow,
+  promptEntries,
+  promptUnits,
+} from './pr-helpers.mjs';
 import { runWorkflow } from './workflow.mjs';
 
 const labels = (calls) => calls.map((call) => call.label);
 const find = (calls, label) => calls.find((call) => call.label === label);
+const unitNames = (call) => promptUnits(call.prompt).map((unit) => unit.name);
 
 describe('pr workflow — what runs', () => {
   it('writes only a summary when no section is touched', async () => {
@@ -24,9 +31,9 @@ describe('pr workflow — what runs', () => {
     assert.deepEqual(labels(calls), ['summary']);
     assert.equal(calls[0].model, 'sonnet');
     assert.equal(result.summary, 'Adds the thing.');
-    assert.equal(
+    assert.match(
       result.checklist,
-      '_No manual checks needed — no runtime surface touched._',
+      /^_No manual checks needed — no runtime surface touched\._\n\n---\n\n### Local CI\n\n- \[ \] Review agents/,
     );
     assert.deepEqual(result.unresolved, []);
   });
@@ -52,19 +59,16 @@ describe('pr workflow — what runs', () => {
       'audit:dimensions',
       'draft:backend',
       'draft:frontend',
+      'verify:backend',
+      'verify:frontend',
       'verify:boot',
     ]) {
       assert.ok(names.includes(label), `${label} ran`);
     }
-    // Three backend entries plus the cross-cutting one.
-    assert.equal(
-      names.filter((n) => n.startsWith('verify:backend:')).length,
-      4,
-    );
-    assert.equal(
-      names.filter((n) => n.startsWith('verify:frontend:')).length,
-      2,
-    );
+    // One checker per group: three backend entries plus the cross-cutting one.
+    assert.equal(names.filter((n) => n.startsWith('verify:')).length, 3);
+    assert.equal(unitNames(find(calls, 'verify:backend')).length, 4);
+    assert.equal(unitNames(find(calls, 'verify:frontend')).length, 2);
   });
 
   it('accepts args handed over as a JSON string', async () => {
@@ -101,13 +105,10 @@ describe('pr workflow — what runs', () => {
     for (const label of ['draft:summary', 'draft:storybook', 'claim:be-1']) {
       assert.equal(find(calls, label).model, 'sonnet', label);
     }
-    assert.equal(
-      calls.find((c) => c.label.startsWith('verify:sb:')).model,
-      'sonnet',
-    );
+    assert.equal(find(calls, 'verify:sb').model, 'sonnet');
   });
 
-  it('skips the human draft when the pack finds nothing a person could notice', async () => {
+  it('skips the human inventory and draft when the pack finds nothing a person could notice', async () => {
     const source = await prWorkflow('curricular');
     const { result, calls } = await runWorkflow(
       source,
@@ -115,7 +116,7 @@ describe('pr workflow — what runs', () => {
       { reply: prReplies({ visible: [] }) },
     );
 
-    assert.ok(labels(calls).includes('inventory:frontend'));
+    assert.ok(!labels(calls).includes('inventory:frontend'));
     assert.ok(!labels(calls).includes('draft:frontend'));
     assert.match(
       result.checklist,
@@ -239,7 +240,9 @@ describe('pr workflow — verification', () => {
     assert.ok(labels(calls).includes('claim:be-1'));
     assert.ok(labels(calls).includes('convert:be-2'));
     assert.ok(!labels(calls).includes('convert:be-1'));
-    assert.ok(labels(calls).includes('verify:converted:Converted be-2'));
+    assert.deepEqual(unitNames(find(calls, 'verify:converted')), [
+      'converted:Converted be-2',
+    ]);
     assert.match(result.checklist, /Backend \d — Converted be-2/);
     assert.equal(result.stats.claimsChecked, 2);
     assert.equal(result.stats.claimsConverted, 1);
@@ -262,11 +265,11 @@ describe('pr workflow — verification', () => {
               }
             : { verdict: 'PASS', findings: 'holds' },
       }),
-      delay: (label) => (label.startsWith(slow) ? 15 : 0),
+      delay: (label) => (label.startsWith('verify:backend') ? 15 : 0),
     });
 
     const convert = find(calls, 'convert:be-1');
-    const lastSlowRound = find(calls, `${slow}:r3`);
+    const lastSlowRound = find(calls, 'verify:backend:r3');
     assert.ok(lastSlowRound, 'the slow step took three rounds');
     assert.ok(
       convert.started < lastSlowRound.ended,
@@ -285,9 +288,7 @@ describe('pr workflow — verification', () => {
       },
     );
 
-    const humanVerify = calls.find((c) =>
-      c.label.startsWith('verify:frontend:'),
-    );
+    const humanVerify = find(calls, 'verify:frontend');
     assert.ok(humanVerify.started < find(calls, 'draft:backend').ended);
   });
 
@@ -335,9 +336,9 @@ describe('pr workflow — verification', () => {
     assert.ok(logs.some((line) => line.startsWith('Deleted')));
   });
 
-  it('reports a step still failing after four rounds as unresolved', async () => {
+  it('leaves out a step still failing after four rounds, as a gap', async () => {
     const source = await prWorkflow('curricular');
-    const { result, calls } = await runWorkflow(
+    const { result, calls, logs } = await runWorkflow(
       source,
       prArgs({ backend: true }),
       {
@@ -355,13 +356,31 @@ describe('pr workflow — verification', () => {
       },
     );
 
-    assert.equal(
-      calls.filter((c) => c.label.startsWith('verify:backend:Check be-1'))
-        .length,
-      4,
+    // Rounds 2 to 4 re-check only the failing step.
+    assert.deepEqual(
+      calls
+        .filter((c) => c.label.startsWith('verify:backend'))
+        .map((c) => [c.label, unitNames(c).length]),
+      [
+        ['verify:backend', 2],
+        ['verify:backend:r2', 1],
+        ['verify:backend:r3', 1],
+        ['verify:backend:r4', 1],
+      ],
     );
     assert.deepEqual(result.unresolved, ['backend:Check be-1']);
     assert.equal(result.stats.unresolved, 1);
+    assert.equal(result.stats.exhausted, 1);
+    assert.doesNotMatch(result.checklist, /Backend \d — Check be-1/);
+    assert.match(
+      result.checklist,
+      /- backend:Check be-1 — failed verification 4 times — still wrong/,
+    );
+    assert.ok(
+      logs.includes(
+        'Left out, still failing after 4 rounds: backend:Check be-1',
+      ),
+    );
   });
 
   it('fixes a step’s format with Sonnet before an Opus round sees it', async () => {
@@ -375,11 +394,9 @@ describe('pr workflow — verification', () => {
     assert.equal(fix.model, 'sonnet');
     assert.match(fix.prompt, /- no \*\*Expect:\*\* line/);
 
-    const verify = calls.find(
-      (c) => c.label === `verify:${fix.label.slice(7)}`,
-    );
+    const verify = find(calls, 'verify:frontend');
     assert.ok(fix.ended <= verify.started);
-    assert.match(verify.prompt, /\*\*Expect:\*\* "Fixed"/);
+    assert.match(promptUnits(verify.prompt)[0].body, /\*\*Expect:\*\* "Fixed"/);
   });
 
   it('leaves a well-formed step alone', async () => {
@@ -413,18 +430,16 @@ describe('pr workflow — verification', () => {
       }),
     });
 
-    const first = find(calls, 'verify:backend:Check be-1');
-    const second = find(calls, 'verify:backend:Check be-1:r2');
+    const first = find(calls, 'verify:backend');
+    const second = find(calls, 'verify:backend:r2');
     assert.equal(first.model, 'opus');
     assert.equal(second.model, 'sonnet');
-    assert.match(
-      second.prompt,
-      /## What the previous round found wrong\nwrong status code/,
-    );
-    assert.match(second.prompt, /\*\*Expect:\*\* `404`/);
+    const [unit] = promptUnits(second.prompt);
+    assert.equal(unit.previousFindings, 'wrong status code');
+    assert.match(unit.body, /\*\*Expect:\*\* `404`/);
   });
 
-  it('re-runs the full checks on Opus without the experiment', async () => {
+  it('rechecks rewrites narrowly on Opus without the experiment', async () => {
     const source = await prWorkflow('curricular');
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({
@@ -440,9 +455,147 @@ describe('pr workflow — verification', () => {
       }),
     });
 
-    const second = find(calls, 'verify:backend:Check be-1:r2');
+    const second = find(calls, 'verify:backend:r2');
     assert.equal(second.model, 'opus');
-    assert.match(second.prompt, /## Checks — run all that apply/);
+    assert.doesNotMatch(second.prompt, /## Checks — run all that apply/);
+    assert.equal(promptUnits(second.prompt)[0].previousFindings, 'wrong');
+  });
+});
+
+describe('pr workflow — batched verification', () => {
+  it('verifies a group up to eight units to a checker, logging the count first', async () => {
+    const source = await prWorkflow('curricular');
+    const { calls, logs, result } = await runWorkflow(
+      source,
+      prArgs({ frontend: true }),
+      {
+        reply: prReplies({
+          human: 10,
+          verify: (label) =>
+            /See frontend-(2|9)$/.test(label)
+              ? {
+                  verdict: 'FAIL',
+                  findings: 'wrong copy',
+                  rewrite: 'Open the page.\n\n**Expect:** "Done"',
+                }
+              : { verdict: 'PASS', findings: 'holds' },
+        }),
+      },
+    );
+
+    const checkers = calls
+      .filter((c) => c.label.startsWith('verify:frontend'))
+      .map((c) => [c.label, unitNames(c).length]);
+    assert.deepEqual(checkers, [
+      ['verify:frontend:b1', 8],
+      ['verify:frontend:b2', 2],
+      ['verify:frontend:r2', 2],
+    ]);
+    assert.ok(logs.includes('Verifying 10 frontend unit(s) with 2 checker(s)'));
+    // Two frontend checkers, one re-check, and the boot block's own.
+    assert.equal(result.stats.checkerAgents, 4);
+    assert.match(
+      result.checklist,
+      /Frontend \d+ — See frontend-9\*\*\n\nOpen the page\.\n\n\*\*Expect:\*\* "Done"/,
+    );
+  });
+
+  it('asks each checker for a verdict per unit id, under a sound schema', async () => {
+    const source = await prWorkflow('curricular');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({ backend: 3 }),
+    });
+    const checker = find(calls, 'verify:backend');
+
+    assert.deepEqual(
+      promptUnits(checker.prompt).map((unit) => unit.id),
+      ['u1', 'u2', 'u3', 'u4'],
+    );
+    assert.deepEqual(checker.schema.required, ['verdicts']);
+    assert.deepEqual(checker.schema.properties.verdicts.items.required, [
+      'id',
+      'verdict',
+      'findings',
+    ]);
+    assert.match(checker.prompt, /A missing id counts as unverified/);
+  });
+
+  it('uses a handful of checkers for a forty-step checklist, not one per step', async () => {
+    const source = await prWorkflow('curricular');
+    const { calls, result } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      { reply: prReplies({ backend: 39, files: 5 }) },
+    );
+
+    const checkers = calls.filter(
+      (c) => c.label.startsWith('verify:') && c.label !== 'verify:boot',
+    );
+    assert.equal(result.stats.steps, 40);
+    assert.equal(checkers.length, result.stats.backendDrafters);
+    assert.ok(checkers.length <= 6, `${checkers.length} checkers`);
+    assert.ok(checkers.every((c) => unitNames(c).length <= 8));
+  });
+
+  it('keeps Storybook items in their own checker on Sonnet, rendering the verified text', async () => {
+    const source = await prWorkflow('curricular');
+    const { calls, result } = await runWorkflow(
+      source,
+      prArgs({ frontend: true }, { storyCount: 1 }),
+      {
+        reply: prReplies({
+          stories: 2,
+          verify: (label) =>
+            label === 'verify:sb:Features/Thing0'
+              ? {
+                  verdict: 'FAIL',
+                  findings: 'the title is Fixed/Title',
+                  rewrite: '**Fixed/Title** — Default\nThe badge is now blue.',
+                }
+              : { verdict: 'PASS', findings: 'holds' },
+        }),
+      },
+    );
+
+    assert.deepEqual(unitNames(find(calls, 'verify:sb')), [
+      'sb:Features/Thing0',
+      'sb:Features/Thing1',
+    ]);
+    assert.equal(find(calls, 'verify:sb:r2').model, 'sonnet');
+    assert.match(
+      result.checklist,
+      /- \[ \] \*\*Fixed\/Title\*\* — Default\n      The badge is now blue\./,
+    );
+    assert.doesNotMatch(result.checklist, /Features\/Thing0/);
+    assert.match(result.checklist, /\*\*Features\/Thing1\*\* — Default/);
+  });
+
+  it('takes a step’s priority and title from its verified rewrite', async () => {
+    const source = await prWorkflow('curricular');
+    const { result } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        backend: 1,
+        verify: (label) =>
+          label === 'verify:backend:Check be-1'
+            ? {
+                verdict: 'FAIL',
+                findings: 'a test already asserts the status',
+                rewrite:
+                  '**[if-time] Check the body only**\n\n```bash\ncurl -s "$PORT/x"\n```\n\n**Expect:** `{}`',
+              }
+            : { verdict: 'PASS', findings: 'holds' },
+      }),
+    });
+
+    assert.match(
+      result.checklist,
+      /- \[ \] \*\*\[if-time\] Backend 2 — Check the body only\*\*\n\n```bash/,
+    );
+    assert.doesNotMatch(result.checklist, /Check be-1/);
+    assert.match(
+      result.checklist,
+      /_About \d+ minutes; 1 of 2 steps are blocking\./,
+    );
   });
 });
 
@@ -579,7 +732,7 @@ describe('pr workflow — config reaches the prompts', () => {
     );
     assert.match(find(calls, 'draft:tui').prompt, /Step 1 is starting the TUI/);
     assert.match(find(calls, 'draft:boot').prompt, /npm run db:up/);
-    const verify = calls.find((c) => c.label.startsWith('verify:backend:'));
+    const verify = find(calls, 'verify:backend');
     assert.match(
       verify.prompt,
       /Read `\.agents\/skills\/pr\/TRAPS\.md` in full/,
@@ -624,6 +777,72 @@ describe('pr workflow — config reaches the prompts', () => {
 });
 
 describe('pr workflow — edges', () => {
+  it('numbers each audit angle’s entries apart, so their ids never collide', async () => {
+    const source = await prWorkflow('curricular');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies(),
+    });
+
+    assert.match(find(calls, 'audit:hunks').prompt, /id prefix `aud-hunks-`/);
+    assert.match(
+      find(calls, 'audit:dimensions').prompt,
+      /id prefix `aud-dimensions-`/,
+    );
+  });
+
+  it('drafts a section the pack missed when a visible entry lands in it', async () => {
+    const source = await prWorkflow('curricular');
+    const replies = prReplies({ visible: [] });
+    const { calls, result } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      {
+        reply: (label, prompt) =>
+          label === 'audit:hunks'
+            ? {
+                entries: [
+                  {
+                    id: 'aud-hunks-1',
+                    behaviour: 'a new banner',
+                    where: 'src/ui/banner.tsx:1',
+                    reachable: 'load',
+                    actors: 'teacher',
+                    visible: true,
+                    section: 'frontend',
+                  },
+                ],
+              }
+            : replies(label, prompt),
+      },
+    );
+
+    assert.ok(!labels(calls).includes('inventory:frontend'));
+    assert.deepEqual(
+      promptEntries(find(calls, 'draft:frontend').prompt).map((e) => e.id),
+      ['aud-hunks-1'],
+    );
+    assert.match(result.checklist, /Frontend 1 — See aud-hunks-1/);
+    assert.doesNotMatch(result.checklist, /_Nothing a signed-in user/);
+  });
+
+  it('lists entries no section drafts as gaps when the backend section is off', async () => {
+    const source = await prWorkflow('curricular');
+    const replies = prReplies();
+    const { result, logs } = await runWorkflow(
+      source,
+      prArgs({ frontend: true }),
+      { reply: replies },
+    );
+
+    assert.match(
+      result.checklist,
+      /- a rejected caller \(src\/service\/file0\.ts:99\) — no checklist section drafts it, since the backend section is off/,
+    );
+    assert.ok(
+      logs.includes('1 entries have no section to draft them — listed as gaps'),
+    );
+  });
+
   it('stops when the context pack fails', async () => {
     const source = await prWorkflow('curricular');
     const replies = prReplies();
@@ -637,18 +856,51 @@ describe('pr workflow — edges', () => {
     );
   });
 
-  it('reports a unit whose verifier returned nothing as unresolved', async () => {
+  it('leaves out a unit its checker gave no verdict for, as a gap', async () => {
     const source = await prWorkflow('curricular');
-    const { result } = await runWorkflow(source, prArgs({ backend: true }), {
-      reply: prReplies({
-        backend: 1,
-        verify: (label) =>
-          label.includes('be-1') ? null : { verdict: 'PASS', findings: '' },
-      }),
-    });
+    const { result, logs } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({
+          backend: 1,
+          verify: (label) =>
+            label.includes('be-1') ? null : { verdict: 'PASS', findings: '' },
+        }),
+      },
+    );
 
     assert.deepEqual(result.unresolved, ['backend:Check be-1']);
-    assert.match(result.checklist, /Check be-1/);
+    assert.equal(result.stats.unverified, 1);
+    assert.doesNotMatch(result.checklist, /Backend \d — Check be-1/);
+    assert.match(
+      result.checklist,
+      /- backend:Check be-1 — never verified — the checker gave no verdict for it/,
+    );
+    assert.ok(
+      logs.includes(
+        'Left out, never verified (the checker gave no verdict for it): backend:Check be-1',
+      ),
+    );
+  });
+
+  it('leaves out every unit of a checker that returned nothing', async () => {
+    const source = await prWorkflow('curricular');
+    const replies = prReplies();
+    const { result } = await runWorkflow(source, prArgs({ frontend: true }), {
+      reply: (label, prompt) =>
+        label === 'verify:frontend' ? null : replies(label, prompt),
+    });
+
+    assert.deepEqual(result.unresolved, [
+      'frontend:See frontend-1',
+      'frontend:See frontend-2',
+    ]);
+    assert.doesNotMatch(result.checklist, /## Human Frontend Checks/);
+    assert.match(
+      result.checklist,
+      /- frontend:See frontend-2 — never verified — the checker returned nothing/,
+    );
   });
 
   it('publishes a changed file no surface could be traced to as a gap', async () => {
@@ -687,7 +939,7 @@ describe('pr workflow — edges', () => {
     );
   });
 
-  it('keeps the drafted boot block when its verifier deletes it', async () => {
+  it('keeps a boot block its checker deletes, under a warning and not as a gap', async () => {
     const source = await prWorkflow('curricular');
     const { result } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({
@@ -698,7 +950,41 @@ describe('pr workflow — edges', () => {
       }),
     });
 
-    assert.ok(result.checklist.startsWith('```bash\nnpm run dev\n```'));
+    assert.ok(
+      result.checklist.startsWith(
+        '> [!WARNING]\n> **This boot block did not pass verification** — the checker found no accurate version: no port. Check each command against the repository before relying on it.\n\n```bash\nnpm run dev\n```',
+      ),
+    );
+    assert.ok(!result.gaps.some((gap) => gap.gap === 'boot'));
+    assert.deepEqual(result.unresolved, []);
+  });
+
+  it('warns on a boot block still failing after four rounds, keeping the last rewrite', async () => {
+    const source = await prWorkflow('curricular');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({
+          verify: (label) =>
+            label.startsWith('verify:boot')
+              ? {
+                  verdict: 'FAIL',
+                  findings: 'still no port',
+                  rewrite: '```bash\nnpm run dev -- --port 3000\n```',
+                }
+              : { verdict: 'PASS', findings: '' },
+        }),
+      },
+    );
+
+    assert.ok(find(calls, 'verify:boot:r4'));
+    assert.match(
+      result.checklist,
+      /^> \[!WARNING\]\n> \*\*This boot block did not pass verification\*\* — it still failed after 4 rounds: still no port\./,
+    );
+    assert.match(result.checklist, /npm run dev -- --port 3000/);
+    assert.ok(!result.gaps.some((gap) => gap.gap === 'boot'));
   });
 
   it('uses the verified rewrite of the boot block', async () => {
