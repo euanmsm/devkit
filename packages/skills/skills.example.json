@@ -9,6 +9,9 @@
     "clean-comments": {
       "preloadSkills": ["comments"],
       "typecheck": "npm run typecheck"
+    },
+    "pr": {
+      "qaGate": true
     }
   }
 }

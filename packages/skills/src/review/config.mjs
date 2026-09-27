@@ -539,7 +539,7 @@ function resolvePrompts(raw = {}, fail) {
  * @param where - What the object is, for the message
  * @param fail - Throws with the config's path prefixed
  */
-function unknownKeys(object, allowed, where, fail) {
+export function unknownKeys(object, allowed, where, fail) {
   if (!isPlainObject(object)) fail(`${where} must be an object`);
 
   for (const key of Object.keys(object)) {
@@ -555,7 +555,7 @@ function unknownKeys(object, allowed, where, fail) {
  * @param value - Anything
  * @returns Whether it is a non-null, non-array object
  */
-function isPlainObject(value) {
+export function isPlainObject(value) {
   return (
     value !== null &&
     typeof value === 'object' &&
@@ -570,7 +570,7 @@ function isPlainObject(value) {
  * @param value - Anything
  * @returns Whether it is an array holding only strings
  */
-function isStringList(value) {
+export function isStringList(value) {
   return (
     Array.isArray(value) && value.every((item) => typeof item === 'string')
   );

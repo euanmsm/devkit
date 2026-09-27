@@ -7,6 +7,8 @@
 
 import { loadConfig } from '@euanmsm/devkit-core';
 
+import { loadPrConfig } from './pr/config.mjs';
+import { prValues } from './pr/values.mjs';
 import { loadReviewConfig } from './review/config.mjs';
 import { skillValues } from './review/roster.mjs';
 
@@ -24,10 +26,9 @@ function rulesDocFor(root) {
 }
 
 /**
- * The installable skills by name.
- *
- * A `files` entry, or a function of the options returning them, names a
- * template, its directory setting and its path; `engine` marks the workflow.
+ * The installable skills by name, each file naming its template, directory
+ * setting (none for the repository root) and path; `engine` names the value
+ * holding a workflow's config, and `seed` marks a file written only once.
  */
 export const SKILLS = {
   'clean-commit-history': {
@@ -103,7 +104,7 @@ export const SKILLS = {
         template: 'code-review/review.workflow.js',
         dir: 'skillsDir',
         path: `${options.name}/review.workflow.js`,
-        engine: true,
+        engine: 'review',
       },
       ...(options.githubReview
         ? [
@@ -119,5 +120,30 @@ export const SKILLS = {
       const review = await loadReviewConfig(root, options, shared);
       return { ...skillValues(review, options, shared), review };
     },
+  },
+
+  pr: {
+    defaults: { config: '.devkit/pr.mjs', qaGate: false },
+    files: (options, values) => [
+      { template: 'pr/SKILL.md', dir: 'skillsDir', path: 'pr/SKILL.md' },
+      {
+        template: 'pr/pr-qa.workflow.js',
+        dir: 'skillsDir',
+        path: 'pr/pr-qa.workflow.js',
+        engine: 'pr',
+      },
+      { template: 'pr/TRAPS.md', dir: null, path: values.pr.traps, seed: true },
+      ...(options.qaGate
+        ? [
+            {
+              template: 'pr/pr-manual-qa.yml',
+              dir: null,
+              path: '.github/workflows/pr-manual-qa.yml',
+            },
+          ]
+        : []),
+    ],
+    values: async (options, root, shared) =>
+      prValues(await loadPrConfig(root, options, shared), options, shared),
   },
 };

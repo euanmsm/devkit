@@ -85,7 +85,7 @@ async function reviewConfig(root) {
  * @param argv - The arguments after the command name
  * @returns The flags keyed by name
  */
-function parseFlags(argv) {
+export function parseFlags(argv) {
   const parsed = {};
 
   for (let i = 0; i < argv.length; i++) {

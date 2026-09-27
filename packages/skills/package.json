@@ -21,7 +21,8 @@
     "src",
     "templates",
     "skills.example.json",
-    "code-review.example.mjs"
+    "code-review.example.mjs",
+    "pr.example.mjs"
   ],
   "engines": {
     "node": ">=22.11"

@@ -21,6 +21,13 @@ them from `.devkit/skills.json` instead of keeping a hand-written copy.
 - [x] **Docs** — how `sync` works, and one page per skill covering exactly how
       it runs and every option, in
       [`packages/skills/docs/`](packages/skills/docs/)
+- [x] **pr** — one engine for both repos' PR skills, configured in
+      `.devkit/pr.mjs`, and called `/pr` everywhere. It runs each stage as soon
+      as its inputs are ready, rather than phase by phase. Replaying the
+      recorded 54-minute Sales run gives 23 minutes, with the same checklist. A
+      script prepass and publish step run from the package, and the QA gate is
+      optional (`qaGate`). See [`plans/pr-skill.md`](plans/pr-skill.md) and
+      [`packages/skills/docs/pr.md`](packages/skills/docs/pr.md)
 
 ## Next
 
@@ -44,6 +51,16 @@ them from `.devkit/skills.json` instead of keeping a hand-written copy.
   - Install ripgrep in any CI job that runs the review prepass
   - Curricular: upgrade `@euanmsm/terse` to 0.3.0 or newer. The review's comment
     check runs `terse scan`, which 0.2.0 does not have
+  - PR skill, both repos: copy the matching fixture from
+    [`packages/skills/test/fixtures/pr/`](packages/skills/test/fixtures/pr/) to
+    `.devkit/pr.mjs`, enable `pr` with `qaGate: true`, and move the existing
+    `TRAPS.md` to `<skillsDir>/pr/TRAPS.md` before running `sync`
+  - Curricular: delete the `pull-requests` skill, `scripts/ci/manual-qa.mjs`,
+    its test and the old `pr-manual-qa.yml`, and change every `/pull-requests`
+    to `/pr` (`.claude/CLAUDE.md`, the PR template's comment). Make sure
+    `Manual QA` is still the required status check
+  - Sales harness: delete `.agents/skills/pr/`'s hand-written files. The gate
+    closes that repository's `manual-qa-gate` TODO item
 
 - [ ] **A dead-code package** — `@euanmsm/dead-code`, owning the dead-code
       checks the way terse owns the comment checks
@@ -55,14 +72,7 @@ them from `.devkit/skills.json` instead of keeping a hand-written copy.
   - The review prepass then runs it instead of calling knip directly, and the
     report explains which findings are known false positives
 
-- [ ] **pr** — PR creation with the verified manual QA checklist
-  - Move into config: the layer table, the checklist sections (Curricular has
-    Frontend, Sales has TUI), the boot commands, the Local CI tickboxes, and the
-    traps file path
-  - Strip the Sales-specific wording from the workflow prompts ("leads", "the
-    worker loop", "verbs")
-  - Optionally ship `pr-manual-qa.yml`, the GitHub workflow that un-ticks the
-    checklist on every push. Sales does not have it yet (its own `TODO.md`,
-    `manual-qa-gate`)
-  - Same shape as code-review: a JS module config, built-in defaults for
-    everything that is not the repo's own
+- [ ] **Measure the PR skill's experiments** — once both repos use it, run `/pr`
+      on the same branches with `narrowRounds` and `dropCrossCutting` on and
+      off, and compare time, steps, gaps and step quality side by side. Switch
+      on only what holds up

@@ -2,17 +2,22 @@
 // Workflow Harness
 // ============================================================================
 //
-// Runs a generated review workflow script with stand-in agents, the way the
+// Runs a generated workflow script with stand-in agents, the way the
 // Workflow tool would, and records every agent call it makes.
 
 /**
  * Runs a workflow script to completion with canned agent replies.
  *
- * @param source - The generated `review.workflow.js` text
+ * @param source - The generated workflow script's text
  * @param args - The workflow's `args`
- * @returns The script's `result` and every agent `call` it made
+ * @param options - A `reply` builder in place of the review's canned replies, and a `delay` in milliseconds per call
+ * @returns The script's `result`, every agent `call` it made with its start and end order, and its `logs`
  */
-export async function runWorkflow(source, args) {
+export async function runWorkflow(
+  source,
+  args,
+  { reply: replyFor = reply, delay = () => 0 } = {},
+) {
   const body = source.replace(/^export const meta/m, 'const meta');
   const AsyncFunction = (async () => {}).constructor;
   const script = new AsyncFunction(
@@ -26,10 +31,23 @@ export async function runWorkflow(source, args) {
   );
 
   const calls = [];
+  const logs = [];
+  let clock = 0;
 
   const agent = async (prompt, options) => {
-    calls.push({ label: options.label, model: options.model, prompt });
-    return reply(options.label, prompt);
+    const call = {
+      label: options.label,
+      model: options.model,
+      prompt,
+      started: clock++,
+    };
+    calls.push(call);
+
+    const wait = delay(options.label, prompt);
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+
+    call.ended = clock++;
+    return replyFor(options.label, prompt);
   };
   const parallel = (thunks) => Promise.all(thunks.map((thunk) => thunk()));
   const pipeline = (items, ...stages) =>
@@ -46,11 +64,11 @@ export async function runWorkflow(source, args) {
     parallel,
     pipeline,
     () => {},
-    () => {},
+    (line) => logs.push(line),
     args,
   );
 
-  return { result, calls };
+  return { result, calls, logs };
 }
 
 /**
