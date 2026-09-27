@@ -46,7 +46,7 @@ are always drafts; the author marks one ready once QA passes.
 
 ```bash
 SCRATCH_DIR=<session scratchpad directory>
-npx skills pr prepass --scratch "$SCRATCH_DIR"
+npx --no-install skills pr prepass --scratch "$SCRATCH_DIR"
 ```
 
 It resolves the base, writes the diff, per-file patches and a facts file to the
@@ -86,7 +86,7 @@ cached results.
 The completion notification names an `<output-file>`; it holds the result.
 
 ```bash
-npx skills pr publish --result <output-file> --base <base from the prepass>
+npx --no-install skills pr publish --result <output-file> --base <base from the prepass>
 ```
 
 It fills `{{template}}` with the summary, creates the PR as a draft or edits the

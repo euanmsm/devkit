@@ -42,12 +42,11 @@ The first rule that matches wins:
 4. **Nothing either way** — it says so and stops. It never goes looking for
    comment problems elsewhere in the repository.
 
-It then keeps only the files terse's rules apply to, using terse's own
-`governs()` check against `.devkit/terse.json`.
-
 ### 3. Finds the problems
 
-It runs the terse scanner over those files. Each finding is one line:
+It runs `npx --no-install terse scan` over those files. The scan keeps only the
+files terse's rules apply to, using terse's own `governs()` check against
+`.devkit/terse.json`, and lists the rest as skipped. Each finding is one line:
 `path:line  [rule-name]  message`.
 
 Two rules can't be checked by a script — whether a `//` comment should exist at

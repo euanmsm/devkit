@@ -39,7 +39,7 @@ Your prompt carries the scanner's output for your files. Re-run it yourself to
 confirm you have the current list:
 
 ```bash
-node node_modules/@euanmsm/terse/src/scanner.mjs <your files>
+npx --no-install terse scan <your files>
 ```
 
 Each line is `path:line  [rule-name]  message`. The contract's Enforcement
@@ -87,7 +87,7 @@ comment by rewording it into compliance when it should not exist.
 ### 4. Verify
 
 ```bash
-node node_modules/@euanmsm/terse/src/scanner.mjs <your files>
+npx --no-install terse scan <your files>
 ```
 
 Must report zero findings. If something genuinely cannot be fixed without

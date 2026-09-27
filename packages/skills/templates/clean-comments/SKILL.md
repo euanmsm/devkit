@@ -47,7 +47,7 @@ First rule that matches wins.
 
 **No paths, working tree dirty** → the changed files. `-uall` matters: plain
 `--short` collapses an untracked directory to one entry and its files never
-reach the filter.
+reach the scan.
 
 ```bash
 git status --short -uall | awk '{print $NF}'
@@ -62,27 +62,20 @@ git diff --name-only {{baseBranch}}...HEAD
 **Nothing either way** → say the tree and branch are both clean, and stop. Do
 not go hunting the repo for debt to fix — that is not what was asked for.
 
-### Filter to what the contract governs
-
-`governs()` in `@euanmsm/terse`, reading `.devkit/terse.json`, is the only
-definition of scope. Drop everything it rejects rather than reimplementing the
-rule:
-
-```bash
-node -e 'import("@euanmsm/terse").then(({governs})=>
-  process.argv.slice(1).filter(governs).forEach(f=>console.log(f)))' <files>
-```
-
 ## 3. Find the work
 
 ```bash
-node node_modules/@euanmsm/terse/src/scanner.mjs <files>
+npx --no-install terse scan <files>
 ```
 
-Every line is `path:line  [rule-name]  message`. Zero findings does **not** mean
-there is nothing to do — `logic-comment-exception` and `what-not-why` are
-invisible to the scanner, so a clean report still earns a judgement pass. Say so
-rather than declaring victory.
+The scan keeps only the files `governs()` accepts, reading `.devkit/terse.json`,
+and names each one it drops as `skipped`. Those are out of scope from here on;
+do not reimplement the rule.
+
+Every finding is `path:line  [rule-name]  message`, and the scan exits 1 when
+there is one. Zero findings does **not** mean there is nothing to do —
+`logic-comment-exception` and `what-not-why` are invisible to the scanner, so a
+clean report still earns a judgement pass. Say so rather than declaring victory.
 
 ## 4. Decide whether to fan out
 
@@ -116,7 +109,7 @@ Each prompt carries:
 Re-run the scanner across the whole scope:
 
 ```bash
-node node_modules/@euanmsm/terse/src/scanner.mjs <files>
+npx --no-install terse scan <files>
 ```
 
 Then confirm the invariant held. Read the diff and check that every changed line

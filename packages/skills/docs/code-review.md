@@ -71,18 +71,18 @@ generates from your config.
 
 ### 2. The prepass splits the diff (diff mode)
 
-`npx skills prepass split` writes one patch file per changed file, so each
-reviewer loads only the patches for its own files. It also reports whether the
-diff is large (over 4000 lines), in which case Recon works through it file by
-file.
+`npx --no-install skills prepass split` writes one patch file per changed file,
+so each reviewer loads only the patches for its own files. It also reports
+whether the diff is large (over 4000 lines), in which case Recon works through
+it file by file.
 
 ### 3. The prepass runs the tools, in the background
 
-`npx skills prepass tools` starts every tool in `prepass.tools`, the built-in
-comment and dead-code checks when terse and knip are installed, and the import
-graph, all at once. The skill does not wait for them. Recon doesn't need them,
-and the reviewers wait for them only when they start, several minutes later. See
-[The prepass](#the-prepass) and [`prepass`](#prepass).
+`npx --no-install skills prepass tools` starts every tool in `prepass.tools`,
+the built-in comment and dead-code checks when terse and knip are installed, and
+the import graph, all at once. The skill does not wait for them. Recon doesn't
+need them, and the reviewers wait for them only when they start, several minutes
+later. See [The prepass](#the-prepass) and [`prepass`](#prepass).
 
 ### 4. Routing decides which lenses fire
 
@@ -186,11 +186,13 @@ for each finding.
 
 ### 9. Findings are merged
 
-- Two findings on the same file whose lines are within 2 of each other are
-  treated as one. The report lists every lens that raised it.
-- If two verifiers disagree about the same finding, the more negative verdict
-  wins (`refuted`, then `amended`, then `confirmed`). The finding is marked
-  **Split verdict** so the disagreement is visible.
+- Two findings from different bundles, under the same lens, on the same file,
+  with lines within 2 of each other are treated as one. Two findings from the
+  same reviewer are never merged.
+- Each verdict applies to its own finding. A merged finding is dropped only when
+  every verifier refuted it, and the report shows the most severe finding that
+  survived. If the verifiers disagree, the finding is marked **Split verdict**
+  so the disagreement is visible.
 
 ### 10. The report is written
 

@@ -47,7 +47,9 @@ try {
       for (const { path, problem } of problems) {
         console.error(`${path}: ${problem}`);
       }
-      console.error('\nRun `npx skills sync` and commit the result.');
+      console.error(
+        '\nRun `npx --no-install skills sync` and commit the result.',
+      );
       process.exit(1);
     }
 

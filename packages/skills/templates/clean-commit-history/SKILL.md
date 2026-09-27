@@ -44,6 +44,11 @@ Every run MUST satisfy all three, or abort and report:
   manages their own uncommitted work — never stash it.
 - Capture `ORIGINAL_HEAD=$(git rev-parse HEAD)`. This is the byte-for-byte
   reference point.
+- Capture `FORK=$(git merge-base "$BASE" HEAD)`, the commit the branch left
+  `$BASE` at. The rewrite stacks onto `$FORK`, never onto `$BASE`'s tip: if
+  `$BASE` has moved on, resetting onto its tip would make the new commits revert
+  everything it gained since. Rebasing onto the newer base is a separate step
+  for the user, not part of this skill.
 
 ### 2. Guarantee a backup
 
@@ -61,8 +66,8 @@ State the backup explicitly to the user before proceeding.
 
 ### 3. Understand the story
 
-- `git log --oneline $BASE..HEAD` — the messy history.
-- `git diff --name-status $BASE..HEAD` and `--stat` — the full change surface.
+- `git log --oneline "$FORK"..HEAD` — the messy history.
+- `git diff --name-status "$FORK" HEAD` and `--stat` — the full change surface.
 - Read small/ambiguous modified files to slot them into the right layer.
 - Group every changed path into **atomic, layered commits**, ordered bottom-up
   so each commit stands on its own. Typical order (skip layers not touched):
@@ -77,8 +82,8 @@ Emit a bash script to the scratchpad (not inline commits) so the grouping is
 reviewable and the safety assertions run atomically. The script MUST:
 
 - `set -euo pipefail`; `cd` to repo root; re-assert branch + clean tree.
-- `git reset --soft $BASE` then `git reset -q` (HEAD to base, tree untouched,
-  everything unstaged).
+- `git reset --soft "$FORK"` then `git reset -q` (HEAD to the fork point, tree
+  untouched, everything unstaged).
 - Stage each group by explicit pathspec (`git add -A -- <paths>` so deletions
   and modifications are captured), then `git commit -m "<message>"`.
 - For "everything under X except subdir Y": `git add -A -- X` then
@@ -86,7 +91,7 @@ reviewable and the safety assertions run atomically. The script MUST:
 - **Final assertions** (abort non-zero on failure):
   - `git status --porcelain` empty — nothing missed.
   - `git diff --quiet $ORIGINAL_HEAD HEAD` — tree byte-identical.
-- Print the new `git log --oneline $BASE..HEAD` on success.
+- Print the new `git log --oneline "$FORK"..HEAD` on success.
 
 Run the script. If it aborts, the branch is unchanged from the last good commit
 — diagnose the missed path, fix the grouping, rerun.

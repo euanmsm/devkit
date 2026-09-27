@@ -828,26 +828,37 @@ const SEVERITY_LETTER = { critical: 'C', high: 'H', medium: 'M', low: 'L' };
  */
 const isCoverage = (id) => typeof id === 'string' && id.startsWith('coverage-');
 
-// Lowest rank wins when two bundles verify the same finding.
-const VERDICT_RANK = { refuted: 0, amended: 1, confirmed: 2 };
-
 /**
- * Merges two verdicts on one finding, marking the winner when they disagree.
+ * Picks what one merged entry shows, dropping it only when every finding in it was refuted.
  *
- * @param a - The first verdict, or null
- * @param b - The second verdict, or null
- * @returns The lower-ranked verdict, or null when both are missing
+ * @param members - The entry's findings, each paired with the verdict on its own uid or null
+ * @returns The most severe surviving finding, and its verdict marked with `splitWith` when another verifier disagreed
  */
-function mergeVerdicts(a, b) {
-  if (!a) return b ?? null;
-  if (!b) return a;
+function resolveEntry(members) {
+  const effective = ({ finding, verdict }) =>
+    verdict?.verdict === 'amended'
+      ? { ...finding, ...(verdict.corrected ?? {}) }
+      : finding;
+  // An unrecognised severity counts as severe.
+  const rank = (member) => SEVERITY_RANK[effective(member).severity] ?? 0;
 
-  const [winner, loser] =
-    VERDICT_RANK[a.verdict] <= VERDICT_RANK[b.verdict] ? [a, b] : [b, a];
+  const survivors = members.filter(
+    ({ verdict }) => verdict?.verdict !== 'refuted',
+  );
+  const [pick] = [...(survivors.length > 0 ? survivors : members)].sort(
+    (a, b) => rank(a) - rank(b) || (a.verdict ? 0 : 1) - (b.verdict ? 0 : 1),
+  );
 
-  if (winner.verdict === loser.verdict) return winner;
+  const others = members
+    .map(({ verdict }) => verdict?.verdict)
+    .filter((one) => one && one !== pick.verdict?.verdict);
+  const splitWith = others.includes('refuted') ? 'refuted' : others[0];
 
-  return { ...winner, splitWith: loser.verdict };
+  return {
+    finding: pick.finding,
+    verdict:
+      pick.verdict && splitWith ? { ...pick.verdict, splitWith } : pick.verdict,
+  };
 }
 
 /**
@@ -874,7 +885,7 @@ function formatFinding(finding, verdict) {
     verdict?.verdict === 'amended' ? (verdict.corrected ?? {}) : {};
   const merged = { ...finding, ...corrected };
   const bucket = verdict == null ? 'unverified' : verdict.verdict;
-  const lenses = [finding.lens, ...(finding.alsoRaisedBy ?? [])];
+  const lenses = [finding.lens];
   const coverage = isCoverage(merged.id);
 
   const verifiedNote =
@@ -941,18 +952,19 @@ function parseRange(line) {
 const OVERLAP_SLACK = 2;
 
 /**
- * Tells whether two findings point at overlapping lines of the same file.
+ * Tells whether a finding repeats a merged entry's: another bundle, the same lens and file, and overlapping lines.
  *
- * @param a - The first finding
- * @param b - The second finding
+ * @param entry - A merged entry, carrying the `bundles` already in it
+ * @param finding - The finding to place
  * @returns True when the lines match or overlap within `OVERLAP_SLACK`
  */
-function sameSpot(a, b) {
-  if (a.file !== b.file) return false;
-  if (a.line === b.line) return true;
+function sameSpot(entry, finding) {
+  if (entry.bundles.includes(finding.bundle)) return false;
+  if (entry.lens !== finding.lens || entry.file !== finding.file) return false;
+  if (entry.line === finding.line) return true;
 
-  const rangeA = parseRange(a.line);
-  const rangeB = parseRange(b.line);
+  const rangeA = parseRange(entry.line);
+  const rangeB = parseRange(finding.line);
   if (!rangeA || !rangeB) return false;
 
   return (
@@ -1328,20 +1340,24 @@ const verdictByUid = new Map(
 const merged = [];
 let twinCount = 0;
 
+// An entry keeps the first finding's file, lens and line, which later ones must overlap.
 for (const finding of reviewResults.flatMap((result) => result.findings)) {
   const twin = merged.find((one) => sameSpot(one, finding));
 
   if (!twin) {
-    merged.push({ ...finding, uids: [finding.uid] });
+    merged.push({
+      file: finding.file,
+      lens: finding.lens,
+      line: finding.line,
+      bundles: [finding.bundle],
+      members: [finding],
+    });
     continue;
   }
 
   twinCount++;
-  twin.uids.push(finding.uid);
-
-  if (!twin.alsoRaisedBy) twin.alsoRaisedBy = [];
-  if (twin.lens !== finding.lens && !twin.alsoRaisedBy.includes(finding.lens))
-    twin.alsoRaisedBy.push(finding.lens);
+  twin.bundles.push(finding.bundle);
+  twin.members.push(finding);
 }
 
 const droppedForNoLine = reviewResults.reduce(
@@ -1377,11 +1393,14 @@ log(
 
 let splitVerdictCount = 0;
 
-const allFormatted = merged.map((finding) => {
+const allFormatted = merged.map((entry) => {
   // A finding the cap left out stays unverified, never confirmed.
-  const verdict = finding.uids
-    .map((uid) => verdictByUid.get(uid) ?? null)
-    .reduce((a, b) => mergeVerdicts(a, b), null);
+  const { finding, verdict } = resolveEntry(
+    entry.members.map((member) => ({
+      finding: member,
+      verdict: verdictByUid.get(member.uid) ?? null,
+    })),
+  );
 
   if (verdict?.splitWith) splitVerdictCount++;
 
@@ -1390,7 +1409,7 @@ const allFormatted = merged.map((finding) => {
 
 if (splitVerdictCount > 0) {
   log(
-    `${splitVerdictCount} finding(s) came back with two different verdicts — refuted wins, and the disagreement is printed`,
+    `${splitVerdictCount} finding(s) came back with two different verdicts — kept unless every verifier refuted it, and the disagreement is printed`,
   );
 }
 
@@ -1531,7 +1550,7 @@ const verificationSummary = `${sentToVerification} finding(s) sent to verificati
     : ''
 }${
   splitVerdictCount
-    ? `. ${splitVerdictCount} came back with two DIFFERENT verdicts; refuted wins and each one says so where it appears`
+    ? `. ${splitVerdictCount} came back with two DIFFERENT verdicts; each was kept unless every verifier refuted it, and says so where it appears`
     : ''
 }.`;
 

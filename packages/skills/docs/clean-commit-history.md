@@ -25,6 +25,10 @@ The model never runs it on its own initiative: the skill is marked
 - Stops if there are uncommitted changes. It never stashes your work.
 - Records the current commit, `ORIGINAL_HEAD`. Everything afterwards is checked
   against this.
+- Records the fork point, the commit where the branch left the base branch
+  (`git merge-base`). The new commits are stacked on the fork point, not on the
+  base branch's latest commit, so work that landed on the base since is never
+  undone. Rebasing onto the newer base is a separate step you take yourself.
 
 ### 2. Makes sure a backup exists
 
@@ -35,11 +39,11 @@ there. It tells you where the backup is before going further.
 
 ### 3. Works out the story
 
-It reads the existing commits and the full list of changed files, then groups
-every changed path into commits, ordered bottom-up so each commit makes sense on
-its own. The order comes from the `layerOrder` option; layers the branch did not
-touch are skipped. Every path — added, changed or deleted — lands in exactly one
-commit.
+It reads the existing commits and every file changed since the fork point, then
+groups every changed path into commits, ordered bottom-up so each commit makes
+sense on its own. The order comes from the `layerOrder` option; layers the
+branch did not touch are skipped. Every path — added, changed or deleted — lands
+in exactly one commit.
 
 Commit messages follow the repository's commit rules if `commitRules` points at
 them, and Conventional Commits (`type(scope): subject`) otherwise.
@@ -49,8 +53,8 @@ them, and Conventional Commits (`type(scope): subject`) otherwise.
 Rather than committing step by step, it writes a bash script to its scratch
 folder, so the grouping can be read before it runs. The script:
 
-1. Moves the branch back to the base with `git reset --soft`, which leaves every
-   file exactly as it is and only unstages the changes.
+1. Moves the branch back to the fork point with `git reset --soft`, which leaves
+   every file exactly as it is and only unstages the changes.
 2. Stages each group by path and commits it.
 3. Checks two things at the end, and fails loudly if either is wrong:
    - nothing is left uncommitted

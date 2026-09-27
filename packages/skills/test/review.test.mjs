@@ -25,7 +25,7 @@ import { plan, renderEngine, sync } from '../src/sync.mjs';
 import curricular from './fixtures/review/curricular.mjs';
 import sales from './fixtures/review/sales.mjs';
 import { makeRepo, write } from './repo.mjs';
-import { runWorkflow } from './workflow.mjs';
+import { reply, runWorkflow } from './workflow.mjs';
 
 const ENGINE = readFileSync(
   new URL('../templates/code-review/review.workflow.js', import.meta.url),
@@ -377,6 +377,125 @@ describe('the generated workflow', () => {
     });
 
     assert.match(calls[0].prompt, /- Knip report: `t\/_knip\.tmp\.json`/);
+  });
+});
+
+describe('merging findings', () => {
+  /**
+   * Builds one finding on `src/a.ts` the way a reviewer returns it.
+   *
+   * @param id - The finding id
+   * @param lens - The lens that raised it
+   * @param line - The line string
+   * @param severity - Its severity
+   * @param issue - Its one-line title
+   * @returns The finding
+   */
+  function finding(id, lens, line, severity, issue) {
+    return {
+      id,
+      lens,
+      file: 'src/a.ts',
+      line,
+      severity,
+      issue,
+      detail: 'detail',
+      whyItMatters: 'why',
+      evidence: 'evidence',
+      convention: null,
+    };
+  }
+
+  /**
+   * Reviews `src/a.ts` on the default config with some replies replaced.
+   *
+   * @param findings - Findings by reviewer label, less `review:`, in place of that bundle's canned ones
+   * @param verdicts - Verdict by finding id, in place of `confirmed`
+   * @returns The workflow's result and logs
+   */
+  function review(findings, verdicts = {}) {
+    return runWorkflow(
+      renderEngine(ENGINE, resolve({})),
+      { ...DIFF_ARGS, changedFiles: ['src/a.ts'] },
+      {
+        reply: (label, prompt) => {
+          const canned = reply(label, prompt);
+          const bundle = label.replace(/^review:/, '');
+
+          if (label.startsWith('review:') && findings[bundle]) {
+            return { ...canned, findings: findings[bundle] };
+          }
+          if (label.startsWith('verify:')) {
+            return {
+              verdicts: canned.verdicts.map((one) =>
+                verdicts[one.id]
+                  ? { ...one, verdict: verdicts[one.id], reasoning: 'no' }
+                  : one,
+              ),
+            };
+          }
+          return canned;
+        },
+      },
+    );
+  }
+
+  test('keeps a confirmed finding beside a refuted one from the same reviewer', async () => {
+    const { result, logs } = await review(
+      {
+        'correctness-1': [
+          finding('bugs-nit', 'bugs', '40', 'low', 'Naming nit'),
+          finding('bugs-crit', 'bugs', '42', 'critical', 'Null deref'),
+        ],
+      },
+      { 'bugs-nit': 'refuted' },
+    );
+
+    assert.equal(result.stats.critical, 1);
+    assert.equal(result.stats.refuted, 1);
+    assert.equal(result.stats.twins, 0);
+    assert.match(result.markdown, /## \d+ — Null deref/);
+    assert.match(result.markdown, /## Refuted and dropped\n\n- \*\*Naming nit/);
+    assert.doesNotMatch(result.markdown, /Split verdict/);
+    assert.ok(logs.some((line) => /0 cross-bundle twin/.test(line)));
+  });
+
+  test('merges one lens’s finding across bundles and shows the most severe', async () => {
+    const { result } = await review({
+      'correctness-1': [finding('bugs-a', 'bugs', '40', 'low', 'Off by one')],
+      security: [
+        finding('bugs-b', 'bugs', '41', 'critical', 'Off by one, crashes'),
+        finding('sec-a', 'security', '40', 'high', 'Unescaped input'),
+      ],
+    });
+
+    assert.equal(result.stats.twins, 1);
+    assert.equal(result.stats.critical, 1);
+    assert.equal(result.stats.low, 0);
+    assert.match(result.markdown, /## \d+ — Off by one, crashes/);
+    assert.match(result.markdown, /## \d+ — Unescaped input/);
+    assert.doesNotMatch(result.markdown, /## \d+ — Off by one\n/);
+  });
+
+  test('drops a merged finding only when every verifier refuted it', async () => {
+    const twins = {
+      'correctness-1': [
+        finding('bugs-a', 'bugs', '42', 'critical', 'Null deref'),
+      ],
+      security: [finding('bugs-b', 'bugs', '42', 'low', 'Null deref, maybe')],
+    };
+
+    const split = (await review(twins, { 'bugs-b': 'refuted' })).result;
+    assert.equal(split.stats.critical, 1);
+    assert.equal(split.stats.refuted, 0);
+    assert.equal(split.stats.splitVerdicts, 1);
+    assert.match(split.markdown, /Split verdict/);
+
+    const both = (
+      await review(twins, { 'bugs-a': 'refuted', 'bugs-b': 'refuted' })
+    ).result;
+    assert.equal(both.stats.critical, 0);
+    assert.equal(both.stats.refuted, 1);
   });
 });
 

@@ -49,7 +49,7 @@ skill is called `pr` in every repository.
 
 The skill does three things, and the model only thinks in the middle one.
 
-### 1. The prepass — `npx skills pr prepass --scratch <dir>`
+### 1. The prepass — `npx --no-install skills pr prepass --scratch <dir>`
 
 A script, not an agent. It:
 
@@ -121,7 +121,7 @@ section, Storybook items, how to stop the stack, the gaps, and the Local CI
 boxes. Each section opens with a timing line built from the drafters' minute
 estimates.
 
-### 3. Publishing — `npx skills pr publish --result <file> --base <branch>`
+### 3. Publishing — `npx --no-install skills pr publish --result <file> --base <branch>`
 
 A script again. `<file>` is the workflow's output file from its completion
 notice; the bare result works too. It:

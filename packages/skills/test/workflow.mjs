@@ -78,7 +78,7 @@ export async function runWorkflow(
  * @param prompt - The prompt it was given
  * @returns A reply in the shape that stage's schema asks for
  */
-function reply(label, prompt) {
+export function reply(label, prompt) {
   if (label === 'recon') {
     return {
       whatThisIs: 'A test target.',
