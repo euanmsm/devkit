@@ -1,0 +1,92 @@
+# {{markerText}}
+#
+# PR → Manual QA
+#
+# Keeps the manual testing checklist honest about which commit it was ticked
+# against. The checklist is the PR comment `/pr` posts. Every push un-ticks its
+# boxes, and the `Manual QA` commit status stays red until they are ticked
+# again against the new head commit.
+#
+# - pull_request      → reset  (un-tick, restamp, re-banner, post the status)
+# - issue_comment     → status (recompute and post the status, including when
+#                       a checklist comment is deleted)
+# - workflow_dispatch → status (unstick a check without pushing)
+#
+# Ticking a box edits the comment, which fires the `issue_comment` half. The
+# required check is the commit status `Manual QA`, not either job's name.
+#
+# Drafts are not skipped: `/pr` opens PRs as drafts, and skipping them would
+# leave boxes ticked across every push made before the PR is marked ready.
+# A fork PR gets a read-only token, so its reset is skipped and its check
+# stays pending.
+
+name: 'PR → Manual QA'
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created, edited, deleted]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Pull request number to re-evaluate'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  manual-qa-reset:
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    name: Reset QA Checklist
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+      statuses: write
+    concurrency:
+      group: manual-qa-reset-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Reset the QA checklist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npx --yes @euanmsm/skills@{{packageVersion}} qa-gate reset
+
+  manual-qa-status:
+    if: >
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, 'pr-qa:manual-checklist')) ||
+      github.event_name == 'workflow_dispatch'
+    name: Evaluate QA Checklist
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+      statuses: write
+    # Only the newest comment state matters, so a newer run replacing an older
+    # one loses nothing.
+    concurrency:
+      group: manual-qa-status-${{ github.event.issue.number || inputs.pr }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # No HEAD_SHA: a comment event is about a comment, not a commit, so the
+      # gate reads the PR's head from the API.
+      - name: Evaluate the QA checklist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number || inputs.pr }}
+        run: npx --yes @euanmsm/skills@{{packageVersion}} qa-gate status

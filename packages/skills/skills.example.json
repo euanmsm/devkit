@@ -1,0 +1,9 @@
+{
+  "skillsDir": ".claude/skills",
+  "agentsDir": ".claude/agents",
+  "baseBranch": "main",
+  "skills": {
+    "clean-commit-history": {},
+    "clean-comments": {}
+  }
+}
