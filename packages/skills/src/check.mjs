@@ -8,6 +8,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { readConfig } from './config.mjs';
 import { generatedOnDisk, isGenerated, plan } from './sync.mjs';
 
 /**
@@ -17,7 +18,8 @@ import { generatedOnDisk, isGenerated, plan } from './sync.mjs';
  * @returns One `{ path, problem }` per mismatch, empty when in step
  */
 export async function check(root) {
-  const files = await plan(root);
+  const config = readConfig(root);
+  const files = await plan(root, config);
   const problems = [];
 
   for (const { path, content, seed } of files) {
@@ -37,7 +39,7 @@ export async function check(root) {
 
   const planned = new Set(files.map(({ path }) => path));
 
-  for (const path of generatedOnDisk(root)) {
+  for (const path of generatedOnDisk(root, config)) {
     if (!planned.has(path)) {
       problems.push({ path, problem: 'no longer in the config' });
     }

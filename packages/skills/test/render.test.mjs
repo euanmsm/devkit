@@ -37,4 +37,23 @@ describe('render', () => {
       /No value for \{\{missing\}\}/,
     );
   });
+
+  test('throws on a block with no value, rather than dropping it', () => {
+    assert.throws(
+      () => render('A{{#qaGates}}X{{/qaGates}}B', {}),
+      /No value for \{\{#qaGates\}\}/,
+    );
+    assert.throws(
+      () => render('A{{^qaGates}}X{{/qaGates}}B', {}),
+      /No value for \{\{\^qaGates\}\}/,
+    );
+  });
+
+  test('throws when a block tag is left unrendered', () => {
+    assert.throws(
+      () => render('{{#a}}1{{#b}}x{{/b}}2{{/a}}', { a: true, b: true }),
+      /\{\{#b\}\}/,
+    );
+    assert.throws(() => render('x{{/a}}', { a: true }), /\{\{\/a\}\}/);
+  });
 });

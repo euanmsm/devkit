@@ -234,7 +234,7 @@ Two files:
 
 | Option         | Default                   | What it does                                                                                  |
 | -------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
-| `name`         | `code-review`             | The skill's folder name and slash command                                                     |
+| `name`         | `code-review`             | The skill's folder name and slash command: lowercase letters, digits and dashes               |
 | `config`       | `.devkit/code-review.mjs` | Path to the review config                                                                     |
 | `githubReview` | `false`                   | Adds the `pr` modes, the "Deliver to GitHub" step, and writes `pr-reviews.md` into `rulesDir` |
 

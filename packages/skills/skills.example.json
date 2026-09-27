@@ -3,15 +3,7 @@
   "agentsDir": ".claude/agents",
   "baseBranch": "main",
   "skills": {
-    "clean-commit-history": {
-      "commitRules": ".claude/rules/commits.md"
-    },
-    "clean-comments": {
-      "preloadSkills": ["comments"],
-      "typecheck": "npm run typecheck"
-    },
-    "pr": {
-      "qaGate": true
-    }
+    "clean-commit-history": {},
+    "clean-comments": {}
   }
 }

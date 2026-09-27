@@ -5,19 +5,54 @@
 // Runs sync and check against throwaway repositories.
 
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { check } from '../src/check.mjs';
 import { readConfig } from '../src/config.mjs';
 import { MARKER_TAG, plan, sync } from '../src/sync.mjs';
 import { FIXTURES, TEMPLATE } from './pr-helpers.mjs';
+import curricularReview from './fixtures/review/curricular.mjs';
+import salesReview from './fixtures/review/sales.mjs';
 import { makeRepo, write } from './repo.mjs';
 
 const BOTH = {
   skills: { 'clean-commit-history': {}, 'clean-comments': {} },
 };
+
+/** Every skill, with the optional files switched on so each template renders. */
+const EVERYTHING = {
+  skills: {
+    ...BOTH.skills,
+    'code-review': { githubReview: true },
+    pr: { qaGate: true },
+  },
+};
+
+/** The folder holding the Curricular and Sales harness review configs. */
+const REVIEW_FIXTURES = fileURLToPath(
+  new URL('./fixtures/review/', import.meta.url),
+);
+
+/** The review fixtures by name, matching the PR fixtures of the same name. */
+const REVIEW_CONFIGS = { curricular: curricularReview, sales: salesReview };
+
+/** The example config this package ships. */
+const EXAMPLE = fileURLToPath(
+  new URL('../skills.example.json', import.meta.url),
+);
+
+/**
+ * Writes a config module that re-exports another.
+ *
+ * @param path - Absolute path to the module to re-export
+ * @returns The module's source
+ */
+function reexport(path) {
+  return `export { default } from ${JSON.stringify(path)};\n`;
+}
 
 /**
  * Finds one planned file's content by the end of its path.
@@ -56,6 +91,120 @@ describe('readConfig', () => {
     const root = makeRepo({ 'skills.json': { skilsDir: 'x', skills: {} } });
 
     assert.throws(() => readConfig(root), /Unknown setting "skilsDir"/);
+  });
+
+  test('names the config file in every unknown-name error', () => {
+    for (const config of [
+      { skills: { nope: {} } },
+      { skills: { 'clean-comments': { typo: 1 } } },
+      { skilsDir: 'x', skills: {} },
+    ]) {
+      const root = makeRepo({ 'skills.json': config });
+      assert.throws(() => readConfig(root), /\.devkit\/skills\.json/);
+    }
+  });
+
+  test('rejects a skills value that is not an object', () => {
+    for (const skills of [null, [], 'clean-comments']) {
+      const root = makeRepo({ 'skills.json': { skills } });
+
+      assert.throws(
+        () => readConfig(root),
+        /"skills" in \.devkit\/skills\.json must be an object/,
+      );
+    }
+  });
+
+  test('rejects a skill set to false, saying to remove the key instead', () => {
+    const root = makeRepo({
+      'skills.json': { skills: { 'clean-comments': false } },
+    });
+
+    assert.throws(
+      () => readConfig(root),
+      /Skill "clean-comments" in \.devkit\/skills\.json is false\. Remove the key/,
+    );
+  });
+
+  test('rejects a skill whose value is not an object', () => {
+    for (const value of [true, null, 'on', []]) {
+      const root = makeRepo({
+        'skills.json': { skills: { 'clean-comments': value } },
+      });
+
+      assert.throws(
+        () => readConfig(root),
+        /Skill "clean-comments" in \.devkit\/skills\.json must be an object/,
+      );
+    }
+  });
+
+  test('rejects an option whose type differs from its default', () => {
+    const cases = [
+      ['clean-commit-history', 'layerOrder', 'a,b', /a list of strings/],
+      ['clean-comments', 'preloadSkills', ['comments', 1], /a list of strings/],
+      ['clean-comments', 'typecheck', true, /a string/],
+      ['code-review', 'githubReview', 'yes', /true or false/],
+    ];
+
+    for (const [skill, key, value, type] of cases) {
+      const root = makeRepo({
+        'skills.json': { skills: { [skill]: { [key]: value } } },
+      });
+
+      assert.throws(
+        () => readConfig(root),
+        new RegExp(
+          `Option "${key}" for skill "${skill}" in \\.devkit/skills\\.json must be ${type.source}`,
+        ),
+      );
+    }
+  });
+
+  test('rejects a code-review name that is not a plain folder name', () => {
+    for (const name of ['team/review', '../../outside', 'Review', '-x', '']) {
+      const root = makeRepo({
+        'skills.json': { skills: { 'code-review': { name } } },
+      });
+
+      assert.throws(
+        () => readConfig(root),
+        /Option "name" for skill "code-review" in \.devkit\/skills\.json must be/,
+        name,
+      );
+    }
+  });
+
+  test('rejects a shared setting that is not a non-empty string', () => {
+    for (const [key, value] of [
+      ['skillsDir', ''],
+      ['agentsDir', 3],
+      ['rulesDir', null],
+      ['baseBranch', ''],
+    ]) {
+      const root = makeRepo({ 'skills.json': { [key]: value, skills: {} } });
+
+      assert.throws(
+        () => readConfig(root),
+        new RegExp(
+          `Setting "${key}" in \\.devkit/skills\\.json must be a non-empty string`,
+        ),
+      );
+    }
+  });
+
+  test('drops a trailing slash from the directory settings', () => {
+    const root = makeRepo({
+      'skills.json': {
+        skillsDir: '.claude/skills/',
+        agentsDir: './agents//',
+        skills: {},
+      },
+    });
+    const config = readConfig(root);
+
+    assert.equal(config.skillsDir, '.claude/skills');
+    assert.equal(config.agentsDir, 'agents');
   });
 });
 
@@ -177,6 +326,78 @@ describe('plan', () => {
     });
     assert.match(await planned(without, 'SKILL.md'), /Conventional Commits/);
   });
+
+  test('leaves no placeholder unfilled in any skill, from either fixture config', async () => {
+    for (const [fixture, review] of Object.entries(REVIEW_CONFIGS)) {
+      const root = makeRepo({
+        'skills.json': EVERYTHING,
+        'code-review.mjs': reexport(join(REVIEW_FIXTURES, `${fixture}.mjs`)),
+        'pr.mjs': reexport(join(FIXTURES, `${fixture}.mjs`)),
+      });
+      write(root, '.github/pull_request_template.md', TEMPLATE);
+      for (const lens of Object.values(review.lenses)) {
+        if (lens?.skill)
+          write(root, `.claude/skills/${lens.skill}/SKILL.md`, '');
+      }
+
+      for (const { path, content } of await plan(root)) {
+        // A workflow script is code, not a template, and fills its own `{{branch}}` at run time.
+        if (path.endsWith('.workflow.js')) continue;
+        // `${{ … }}` is a GitHub Actions expression, not a placeholder.
+        assert.doesNotMatch(content, /(?<!\$)\{\{/, `${fixture}: ${path}`);
+      }
+    }
+  });
+
+  test('fails when two skills would write the same file, naming both', async () => {
+    const root = makeRepo({
+      'skills.json': {
+        skills: {
+          'clean-comments': {},
+          'code-review': { name: 'clean-comments' },
+        },
+      },
+    });
+
+    await assert.rejects(
+      () => plan(root),
+      /"clean-comments" and "code-review" in \.devkit\/skills\.json both write \.claude\/skills\/clean-comments\/SKILL\.md/,
+    );
+  });
+
+  test('names the skill’s own config file in its marker', async () => {
+    const root = makeRepo({
+      'skills.json': {
+        skills: {
+          'clean-comments': {},
+          'code-review': { config: '.devkit/review.mjs' },
+          pr: { qaGate: true },
+        },
+      },
+      'pr.mjs': reexport(join(FIXTURES, 'curricular.mjs')),
+    });
+    write(root, '.github/pull_request_template.md', TEMPLATE);
+    const own = {
+      'code-review': '.devkit/review.mjs',
+      pr: '.devkit/pr.mjs',
+      'pr-manual-qa': '.devkit/pr.mjs',
+    };
+
+    for (const { path, content, seed } of await plan(root)) {
+      if (seed) continue;
+      const line = content
+        .split('\n')
+        .find((text) => text.includes(MARKER_TAG));
+      const source = Object.entries(own).find(
+        ([key]) => path.includes(`${key}/`) || path.includes(`${key}.yml`),
+      )?.[1];
+      const expected = source
+        ? `${MARKER_TAG} from .devkit/skills.json and ${source}. Edit those,`
+        : `${MARKER_TAG} from .devkit/skills.json. Edit that,`;
+
+      assert.ok(line.includes(expected), `${path}: ${line}`);
+    }
+  });
 });
 
 describe('generated commands', () => {
@@ -187,14 +408,8 @@ describe('generated commands', () => {
    */
   async function planEverything() {
     const root = makeRepo({
-      'skills.json': {
-        skills: {
-          ...BOTH.skills,
-          'code-review': { githubReview: true },
-          pr: { qaGate: true },
-        },
-      },
-      'pr.mjs': `export { default } from ${JSON.stringify(join(FIXTURES, 'curricular.mjs'))};\n`,
+      'skills.json': EVERYTHING,
+      'pr.mjs': reexport(join(FIXTURES, 'curricular.mjs')),
     });
     write(root, '.github/pull_request_template.md', TEMPLATE);
     return plan(root);
@@ -365,6 +580,35 @@ describe('sync and check', () => {
     assert.deepEqual((await sync(root)).written, [
       '.claude/skills/clean-comments/SKILL.md',
     ]);
+    assert.deepEqual(await check(root), []);
+  });
+
+  test('removes a skill folder left empty when skillsDir ends in a slash', async () => {
+    const root = makeRepo({
+      'skills.json': { ...BOTH, skillsDir: '.claude/skills/' },
+    });
+    await sync(root);
+
+    writeFileSync(
+      join(root, '.devkit/skills.json'),
+      JSON.stringify({
+        skillsDir: '.claude/skills/',
+        skills: { 'clean-commit-history': {} },
+      }),
+    );
+    await sync(root);
+
+    assert.equal(
+      existsSync(join(root, '.claude/skills/clean-comments')),
+      false,
+    );
+  });
+
+  test('syncs the shipped example config into an empty repository', async () => {
+    const root = makeRepo();
+    copyFileSync(EXAMPLE, join(root, '.devkit/skills.json'));
+
+    assert.ok((await sync(root)).written.length > 0);
     assert.deepEqual(await check(root), []);
   });
 });
