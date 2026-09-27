@@ -24,6 +24,23 @@ export const meta = {
 
 const str = { type: 'string' };
 
+const SEVERITIES = ['critical', 'high', 'medium', 'low'];
+
+// One finding's fields, shared by the reviewer's output and a verifier's correction.
+const FINDING_FIELDS = {
+  id: str,
+  lens: str,
+  file: str,
+  // A string, so "231" and "231-235" share one type.
+  line: str,
+  issue: str,
+  detail: str,
+  whyItMatters: str,
+  evidence: str,
+  severity: { enum: SEVERITIES },
+  convention: { type: ['string', 'null'] },
+};
+
 const FINDINGS = {
   type: 'object',
   required: ['findings', 'lensesRun'],
@@ -43,19 +60,7 @@ const FINDINGS = {
           'whyItMatters',
           'evidence',
         ],
-        properties: {
-          id: str,
-          lens: str,
-          file: str,
-          // A string, so "231" and "231-235" share one type.
-          line: str,
-          issue: str,
-          detail: str,
-          whyItMatters: str,
-          evidence: str,
-          severity: { enum: ['critical', 'high', 'medium', 'low'] },
-          convention: { type: ['string', 'null'] },
-        },
+        properties: FINDING_FIELDS,
       },
     },
     // Every active lens appears here, found something or not.
@@ -87,7 +92,12 @@ const VERDICTS = {
           id: str,
           verdict: { enum: ['refuted', 'confirmed', 'amended'] },
           reasoning: str,
-          corrected: { type: ['object', 'null'] },
+          // Only the fields the verifier changed.
+          corrected: {
+            type: ['object', 'null'],
+            properties: FINDING_FIELDS,
+            additionalProperties: false,
+          },
         },
       },
     },
@@ -382,7 +392,8 @@ function buildReconPrompt(input, allFiles, proposal) {
     ? `## The diff
 Branch \`${input.target}\` against \`${input.base}\`.
 Stat: ${input.diffStat}
-Per-file patches are in \`${input.patchDir}/\` — one \`.patch\` per changed file, so you never load the whole diff to find three files.${
+Per-file patches mirror the file tree: the patch for a changed file is at
+\`${input.patchDir}/<path>.patch\`, so you never load the whole diff to find three files.${
         input.largeDiff
           ? '\nThe diff is large (>4000 lines). Work file by file; do not try to hold it all at once.'
           : ''
@@ -396,15 +407,18 @@ ${allFiles.join('\n')}`;
 
   const graphPath = input.toolReports?.importGraph;
 
+  // The graph lands in the background, so Recon checks for it rather than waiting.
   const graphNote = graphPath
-    ? `**The import graph is already built** — \`${graphPath}\`. It was generated
-with ripgrep: every exported symbol in the files under review, with the places
-that name appears elsewhere. **Do not rebuild it and do not paste it in.** Link
-to it from the pack, read it yourself, and correct anything you find is wrong
-(it matches on names, so it over-reports lookalikes and under-reports
-${PROMPTS.graphUnderReports}). If a symbol's real callers
-are not what the graph suggests, say so in the pack — that correction is worth
-more than the list itself.`
+    ? `If \`${graphPath}\` exists, **the import graph is already built** — it was
+generated with ripgrep: every exported symbol in the files under review, with
+the places that name appears elsewhere. **Do not rebuild it and do not paste it
+in.** Link to it from the pack, read it yourself, and correct anything you find
+is wrong (it matches on names, so it over-reports lookalikes and under-reports
+${PROMPTS.graphUnderReports}). If a symbol's real callers are not what the graph
+suggests, say so in the pack — that correction is worth more than the list
+itself. **If the file does not exist yet, do not wait for it**: build the
+call-site map yourself — for each exported symbol under review, its call sites
+as \`file:line\`.`
     : `No import graph was generated for this run, so build the call-site map
 yourself: for each exported symbol under review, its call sites as \`file:line\`.`;
 
@@ -427,7 +441,7 @@ bundle**, and **make the ${JUDGMENT_COUNT} routing calls that need a file read r
 path matched**.
 
 ${sourceBlock}
-${buildToolReportBlock(input.toolReports)}
+${buildToolReportBlock(input.toolReports, { wait: false })}
 
 ## Step 1 — read
 Read every file above in full${isDiff ? ', not just the hunks — the patch shows what moved, the file shows what the branch now IS' : ''}. Follow imports both directions far
@@ -505,9 +519,10 @@ removeLenses, notes (one per bundle), possibleGaps (may be empty).`;
  * Builds the prompt block pointing at the prepass tool reports.
  *
  * @param reports - The report paths, with an optional sentinel
+ * @param options - `wait: false` for an agent that must not block on the sentinel
  * @returns The block text, empty when no report exists
  */
-function buildToolReportBlock(reports) {
+function buildToolReportBlock(reports, { wait = true } = {}) {
   if (!reports) return '';
 
   const rows = [
@@ -520,9 +535,17 @@ function buildToolReportBlock(reports) {
 
   if (rows.length === 0) return '';
 
+  const noWait = `
+They are still being produced in the background. **Do not wait for them.** A
+report that exists is complete; one that does not is not ready yet, so work
+without it.
+`;
+
   // A report is renamed into place only once its tool exits.
-  const waitBlock = reports.sentinel
-    ? `
+  const waitBlock = !wait
+    ? noWait
+    : reports.sentinel
+      ? `
 **Wait for the prepass before reading any of them.** It runs in the background
 and may still be finishing. FIRST ACTION, before anything else:
 
@@ -535,7 +558,7 @@ The sentinel names which reports landed. If it never appears within the three
 minutes, say so in the \`whatIChecked\` for the lens that wanted it and carry on
 **without running the tool yourself** — one agent running ${PROMPTS.toolCost} is exactly the cost the prepass exists to avoid.
 `
-    : '';
+      : '';
 
   return `
 ## Tool reports — already run, do not re-run them
@@ -658,8 +681,8 @@ function buildReviewerPrompt(active, recon, input) {
 
   const diffBlock = isDiff
     ? `## The diff
-Branch \`${input.target}\` against \`${input.base}\`. Per-file patches are in
-\`${input.patchDir}/\` — read only the ones for your files.
+Branch \`${input.target}\` against \`${input.base}\`. Each changed file's patch is
+at \`${input.patchDir}/<path>.patch\` — read only the ones for your files.
 
 ${BRANCH_SCOPE_NOTICE}
 `
@@ -737,7 +760,7 @@ independent, and confirming one says nothing about the next.
 ## Context
 ${recon.whatThisIs}
 Context pack: \`${recon.packPath}\` — a map, not evidence. Verify against files.
-${isDiff ? `Branch \`${input.target}\` vs \`${input.base}\`. Per-file patches in \`${input.patchDir}/\`.` : ''}
+${isDiff ? `Branch \`${input.target}\` vs \`${input.base}\`. The file's patch is at \`${input.patchDir}/<path>.patch\`.` : ''}
 
 ## How to verify
 1. Read the whole file, not just the cited lines.
@@ -820,6 +843,45 @@ Report through the structured-output tool: readThisFirst (string or null).`;
 
 const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 const SEVERITY_LETTER = { critical: 'C', high: 'H', medium: 'M', low: 'L' };
+
+// Why a finding carries no verdict, as its note in the report says it.
+const UNVERIFIED_NOTES = {
+  cap: 'over the per-bundle verification cap',
+  empty: 'the verifier returned nothing',
+  missing: 'the verifier gave no verdict for this finding',
+};
+
+/**
+ * Keeps the fields of an amended verdict's correction that fit a finding.
+ *
+ * @param verdict - The verdict, or null
+ * @returns The corrected fields, less any unknown field or severity off the scale
+ */
+function correctionOf(verdict) {
+  if (verdict?.verdict !== 'amended' || !verdict.corrected) return {};
+
+  return Object.fromEntries(
+    Object.entries(verdict.corrected).filter(([key, value]) =>
+      key === 'severity'
+        ? Object.hasOwn(SEVERITY_RANK, value)
+        : Object.hasOwn(FINDING_FIELDS, key) &&
+          (typeof value === 'string' || (key === 'convention' && value === null)),
+    ),
+  );
+}
+
+/**
+ * Makes text safe inside a markdown table cell.
+ *
+ * @param text - The text
+ * @returns The text on one line with pipes escaped
+ */
+function cell(text) {
+  return String(text ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/\|/g, '\\|')
+    .trim();
+}
 /**
  * Tells whether a finding id marks a coverage gap.
  *
@@ -835,10 +897,10 @@ const isCoverage = (id) => typeof id === 'string' && id.startsWith('coverage-');
  * @returns The most severe surviving finding, and its verdict marked with `splitWith` when another verifier disagreed
  */
 function resolveEntry(members) {
-  const effective = ({ finding, verdict }) =>
-    verdict?.verdict === 'amended'
-      ? { ...finding, ...(verdict.corrected ?? {}) }
-      : finding;
+  const effective = ({ finding, verdict }) => ({
+    ...finding,
+    ...correctionOf(verdict),
+  });
   // An unrecognised severity counts as severe.
   const rank = (member) => SEVERITY_RANK[effective(member).severity] ?? 0;
 
@@ -866,9 +928,10 @@ function resolveEntry(members) {
  *
  * @param finding - The reviewer's finding
  * @param verdict - The merged verdict, or null when unverified
+ * @param unverifiedWhy - A `UNVERIFIED_NOTES` key saying why there is no verdict
  * @returns The formatted finding
  */
-function formatFinding(finding, verdict) {
+function formatFinding(finding, verdict, unverifiedWhy) {
   const split = verdict?.splitWith
     ? ` **Split verdict** — another verifier called it ${verdict.splitWith}.`
     : '';
@@ -881,16 +944,14 @@ function formatFinding(finding, verdict) {
     };
   }
 
-  const corrected =
-    verdict?.verdict === 'amended' ? (verdict.corrected ?? {}) : {};
-  const merged = { ...finding, ...corrected };
+  const merged = { ...finding, ...correctionOf(verdict) };
   const bucket = verdict == null ? 'unverified' : verdict.verdict;
   const lenses = [finding.lens];
   const coverage = isCoverage(merged.id);
 
   const verifiedNote =
     verdict == null
-      ? '_Not verified — over the per-bundle verification cap; treat with normal skepticism._'
+      ? `_Not verified — ${UNVERIFIED_NOTES[unverifiedWhy] ?? UNVERIFIED_NOTES.missing}; treat with normal skepticism._`
       : bucket === 'amended'
         ? `_Amended on verification: ${verdict.reasoning}${split}_`
         : split
@@ -924,7 +985,7 @@ function formatFinding(finding, verdict) {
     title: merged.issue,
     file: merged.file,
     lenses,
-    summaryRow: `| __N__ | ${coverage ? '—' : SEVERITY_LETTER[merged.severity]} | ${merged.issue} | \`${merged.file}:${merged.line}\` |`,
+    summaryRow: `| __N__ | ${coverage ? '—' : SEVERITY_LETTER[merged.severity]} | ${cell(merged.issue)} | \`${cell(`${merged.file}:${merged.line}`)}\` |`,
     sectionMarkdown: lines.join('\n'),
   };
 }
@@ -1069,6 +1130,7 @@ if (allFiles.length === 0) {
     stats: { files: 0, findings: 0 },
     bundlesRun: [],
     bundlesSkipped: BUNDLES.map((bundle) => bundle.key),
+    bundlesDied: [],
     lensesRun: [],
     lensesSkipped: ALL_LENS_KEYS,
     packPath: null,
@@ -1236,6 +1298,8 @@ const reviewed = await pipeline(
         .then((result) => ({
           bundle: active.key,
           parent: active.parent ?? active.key,
+          // A skipped or dead agent resolves to null rather than throwing.
+          died: result == null,
           findings: (result?.findings ?? []).map((finding) => ({
             ...finding,
             bundle: active.key,
@@ -1303,17 +1367,29 @@ const reviewed = await pipeline(
             },
           ).then((reply) =>
             // Mapped back onto the namespaced uid, never the raw id.
-            (reply?.verdicts ?? [])
-              .map((verdict) => {
-                const finding = batch.findings.find(
-                  (one) => one.id === verdict.id,
-                );
-                return finding ? [finding.uid, verdict] : null;
-              })
-              .filter(Boolean),
+            reply == null
+              ? null
+              : (reply.verdicts ?? [])
+                  .map((verdict) => {
+                    const finding = batch.findings.find(
+                      (one) => one.id === verdict.id,
+                    );
+                    return finding ? [finding.uid, verdict] : null;
+                  })
+                  .filter(Boolean),
           ),
       ),
     );
+
+    // Every finding left without a verdict, and why.
+    const unverified = overCap.map((finding) => [finding.uid, 'cap']);
+    batches.forEach((batch, i) => {
+      const got = new Set((verdicts[i] ?? []).map(([uid]) => uid));
+      for (const finding of batch.findings) {
+        if (verdicts[i] == null) unverified.push([finding.uid, 'empty']);
+        else if (!got.has(finding.uid)) unverified.push([finding.uid, 'missing']);
+      }
+    });
 
     return {
       ...result,
@@ -1321,8 +1397,10 @@ const reviewed = await pipeline(
       droppedForNoLine,
       overCap: overCap.length,
       verifierCount: batches.length,
+      emptyVerifiers: verdicts.filter((one) => one == null).length,
       verifiedCount: toVerify.length,
       verdicts: verdicts.filter(Boolean).flat(),
+      unverified,
     };
   },
 );
@@ -1335,6 +1413,9 @@ const reviewResults = reviewed.filter(Boolean);
 
 const verdictByUid = new Map(
   reviewResults.flatMap((result) => result.verdicts ?? []),
+);
+const unverifiedWhyByUid = new Map(
+  reviewResults.flatMap((result) => result.unverified ?? []),
 );
 
 const merged = [];
@@ -1376,6 +1457,26 @@ const sentToVerification = reviewResults.reduce(
   (total, result) => total + (result.verifiedCount ?? 0),
   0,
 );
+const emptyVerifierCount = reviewResults.reduce(
+  (total, result) => total + (result.emptyVerifiers ?? 0),
+  0,
+);
+const bundlesDied = [
+  ...new Set(
+    reviewResults.filter((result) => result.died).map((result) => result.parent),
+  ),
+];
+
+if (bundlesDied.length > 0) {
+  log(
+    `${bundlesDied.length} bundle(s) had a reviewer return nothing: ${bundlesDied.join(', ')}`,
+  );
+}
+if (emptyVerifierCount > 0) {
+  log(
+    `${emptyVerifierCount} verifier(s) returned nothing — their findings are kept, marked unverified`,
+  );
+}
 
 if (droppedForNoLine > 0) {
   log(
@@ -1404,8 +1505,13 @@ const allFormatted = merged.map((entry) => {
 
   if (verdict?.splitWith) splitVerdictCount++;
 
-  return formatFinding(finding, verdict);
+  return formatFinding(finding, verdict, unverifiedWhyByUid.get(finding.uid));
 });
+
+// Counted after merging, so a twin verified twice counts once.
+const unverifiedCount = allFormatted.filter(
+  (finding) => finding.bucket === 'unverified',
+).length;
 
 if (splitVerdictCount > 0) {
   log(
@@ -1521,12 +1627,12 @@ for (const [parent, entry] of tableByParent) {
   const rows = entry.declared.map((lens) => {
     const hit = entry.reported.get(lens);
     return hit
-      ? `| \`${lens}\` | ${hit.findingCount} | ${hit.whatIChecked} |`
+      ? `| \`${lens}\` | ${hit.findingCount} | ${cell(hit.whatIChecked)} |`
       : `| \`${lens}\` | — | **Not reported back — treat this lens as unrun.** |`;
   });
 
   const died = entry.died
-    ? '\n**A reviewer for this bundle died after retries — its lenses produced nothing.**\n'
+    ? '\n**A reviewer for this bundle returned nothing (skipped, or dead after retries) — the lenses it covered were not reviewed.**\n'
     : '';
 
   lensTable += `\n### ${BUNDLE_BY_KEY.get(parent)?.title ?? parent}\n${died}\n| Lens | Findings | What it checked |\n| ---- | -------- | --------------- |\n${rows.join('\n')}\n`;
@@ -1541,8 +1647,8 @@ const bundlesSkipped = BUNDLES.map((bundle) => bundle.key).filter(
 );
 
 const verificationSummary = `${sentToVerification} finding(s) sent to verification across ${verifyAgentCount} agent(s), ${confirmedOrAmended.length} confirmed or amended, ${refutedBullets.length} refuted and dropped${
-  overCapCount
-    ? `, ${overCapCount} over the per-bundle verify cap and kept unverified`
+  unverifiedCount
+    ? `, ${unverifiedCount} kept unverified (${overCapCount} over the per-bundle verify cap${emptyVerifierCount ? `, ${emptyVerifierCount} verifier(s) returned nothing` : ''})`
     : ''
 }${
   twinCount
@@ -1572,10 +1678,16 @@ const metaLine = isDiffMode
   ? `**Base:** \`${input.base}\` · **Reviewed:** ${input.today ?? 'unknown date'} · **Files changed:** ${allFiles.length} · **Findings:** ${normalFindings.length} (${counts.critical} critical, ${counts.high} high, ${counts.medium} medium, ${counts.low} low, ${coverageFindings.length} coverage)`
   : `**Reviewed:** ${input.today ?? 'unknown date'} · **Files:** ${allFiles.length} · **Findings:** ${normalFindings.length} (${counts.critical} critical, ${counts.high} high, ${counts.medium} medium, ${counts.low} low)`;
 
+// Diff mode reviews commits while agents read the working tree, so a dirty tree is named.
+const stateLine =
+  isDiffMode && input.treeState
+    ? `\n**State reviewed:** ${input.treeState}\n`
+    : '';
+
 const markdown = `${headline}
 
 ${metaLine}
-
+${stateLine}
 **Bundles run:** ${bundlesFired.join(', ')}
 
 ## What this ${isDiffMode ? 'branch does' : 'code is'}
@@ -1632,7 +1744,7 @@ return {
     ...counts,
     coverage: coverageFindings.length,
     refuted: refutedBullets.length,
-    unverified: overCapCount,
+    unverified: unverifiedCount,
     twins: twinCount,
     splitVerdicts: splitVerdictCount,
     reviewAgents: activeBundles.length,
@@ -1641,6 +1753,7 @@ return {
   bundlesRun: bundlesFired,
   bundlesSkipped,
   bundlesSplit: splitResult.split,
+  bundlesDied,
   routingDecisions,
   lensesRun: firedLenses,
   lensesSkipped: skippedLenses,

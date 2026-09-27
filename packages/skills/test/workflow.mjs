@@ -19,7 +19,7 @@
  * @param source - The generated workflow script's text
  * @param args - The workflow's `args`
  * @param options - A `reply` builder in place of the review's canned replies, and a `delay` in milliseconds per call
- * @returns The script's `result`, every agent `call` it made with its start and end order, and its `logs`
+ * @returns The script's `result`, every agent `call` it made with its schema and its start and end order, and its `logs`
  */
 export async function runWorkflow(
   source,
@@ -62,6 +62,7 @@ export async function runWorkflow(
     const call = {
       label: options.label,
       model: options.model,
+      schema: options.schema,
       prompt,
       started: clock++,
     };

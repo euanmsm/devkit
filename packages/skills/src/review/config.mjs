@@ -17,6 +17,7 @@ import {
   DEFAULT_FILES,
   DEFAULT_PREPASS,
   DEFAULT_PROMPTS,
+  DEFAULT_TOOL_PACKAGES,
 } from './defaults.mjs';
 
 const TOP_KEYS = [
@@ -210,6 +211,7 @@ function resolveFiles(raw = {}, fail) {
 
   for (const key of ['code', 'docs', 'tests']) {
     if (!(files[key] instanceof RegExp)) fail(`files.${key} must be a RegExp`);
+    assertPlainRegex(`files.${key}`, files[key], fail);
   }
   if (!isStringList(files.targetExtensions)) {
     fail('files.targetExtensions must be a list of strings');
@@ -229,7 +231,12 @@ function resolveFiles(raw = {}, fail) {
 function resolvePrepass(raw = {}, installed, fail) {
   unknownKeys(raw, PREPASS_KEYS, 'prepass', fail);
 
-  const listed = raw.tools ?? DEFAULT_PREPASS.tools;
+  const listed =
+    raw.tools ??
+    DEFAULT_PREPASS.tools.filter((tool) => {
+      const needs = DEFAULT_TOOL_PACKAGES[tool.key];
+      return !needs || installed.has(needs);
+    });
   if (!Array.isArray(listed)) fail('prepass.tools must be a list');
 
   // A listed tool sharing a built-in's key keeps the built-in's behaviour.
@@ -279,6 +286,7 @@ function resolvePrepass(raw = {}, installed, fail) {
   if (!(graph.sources instanceof RegExp)) {
     fail('prepass.graph.sources must be a RegExp');
   }
+  assertPlainRegex('prepass.graph.sources', graph.sources, fail);
   if (!isStringList(graph.searchGlobs)) {
     fail('prepass.graph.searchGlobs must be a list of strings');
   }
@@ -371,7 +379,10 @@ function resolveRoute(key, route, files, fail) {
     return list.map((item) => {
       if (item === 'code') return files.code;
       if (item === 'tests') return files.tests;
-      if (item instanceof RegExp) return item;
+      if (item instanceof RegExp) {
+        assertPlainRegex(`lens "${key}" route.${field}`, item, fail);
+        return item;
+      }
       fail(`lens "${key}" route.${field} holds something that is not a RegExp`);
     });
   };
@@ -381,6 +392,18 @@ function resolveRoute(key, route, files, fail) {
   const coverage = patterns(route.coverage, 'coverage');
   if (paths) resolved.paths = paths;
   if (coverage) resolved.coverage = coverage;
+
+  // Recon is shown only lenses with a judgment, so nothing else could switch this one on.
+  if (
+    !resolved.always &&
+    !resolved.paths?.length &&
+    !resolved.coverage?.length &&
+    !resolved.judgment
+  ) {
+    fail(
+      `lens "${key}" route never fires. Give it always, a non-empty paths or coverage, or a judgment`,
+    );
+  }
 
   return resolved;
 }
@@ -426,6 +449,16 @@ function resolveBundles(raw, rawLenses = {}, lenses, fail) {
     if (!isStringList(bundle.lenses)) {
       fail(`bundle "${bundle.key}" lenses must be a list of lens keys`);
     }
+    if (bundle.split !== undefined && !Array.isArray(bundle.split)) {
+      fail(
+        `bundle "${bundle.key}" split must be a list of { lenses, model } parts`,
+      );
+    }
+    for (const part of bundle.split ?? []) {
+      if (!isPlainObject(part) || !isStringList(part.lenses)) {
+        fail(`a split part of "${bundle.key}" needs a list of lenses`);
+      }
+    }
     if (bundle.split?.length < 2) delete bundle.split;
   }
 
@@ -462,18 +495,7 @@ function resolveBundles(raw, rawLenses = {}, lenses, fail) {
       home.set(lens, bundle.key);
     }
 
-    for (const part of bundle.split ?? []) {
-      if (!MODELS.includes(part.model)) {
-        fail(`a split part of "${bundle.key}" needs a model`);
-      }
-      for (const lens of part.lenses) {
-        if (!bundle.lenses.includes(lens)) {
-          fail(
-            `bundle "${bundle.key}" split names "${lens}", which is not in the bundle`,
-          );
-        }
-      }
-    }
+    if (bundle.split) checkSplit(bundle, fail);
   }
 
   for (const lens of Object.keys(lenses)) {
@@ -485,6 +507,42 @@ function resolveBundles(raw, rawLenses = {}, lenses, fail) {
   }
 
   return bundles;
+}
+
+/**
+ * Fails unless a bundle's split parts each have a model and together name exactly its lenses, each once.
+ *
+ * @param bundle - A bundle with a `split`
+ * @param fail - Throws with the config's path prefixed
+ */
+function checkSplit(bundle, fail) {
+  const placed = new Set();
+
+  for (const part of bundle.split) {
+    if (!MODELS.includes(part.model)) {
+      fail(`a split part of "${bundle.key}" needs a model`);
+    }
+    for (const lens of part.lenses) {
+      if (!bundle.lenses.includes(lens)) {
+        fail(
+          `bundle "${bundle.key}" split names "${lens}", which is not in the bundle`,
+        );
+      }
+      if (placed.has(lens)) {
+        fail(`the split of "${bundle.key}" names "${lens}" in two parts`);
+      }
+      placed.add(lens);
+    }
+  }
+
+  // A lens in no part would stop running whenever the bundle splits.
+  for (const lens of bundle.lenses) {
+    if (!placed.has(lens)) {
+      fail(
+        `the split of "${bundle.key}" leaves out "${lens}". Every lens in the bundle must be in one part`,
+      );
+    }
+  }
 }
 
 /**
@@ -529,6 +587,21 @@ function resolvePrompts(raw = {}, fail) {
   }
 
   return prompts;
+}
+
+/**
+ * Fails on a regex whose `g` or `y` flag would carry `lastIndex` from one `.test()` call to the next.
+ *
+ * @param key - The config key holding the regex, for the message
+ * @param re - The regex
+ * @param fail - Throws with the config's path prefixed
+ */
+export function assertPlainRegex(key, re, fail) {
+  if (re.global || re.sticky) {
+    fail(
+      `${key} must not use the g or y flag, which makes repeated matches skip files. Use ${new RegExp(re.source, re.flags.replace(/[gy]/g, ''))}`,
+    );
+  }
 }
 
 /**

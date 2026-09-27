@@ -26,6 +26,12 @@ const LARGE_DIFF_LINES = 4000;
 /** Name of the sentinel file, which lands once every report has. */
 export const SENTINEL = '_prepass.done.json';
 
+/** How long one tool may run, just under the three minutes reviewers wait for the sentinel. */
+export const TOOL_TIMEOUT_MS = 170_000;
+
+// Exit codes a shell gives a command it could not find or could not execute.
+const COULD_NOT_RUN = new Set([126, 127]);
+
 /** Name of the import graph report. */
 export const GRAPH_REPORT = '_import-graph.tmp.md';
 
@@ -43,8 +49,19 @@ export function reportName(tool) {
 // Splitting the diff
 // =============================================================================
 
+// Pins every output setting the parser relies on, whatever the user's git config says.
+const DIFF_ARGS = [
+  '-c',
+  'core.quotePath=false',
+  'diff',
+  '--no-ext-diff',
+  '--no-color',
+  '--src-prefix=a/',
+  '--dst-prefix=b/',
+];
+
 /**
- * Writes one patch file per changed file.
+ * Writes one patch file per changed file, at `<out>/<path>.patch`.
  *
  * @param root - The repository root
  * @param options - `base`, `target`, and `out` relative to the root
@@ -53,7 +70,7 @@ export function reportName(tool) {
 export async function splitPatches(root, { base, target, out }) {
   const outDir = path.resolve(root, out);
 
-  const { stdout } = await execFileAsync('git', ['diff', base, target], {
+  const { stdout } = await execFileAsync('git', [...DIFF_ARGS, base, target], {
     cwd: root,
     maxBuffer: 512 * 1024 * 1024,
   });
@@ -66,29 +83,31 @@ export async function splitPatches(root, { base, target, out }) {
     .split(/^(?=diff --git )/m)
     .filter((chunk) => chunk.startsWith('diff --git '));
 
-  let written = 0;
+  const written = new Set();
   let unnamed = 0;
 
   for (const chunk of chunks) {
     const file = findChunkPath(chunk);
+    const target = file && path.resolve(outDir, `${file}.patch`);
 
-    if (!file) {
+    // A path that would land outside the folder is as good as unnamed.
+    if (!target?.startsWith(`${outDir}${path.sep}`)) {
       unnamed++;
       continue;
     }
 
-    writeFileSync(
-      path.join(outDir, `${file.split('/').join('_')}.patch`),
-      chunk,
-    );
-    written++;
+    // Mirroring the tree keeps `a/b.ts` and `a_b.ts` apart.
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, chunk);
+    written.add(target);
   }
 
-  const patchLines = stdout.split('\n').length;
+  const patchLines =
+    stdout === '' ? 0 : stdout.replace(/\n$/, '').split('\n').length;
 
   return {
     patchDir: path.relative(root, outDir),
-    files: written,
+    files: written.size,
     unnamed,
     patchLines,
     largeDiff: patchLines > LARGE_DIFF_LINES,
@@ -102,17 +121,91 @@ export async function splitPatches(root, { base, target, out }) {
  * @returns The path, or null when no header names one
  */
 function findChunkPath(chunk) {
+  // Only the header lines, so a `+++` inside the patch body is never read as one.
+  const head = chunk.split(/^@@/m)[0];
+
   // The +++/--- lines keep a spaced name intact, with a trailing tab after it.
-  const plus = chunk.match(/^\+\+\+ b\/(.+?)\t?$/m);
-  if (plus && plus[1] !== '/dev/null') return plus[1];
+  const plus = headerPath(head, /^\+\+\+ (.+?)\t?$/m, 'b/');
+  if (plus) return plus;
 
-  const minus = chunk.match(/^--- a\/(.+?)\t?$/m);
-  if (minus && minus[1] !== '/dev/null') return minus[1];
+  const minus = headerPath(head, /^--- (.+?)\t?$/m, 'a/');
+  if (minus) return minus;
 
-  const header = chunk.match(/^diff --git a\/(.+) b\/(.+)$/m);
-  if (header) return header[2];
+  // A pure rename or copy has no ---/+++ lines, only these.
+  const moved = headerPath(head, /^(?:rename|copy) to (.+)$/m, '');
+  if (moved) return moved;
+
+  // A binary file or a mode change has the header alone.
+  const header = head.match(
+    /^diff --git (?:a\/(.+) b\/(.+)|"a\/.*" "(b\/.*)")$/m,
+  );
+  if (header?.[2]) return header[2];
+  if (header?.[3]) return unquote(`"${header[3]}"`).slice(2);
 
   return null;
+}
+
+/**
+ * Reads one path out of a diff header line, unquoting it and dropping its prefix.
+ *
+ * @param head - The chunk's header lines
+ * @param pattern - Captures the path as git printed it
+ * @param prefix - The `a/` or `b/` prefix the path must carry, or empty for none
+ * @returns The path, or null when the line is missing, names `/dev/null`, or lacks the prefix
+ */
+function headerPath(head, pattern, prefix) {
+  const hit = head.match(pattern);
+  if (!hit) return null;
+
+  const raw = hit[1].startsWith('"') ? unquote(hit[1]) : hit[1];
+  if (raw === '/dev/null' || !raw.startsWith(prefix)) return null;
+
+  return raw.slice(prefix.length) || null;
+}
+
+// The escapes git uses inside a quoted path, beside octal bytes.
+const ESCAPES = {
+  a: 7,
+  b: 8,
+  t: 9,
+  n: 10,
+  v: 11,
+  f: 12,
+  r: 13,
+  '"': 34,
+  '\\': 92,
+};
+
+/**
+ * Decodes a path git wrapped in double quotes, C-style.
+ *
+ * @param quoted - The path with its quotes, as git printed it
+ * @returns The path as UTF-8 text
+ */
+function unquote(quoted) {
+  const body = quoted.slice(1, -1);
+  const bytes = [];
+
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] !== '\\') {
+      // Whole code points, so a character outside the BMP keeps both halves.
+      const char = String.fromCodePoint(body.codePointAt(i));
+      bytes.push(...Buffer.from(char, 'utf8'));
+      i += char.length - 1;
+      continue;
+    }
+
+    const octal = body.slice(i + 1, i + 4);
+    if (/^[0-7]{3}$/.test(octal)) {
+      bytes.push(parseInt(octal, 8));
+      i += 3;
+    } else {
+      bytes.push(ESCAPES[body[i + 1]] ?? body.charCodeAt(i + 1));
+      i += 1;
+    }
+  }
+
+  return Buffer.from(bytes).toString('utf8');
 }
 
 // =============================================================================
@@ -124,10 +217,14 @@ function findChunkPath(chunk) {
  *
  * @param root - The repository root
  * @param config - The resolved review config
- * @param options - `scratch` relative to the root, and the `files` under review
- * @returns The sentinel's contents: each tool's status, the graph's, and the file count
+ * @param options - `scratch` relative to the root, the `files` under review, and `timeoutMs` per tool
+ * @returns The sentinel's contents: each tool's `{ status, exitCode }`, the graph's status, and the file count
  */
-export async function runTools(root, config, { scratch, files }) {
+export async function runTools(
+  root,
+  config,
+  { scratch, files, timeoutMs = TOOL_TIMEOUT_MS },
+) {
   const scratchDir = path.resolve(root, scratch);
   mkdirSync(scratchDir, { recursive: true });
 
@@ -164,7 +261,7 @@ export async function runTools(root, config, { scratch, files }) {
   const present = files.filter((file) => existsSync(path.join(root, file)));
 
   const results = await Promise.all([
-    ...tools.map((tool) => runTool(root, tool, present, scratchDir)),
+    ...tools.map((tool) => runTool(root, tool, present, scratchDir, timeoutMs)),
     graphJob,
   ]);
 
@@ -187,14 +284,15 @@ export async function runTools(root, config, { scratch, files }) {
  * @param tool - The resolved tool
  * @param files - The files under review that still exist
  * @param scratchDir - Absolute path of the scratch directory
- * @returns The tool's status
+ * @param timeoutMs - How long the tool may run before it is stopped
+ * @returns The tool's `{ status, exitCode }`
  */
-function runTool(root, tool, files, scratchDir) {
+function runTool(root, tool, files, scratchDir, timeoutMs) {
   const finalPath = path.join(scratchDir, reportName(tool));
 
   if (tool.appendFiles && files.length === 0) {
     landAtomically(finalPath, '(no files under review for this tool)\n');
-    return Promise.resolve('ok');
+    return Promise.resolve({ status: 'ok', exitCode: null });
   }
 
   const command = tool.appendFiles
@@ -207,7 +305,7 @@ function runTool(root, tool, files, scratchDir) {
       ? extractJson
       : null;
 
-  return runCommand(root, command, finalPath, transform);
+  return runCommand(root, command, finalPath, transform, timeoutMs);
 }
 
 /**
@@ -257,39 +355,75 @@ export function keepFilesUnderReview(text, files) {
 /**
  * Runs a shell command and lands its combined output at the given path.
  *
+ * A tool exiting non-zero because it found something is `ok`. It is `failed`
+ * when the shell could not find or execute it, or npm has no such script, and
+ * `timedOut` when it ran past the timeout and was stopped.
+ *
  * @param root - The repository root, used as the working directory
  * @param command - The shell command line
  * @param finalPath - The report file's path
  * @param transform - Rewrites the raw output before it lands, or null
- * @returns `'ok'` once the command closes, or `'failed'` when it cannot start
+ * @param timeoutMs - How long the command may run before it is stopped
+ * @returns The tool's `{ status, exitCode }`, once its report has landed
  */
-function runCommand(root, command, finalPath, transform) {
+function runCommand(root, command, finalPath, transform, timeoutMs) {
   return new Promise((resolve) => {
     const chunks = [];
+    let settled = false;
+
+    const settle = (contents, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      landAtomically(finalPath, contents);
+      resolve(result);
+    };
 
     const child = spawn(command, {
       cwd: root,
       shell: true,
+      // Its own process group, so a timeout stops everything it started.
+      detached: true,
+      // Nothing may wait on input the prepass will never give.
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
     });
+
+    const output = () => Buffer.concat(chunks).toString('utf8');
+
+    const timer = setTimeout(() => {
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        // The group had already exited.
+      }
+      settle(
+        `prepass stopped \`${command}\`: it timed out after ${timeoutMs / 1000}s.\n\nOutput before it was stopped:\n${output() || '(none)\n'}`,
+        { status: 'timedOut', exitCode: null },
+      );
+    }, timeoutMs);
 
     child.stdout.on('data', (chunk) => chunks.push(chunk));
     child.stderr.on('data', (chunk) => chunks.push(chunk));
 
     child.on('error', (err) => {
-      landAtomically(
-        finalPath,
-        `prepass could not run: ${command}\n${err.message}\n`,
-      );
-      // A tool that found something exits non-zero and still counts as ok.
-      resolve('failed');
+      settle(`prepass could not run: ${command}\n${err.message}\n`, {
+        status: 'failed',
+        exitCode: null,
+      });
     });
 
     child.on('close', (code) => {
-      const raw = Buffer.concat(chunks).toString('utf8');
-      const body = transform ? transform(raw) : raw;
-      landAtomically(finalPath, body || `(no output; exit ${code})\n`);
-      resolve('ok');
+      const raw = output();
+      const failed =
+        COULD_NOT_RUN.has(code) || (code !== 0 && /Missing script:/.test(raw));
+
+      // A failure's own message is the report, never cut down to JSON.
+      const body = !failed && transform ? transform(raw) : raw;
+      settle(body || `(no output; exit ${code})\n`, {
+        status: failed ? 'failed' : 'ok',
+        exitCode: code,
+      });
     });
   });
 }

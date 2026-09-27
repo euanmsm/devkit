@@ -17,7 +17,11 @@ export const DEFAULT_FILES = {
 /** The prepass tools and import graph settings. */
 export const DEFAULT_PREPASS = {
   tools: [
-    { key: 'tsc', label: 'TypeScript errors', command: 'npx tsc --noEmit' },
+    {
+      key: 'tsc',
+      label: 'TypeScript errors',
+      command: 'npx --no-install tsc --noEmit',
+    },
     { key: 'lint', label: 'ESLint output', command: 'npm run lint' },
   ],
   graph: {
@@ -27,6 +31,12 @@ export const DEFAULT_PREPASS = {
   comments: 'auto',
   knip: 'auto',
 };
+
+/**
+ * Default tools that run only when the repository has their package installed,
+ * so a repository without it gets no report rather than a wrong one.
+ */
+export const DEFAULT_TOOL_PACKAGES = { tsc: 'typescript' };
 
 /**
  * The checks the prepass adds on its own when the repository has the tool

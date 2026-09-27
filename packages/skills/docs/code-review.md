@@ -24,7 +24,7 @@ it.
 /code-review                     # this branch against the base branch
 /code-review <path> [<path>...]  # named files or a directory, as they stand
 /code-review pr                  # this branch's PR, posted as a pending review
-/code-review pr 793              # a named PR
+/code-review pr 793              # a named PR, with its branch checked out
 ```
 
 The `pr` forms exist only when `githubReview` is on. The command name is the
@@ -62,8 +62,21 @@ generates from your config.
 ### 1. The skill resolves what to review
 
 - **Diff mode**: the changed files between the base branch and the current
-  branch, using a three-dot diff so commits landed on the base afterwards do not
-  count. It stops if you are on the base branch or nothing changed.
+  branch, diffed from their merge base so commits landed on the base afterwards
+  do not count. It stops if you are on the base branch or nothing changed.
+  - The base is `baseBranch`, or `origin/<baseBranch>` when there is no local
+    branch of that name.
+  - On a detached HEAD it reviews `HEAD`, and names the report
+    `detached-<short sha>`.
+  - It reviews commits, but agents and tools read files from disk. So with
+    uncommitted changes it warns you, reviews the last commit, and the report
+    header says
+    `State reviewed: commit <sha>; <n> uncommitted file(s) left out`.
+  - `pr <n>` reads the PR's head and base branches first. If the PR's head is
+    not the branch you have checked out, it stops and offers
+    `gh pr checkout <n>`, rather than reviewing one branch and posting to
+    another PR. It diffs against the PR's own base, so a stacked PR is reviewed
+    against the branch it merges into.
 - **Target mode**: the paths you named. A directory expands to every file under
   it with one of the `files.targetExtensions` extensions. It stops if a path
   does not exist, or if there are more than 40 files — it asks you to narrow the
@@ -72,17 +85,19 @@ generates from your config.
 ### 2. The prepass splits the diff (diff mode)
 
 `npx --no-install skills prepass split` writes one patch file per changed file,
-so each reviewer loads only the patches for its own files. It also reports
-whether the diff is large (over 4000 lines), in which case Recon works through
-it file by file.
+at `<patch folder>/<path>.patch`, so each reviewer loads only the patches for
+its own files. It also reports whether the diff is large (over 4000 lines), in
+which case Recon works through it file by file.
 
 ### 3. The prepass runs the tools, in the background
 
 `npx --no-install skills prepass tools` starts every tool in `prepass.tools`,
 the built-in comment and dead-code checks when terse and knip are installed, and
-the import graph, all at once. The skill does not wait for them. Recon doesn't
-need them, and the reviewers wait for them only when they start, several minutes
-later. See [The prepass](#the-prepass) and [`prepass`](#prepass).
+the import graph, all at once. The skill first deletes the last run's reports
+and sentinel, so nothing reads them as this run's, and then does not wait. Recon
+never waits for them: it uses the import graph only if it has already landed.
+The reviewers wait for them only when they start, several minutes later. See
+[The prepass](#the-prepass) and [`prepass`](#prepass).
 
 ### 4. Routing decides which lenses fire
 
@@ -108,9 +123,10 @@ Recon (on Opus) receives the file list, the routing already decided, and the
 patches. It:
 
 - **Writes a context pack** to the scratch folder: every file with its layer and
-  purpose, the import graph with corrections, and where each file's neighbours
-  live (its tests, its migrations, its config). Every reviewer reads this first
-  so none of them spends its time searching.
+  purpose, the import graph with corrections (or its own call-site map, when the
+  graph has not landed yet), and where each file's neighbours live (its tests,
+  its migrations, its config). Every reviewer reads this first so none of them
+  spends its time searching.
 - **Makes the judgment calls.** Every lens whose route has a `judgment` sentence
   is listed for Recon with that sentence, and Recon adds the ones the code calls
   for. It can give an added layer-scoped lens its own file list.
@@ -182,7 +198,12 @@ findings go to verification:
 The verifier re-reads the file, checks every citation is real, re-runs any
 experiment the finding claims, traces the claim through the code, and challenges
 the severity. It returns `confirmed`, `amended` (with corrections) or `refuted`
-for each finding.
+for each finding. A correction may only change a finding's own fields, and a
+severity outside `critical`, `high`, `medium` and `low` is ignored.
+
+A finding with no verdict is kept and marked unverified, with a note saying why:
+it was over the cap, its verifier returned nothing, or the verifier gave no
+verdict for its id. `stats.unverified` counts all three, after merging.
 
 ### 9. Findings are merged
 
@@ -204,7 +225,10 @@ paragraph naming the single most important thing. The report then holds:
 - coverage gaps, last
 - what was refuted and why, and every routing change Recon made
 - a table per bundle of what each lens checked — any lens that never reported
-  back says so
+  back says so, and a bundle whose reviewer returned nothing says that under its
+  title (the result lists those bundles in `bundlesDied`)
+- in diff mode, the state reviewed: the commit, and how many uncommitted files
+  were left out
 
 The script also returns a four-line summary for a GitHub review body, used only
 in PR mode.
@@ -279,6 +303,10 @@ export default {
 
 Every key is optional. Any key not listed here is an error.
 
+No regex may use the `g` or `y` flag. Routing calls `.test()` on the same regex
+for file after file, and those flags make each call start where the last match
+ended, so files would be skipped at random. `sync` names the key.
+
 ### `files`
 
 What routing treats as code, docs and tests.
@@ -295,7 +323,7 @@ What routing treats as code, docs and tests.
 ```js
 prepass: {
   tools: [
-    { key: 'tsc', label: 'TypeScript errors', command: 'npx tsc --noEmit' },
+    { key: 'tsc', label: 'TypeScript errors', command: 'npx --no-install tsc --noEmit' },
     { key: 'lint', label: 'ESLint output', command: 'npm run lint' },
   ],
   graph: {
@@ -308,8 +336,9 @@ prepass: {
 ```
 
 **`tools`** — the commands run in the background. Giving the list replaces the
-default two (the built-in checks below are added on top either way). Each tool
-has:
+default two (the built-in checks below are added on top either way). The default
+`tsc` runs only when `typescript` is a dependency, so a JavaScript-only
+repository gets no typecheck report rather than a wrong one. Each tool has:
 
 | Field                  | Required | What it is                                                                                                                                                       |
 | ---------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -348,7 +377,7 @@ to one workspace:
 ```js
 prepass: {
   tools: [
-    { key: 'tsc', label: 'TypeScript errors', command: 'npx tsc --noEmit' },
+    { key: 'tsc', label: 'TypeScript errors', command: 'npx --no-install tsc --noEmit' },
     { key: 'lint', label: 'ESLint output', command: 'npm run lint' },
     { key: 'knip', command: 'npx --no-install knip --workspace apps/main --reporter json' },
   ],
@@ -395,7 +424,9 @@ A lens's fields:
 | `diffOnly` | `true` for a lens that only makes sense against a change, like `backwards-compat`. It never fires in target mode                            |
 | `bundle`   | The key of an existing bundle to add this lens to, instead of listing it in `bundles`. If that bundle splits, the lens joins its first half |
 
-`route` fields — all optional, and combinable:
+`route` fields — combinable, and **at least one is required**: `always`, a
+non-empty `paths` or `coverage`, or a `judgment`. A route with none of them
+could never fire, so `sync` refuses it:
 
 | Field      | What it is                                                                                                                                                 |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -445,7 +476,9 @@ Rules `sync` enforces:
 
 - Every lens is in exactly one bundle.
 - Every lens a bundle names exists.
-- Every lens a split part names is in that bundle, and every part has a model.
+- A `split` is a list of parts. Every part has a model and a list of lenses.
+- The parts together name every lens in the bundle, each in exactly one part. A
+  lens left out would stop running whenever the bundle splits.
 
 Keep cross-cutting and layer-scoped lenses in separate bundles. A layer lens in
 a cross-cutting bundle reads every file; a cross-cutting lens in a layer-scoped
@@ -561,9 +594,17 @@ config controls.
 ### `skills prepass split --base <commit> --target <branch> --out <folder>`
 
 Runs `git diff` once and writes one `.patch` file per changed file into the
-folder, named after the file's path with `/` turned into `_`. The folder is
-emptied first. It prints `{ patchDir, files, unnamed, patchLines, largeDiff }`;
-`largeDiff` is true over 4000 lines.
+folder, mirroring the file tree: `src/a/b.ts` is at `<folder>/src/a/b.ts.patch`.
+The folder is emptied first. It prints
+`{ patchDir, files, unnamed, patchLines, largeDiff }`: `files` counts the
+patches written, `unnamed` the chunks it could not name, and `largeDiff` is true
+over 4000 lines.
+
+The diff runs as
+`git -c core.quotePath=false diff --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/`,
+so your own git settings (`diff.noprefix`, colour, an external diff tool) cannot
+change what it parses. A deleted file is named by its old path, a rename by its
+new one, and a binary file from its header.
 
 ### `skills prepass tools --scratch <folder> --files-from <list>`
 
@@ -571,16 +612,24 @@ emptied first. It prints `{ patchDir, files, unnamed, patchLines, largeDiff }`;
    for a finished one.
 2. Starts every tool — those in `prepass.tools` plus the built-in checks — and
    the import graph at the same time. Each tool runs through the shell from the
-   repository root, with colour output switched off. A tool with `appendFiles`
-   gets the files under review added to its command.
+   repository root, with colour output switched off and no input, so nothing can
+   wait on a prompt. A tool with `appendFiles` gets the files under review added
+   to its command.
 3. Writes each report as it finishes — to a temporary file first, then renamed
    into place, so **a report that exists is complete**.
-4. Writes `_prepass.done.json` last. It names each tool with `ok` or `failed`,
-   plus `importGraph` and the file count. Reviewers wait up to three minutes for
-   this file before reading any report.
+4. Writes `_prepass.done.json` last. It gives each tool's
+   `{ status, exitCode }`, plus `importGraph` and the file count. Reviewers wait
+   up to three minutes for this file before reading any report.
 
-A tool that exits with an error because it **found** problems is `ok` — that is
-the normal case. Only a tool that could not start at all is `failed`.
+A tool's `status` is one of:
+
+- `ok` — it ran. Exiting with an error because it **found** problems is the
+  normal case, and still `ok`.
+- `failed` — the shell could not find or run it (exit 127 or 126), or npm has no
+  such script.
+- `timedOut` — it ran for 170 seconds, just under the reviewers' wait, and was
+  stopped along with everything it started. Its report says so and keeps the
+  output so far, so the sentinel always lands in time.
 
 ### `skills prepass graph --files-from <list>`
 
@@ -612,9 +661,10 @@ you submit it. The skill:
   unchanged lines in the review body, one line each — GitHub rejects the whole
   review if one comment points at a line outside the diff
 - caps inline comments at 60, since large reviews fail to submit
-- uses the four-line summary the script returns as the review body, and nothing
-  more
-- never submits the review
+- uses the four-line summary the script returns as the review body, set when the
+  review is created, and nothing more
+- never submits the review. When you say submit, it asks which event — request
+  changes, comment or approve — and leaves the body as it is
 
 How to post without tripping GitHub's rate limits — create the review with one
 request, then add each later comment one at a time — is in the generated
@@ -631,6 +681,9 @@ request, then add each later comment one at a time — is in the generated
 | A lens is in two bundles                                        | Take it out of one                                                               |
 | A bundle or split names a lens that does not exist              | Fix the name, or define the lens                                                 |
 | A split names a lens outside its bundle                         | Add the lens to the bundle's `lenses` too                                        |
+| A split leaves a bundle's lens out, or names one lens twice     | Put each of the bundle's lenses in exactly one part                              |
+| A lens route that could never fire                              | Give it `always`, a non-empty `paths` or `coverage`, or a `judgment`             |
+| A regex with the `g` or `y` flag                                | Drop the flag                                                                    |
 | `splitOrder` names a bundle without a `split`                   | Remove it from `splitOrder`, or give the bundle a `split`                        |
 | An unknown key anywhere                                         | The message lists the allowed keys                                               |
 | A value of the wrong type                                       | Routes take regexes, prompts take strings, `false` only removes built-in lenses  |
@@ -652,12 +705,16 @@ export default {
 
   prepass: {
     tools: [
-      { key: 'tsc', label: 'TypeScript errors', command: 'npx tsc --noEmit' },
+      {
+        key: 'tsc',
+        label: 'TypeScript errors',
+        command: 'npx --no-install tsc --noEmit',
+      },
       { key: 'lint', label: 'ESLint output', command: 'npm run lint' },
       {
         key: 'knip',
         label: 'Knip dead-code report (JSON)',
-        command: 'npx knip --reporter json',
+        command: 'npx --no-install knip --reporter json',
         json: true,
       },
     ],

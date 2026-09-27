@@ -355,7 +355,12 @@ describe('pr prepass — against a real branch', () => {
       const diff = readFileSync(args.diffPath, 'utf8');
       assert.match(diff, /\+export const Badge = 2;/);
       assert.match(diff, /deleted file mode/);
-      assert.equal(readdirSync(args.patchDir).length, 5);
+      assert.equal(
+        readdirSync(args.patchDir, { recursive: true }).filter((entry) =>
+          entry.endsWith('.patch'),
+        ).length,
+        5,
+      );
 
       const facts = readFileSync(args.factsPath, 'utf8');
       assert.match(

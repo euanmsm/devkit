@@ -30,7 +30,7 @@ skill rather than two:
 /{{name}}                     # current branch vs {{baseBranch}} → report
 /{{name}} <path> [<path>...]  # a file, files, or a module → report
 /{{name}} pr                  # current branch's PR → report + pending GitHub review
-/{{name}} pr 793              # a named PR
+/{{name}} pr 793              # a named PR, with its branch checked out
 ```
 
 Its GitHub review stays **pending** until you submit, so nothing lands on the
@@ -53,19 +53,75 @@ The report is a markdown file on disk. Nothing is posted anywhere.
 No arguments{{#githubReview}}, or `pr`, or `pr <number>`{{/githubReview}} → **diff mode**. Any path → **target
 mode**.
 
-### Diff mode
+### Both, first
 
-`TARGET` is the current branch (`git branch --show-current`), and
-`BASE="$(git merge-base "$TARGET" {{baseBranch}})"`.
+```bash
+BRANCH="$(git branch --show-current)"          # empty on a detached HEAD
+if [ -n "$BRANCH" ]; then
+  BRANCH_LEAF="${BRANCH#*/}"                   # euanmadhar/add-invoices → add-invoices
+else
+  BRANCH_LEAF="detached-$(git rev-parse --short HEAD)"
+fi
+SCRATCH_DIR="tmp/code-reviews"
+mkdir -p "$SCRATCH_DIR"
+```
+
+### Diff mode
+{{#githubReview}}
+**`pr` first reads the PR**, so the review is of its head against its own base:
+
+```bash
+# `pr` alone reads the current branch's PR; `pr <n>` names one
+read -r PR_NUMBER PR_HEAD PR_BASE <<< "$(gh pr view <n> --json number,headRefName,baseRefName \
+  --jq '"\(.number) \(.headRefName) \(.baseRefName)"')"
+```
+
+Abort if there is no open PR — offer to run without `pr` instead. Abort if
+`PR_HEAD` is not `BRANCH`:
+`PR #<n> is on <PR_HEAD>, but <BRANCH, or a detached HEAD> is checked out.` Offer
+to run `gh pr checkout <n>` and start again — otherwise the review would read
+one branch and post to another PR. Then use `PR_BASE` as the base below, so a
+stacked PR is diffed against the branch it merges into.
+{{/githubReview}}
+`TARGET` is the current branch, or `HEAD` when detached. The base is
+`{{baseBranch}}`{{#githubReview}} (`PR_BASE` in `pr` mode){{/githubReview}}, or its
+`origin/` copy when the local branch does not exist:
+
+```bash
+TARGET="${BRANCH:-HEAD}"
+BASE_BRANCH="{{baseBranch}}"{{#githubReview}}              # "$PR_BASE" in pr mode{{/githubReview}}
+if git rev-parse --verify --quiet "refs/heads/$BASE_BRANCH" >/dev/null; then
+  BASE_REF="$BASE_BRANCH"
+elif git rev-parse --verify --quiet "refs/remotes/origin/$BASE_BRANCH" >/dev/null; then
+  BASE_REF="origin/$BASE_BRANCH"
+else
+  BASE_REF=""
+fi
+BASE="$(git merge-base "$TARGET" "${BASE_REF:-$BASE_BRANCH}" 2>/dev/null)"
+```
 
 Abort with a one-line reason if:
 
-- `TARGET == {{baseBranch}}` → `Cannot review {{baseBranch}} directly.`
-- `BASE` is empty → `Cannot determine merge base of <TARGET> with {{baseBranch}}.`
-{{#githubReview}}
-For `pr` with no number, resolve it: `gh pr view --json number --jq .number`.
-Abort if there is no open PR for the branch — offer to run without `pr` instead.
-{{/githubReview}}
+- `TARGET == BASE_BRANCH` → `Cannot review <BASE_BRANCH> directly.`
+- `BASE_REF` is empty → `No <BASE_BRANCH> branch, locally or as origin/<BASE_BRANCH>. Fetch it first.`
+- `BASE` is empty → `Cannot determine merge base of <TARGET> with <BASE_REF>.`
+
+**Check for uncommitted changes.** Diff mode reviews the commits, but the
+agents and the tools read the files on disk, so edits not yet committed make
+the patch, the file reads and the tool output disagree:
+
+```bash
+TREE_STATE="commit $(git rev-parse --short "$TARGET")"
+DIRTY="$(git status --porcelain --untracked-files=all -- . ":(exclude)$SCRATCH_DIR" | wc -l | tr -d ' ')"
+if [ "$DIRTY" -gt 0 ]; then
+  TREE_STATE="$TREE_STATE; $DIRTY uncommitted file(s) left out"
+fi
+```
+
+When `DIRTY` is above zero, tell the user before going on: the review covers
+the last commit, and the uncommitted files are not in the diff. Pass
+`TREE_STATE` to the workflow, which prints it in the report header.
+
 ### Target mode
 
 Parse the arguments into `TARGETS`. A directory expands to every source file
@@ -75,26 +131,18 @@ Abort if: a path does not exist (name it); `TARGETS` is empty after expansion;
 `TARGETS` is over 40 files — list what was found and ask the user to narrow.
 **Never silently sample.**
 
-### Both
-
-```bash
-BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-BRANCH_LEAF="${BRANCH#*/}"          # euanmadhar/add-invoices → add-invoices
-SCRATCH_DIR="tmp/code-reviews"
-mkdir -p "$SCRATCH_DIR"
-```
-
 ## 2. Compute the diff (diff mode only)
 
-Three-dot diff, so the result is `TARGET`-only commits and ignores anything
-landed on `{{baseBranch}}` after the branch forked:
+Diffing from the merge base means the result is `TARGET`-only commits and
+ignores anything landed on the base after the branch forked. `quotePath=false`
+keeps a non-ASCII path as it is rather than quoted:
 
 ```bash
-git diff --name-only {{baseBranch}}..."$TARGET"     # → CHANGED_FILES
-git diff --stat {{baseBranch}}..."$TARGET"          # → DIFF_STAT
+git -c core.quotePath=false diff --name-only "$BASE" "$TARGET"   # → CHANGED_FILES
+git diff --stat "$BASE" "$TARGET"                                  # → DIFF_STAT
 ```
 
-Abort if `CHANGED_FILES` is empty: `Branch has no changes vs {{baseBranch}}.`
+Abort if `CHANGED_FILES` is empty: `Branch has no changes vs <BASE_REF>.`
 
 **Split the patch per file.** Reviewers each need three files out of the diff,
 so handing every agent one giant patch means loading it a dozen times over.
@@ -106,8 +154,9 @@ npx --no-install skills prepass split --base "$BASE" --target "$TARGET" --out "$
 ```
 
 It prints one line of JSON:
-`{ patchDir, files, unnamed, patchLines, largeDiff }`. Take `LARGE_DIFF` from
-`largeDiff` — it is the >4000-line test, already applied.
+`{ patchDir, files, unnamed, patchLines, largeDiff }`. Each patch mirrors the
+file tree — `src/a/b.ts` is at `$PATCH_DIR/src/a/b.ts.patch`. Take `LARGE_DIFF`
+from `largeDiff` — it is the >4000-line test, already applied.
 
 This runs in the **foreground**, because Recon reads `PATCH_DIR` the moment it
 starts.
@@ -115,13 +164,18 @@ starts.
 ## 3. Launch the prepass — in the background
 
 The configured tools ({{toolNames}}) and the import graph are independent of
-each other and **nothing in Recon reads any of them** — only the review agents do, and they do not start
+each other and **nothing in Recon waits for any of them** — only the review agents do, and they do not start
 for several minutes. So they run all at once, in the background, and disappear
-into Recon's shadow instead of delaying it.
+into Recon's shadow instead of delaying it. Recon uses the import graph only
+if it has already landed.
 
-Write the file list, then launch and **do not wait**:
+First clear the last run's sentinel and reports, so nothing can read them as
+this run's. Then write the file list, launch, and **do not wait**:
 
 ```bash
+rm -f "$SCRATCH_DIR/_prepass.done.json"
+find "$SCRATCH_DIR" -maxdepth 1 -name '_*.tmp.*' -delete
+
 # CHANGED_FILES in diff mode, TARGETS in target mode
 printf '%s\n' "${FILES[@]}" > "$SCRATCH_DIR/_files.tmp.txt"
 
@@ -133,12 +187,15 @@ it, and do not read its output.** The review agents wait on it themselves.
 
 The reports land in `$SCRATCH_DIR`: {{reportFiles}}. Each is renamed into place
 only once its tool exits, so a file that exists is complete.
-`_prepass.done.json` lands last and names what succeeded — that is the
-sentinel the reviewers block on, and it is why nothing here needs a `sleep` in
-this session.
+`_prepass.done.json` lands last and names each tool's `status` and `exitCode` —
+that is the sentinel the reviewers block on, and it is why nothing here needs a
+`sleep` in this session.
 
-A tool exiting non-zero because it **found** something is the normal case, not
-a failure. Only a tool that could not start at all is recorded as `failed`.
+A tool exiting non-zero because it **found** something is the normal case, and
+counts as `ok`. It is `failed` when the shell could not find or run it (exit
+126 or 127) or npm has no such script, and `timedOut` when it ran past 170
+seconds — it is stopped and its report says so, so the sentinel always lands
+before the reviewers' three-minute wait runs out.
 
 ## 4. Run the Workflow
 
@@ -156,8 +213,8 @@ Workflow({
     target: TARGET, base: BASE,
     changedFiles: CHANGED_FILES, diffStat: DIFF_STAT,
     patchDir: PATCH_DIR, largeDiff: LARGE_DIFF,
-{{#githubReview}}    prNumber: PR_NUMBER,            // null unless delivering to GitHub
-{{/githubReview}}
+    treeState: TREE_STATE,          // printed in the report header
+
     // target mode
     targets: TARGETS, moduleTarget: MODULE_TARGET,
 
@@ -187,7 +244,7 @@ Pass it and the fat bundles run as two agents each instead of one long
 sequence of passes. Omit it and the script assumes 12.
 
 It returns
-`{ markdown, prBody, stats, bundlesRun, bundlesSkipped, bundlesSplit, routingDecisions, lensesRun, lensesSkipped, packPath, suggestedPath }`.
+`{ markdown, prBody, stats, bundlesRun, bundlesSkipped, bundlesSplit, bundlesDied, routingDecisions, lensesRun, lensesSkipped, packPath, suggestedPath }`.
 
 `markdown` is the full report for disk.{{#githubReview}} `prBody` is the four-line PR review body
 — see step 6.{{/githubReview}}
@@ -294,8 +351,14 @@ If `result.stats.splitVerdicts` is above zero, add a line: that many findings
 came back with two different verdicts because two bundles raised them, each was
 kept unless every verifier refuted it, and the report says so at each one. Do not average that away in the summary
 — a split verdict is the one place the review disagreed with itself.
+
+If `result.bundlesDied` is not empty, add a line naming those bundles: their
+reviewer returned nothing, so their lenses were not reviewed. If `DIRTY` was
+above zero, say the review covers the last commit and left the uncommitted
+files out.
 {{#githubReview}}
-In PR mode add the review URL and `Pending — not submitted.`
+In PR mode add the review URL and `Pending — not submitted.` When the user
+later says to submit, ask which event — see `{{rulesDir}}/pr-reviews.md`.
 {{/githubReview}}
 If `result.stats.findings === 0`, lead with
 `Clean — every finding was refuted under verification.` and say what was
@@ -415,7 +478,11 @@ change, not of code as it stands.
 
 ## Edge cases
 
-- **On `{{baseBranch}}`, or an empty diff** → abort with the one-line reason.
+- **On the base branch, or an empty diff** → abort with the one-line reason.
+- **Detached HEAD** → the review runs on `HEAD`, and the report is named
+  `detached-<sha>`.
+- **Uncommitted changes** → warn, review the last commit, and let the report
+  header say so. Commit first for a review of what is on disk.
 - **Docs-only target** → only the lenses that read docs fire. Say so rather
   than running every bundle against a README.
 - **Migration-only diff** → only the lenses routed on migrations and `.sql`
@@ -426,16 +493,20 @@ change, not of code as it stands.
 - **Large diff (>4000 lines)** → `largeDiff: true` makes Recon work file by file
   from `patchDir` rather than loading the patch whole.
 - **A review agent returns `null`** (skipped, or dead after retries) → its
-  bundle contributes nothing. `result.bundlesRun` still lists it; say in the
-  summary that it produced no findings rather than implying it never ran.
+  bundle contributes nothing. `result.bundlesRun` still lists it, and
+  `result.bundlesDied` names it; the report's lens table says so under its
+  title. Say in the summary which bundles produced nothing rather than implying
+  they never ran.
 - **A lens missing from `lensesRun`** → that pass did not happen. It shows as
   `Not reported back` in the report's lens table. Surface it; do not average it
   away.
-- **A verifier returns no verdict for a finding** → the finding is kept and
-  marked unverified. Never silently promoted to confirmed.
+- **A verifier returns nothing, or no verdict for a finding** → the finding is
+  kept and marked unverified, with a note saying which. Never silently promoted
+  to confirmed.
 - **30+ findings from one bundle** → likely padding. Findings past the
-  12-per-bundle verify cap are kept and marked unverified rather than dropped —
-  `result.stats.unverified` says how many.
+  12-per-bundle verify cap are kept and marked unverified rather than dropped.
+  `result.stats.unverified` counts every finding left unverified, for any of
+  the three reasons.
 - **The prepass has not finished when reviewers start** → expected on a slow
   typecheck, and handled: each report is renamed into place only once its tool
   exits, and reviewers wait on `_prepass.done.json` for up to three minutes. If

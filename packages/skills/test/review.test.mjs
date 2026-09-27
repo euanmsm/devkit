@@ -46,6 +46,17 @@ function resolve(raw) {
   });
 }
 
+/**
+ * Builds a bundle `b` over the given built-in lenses. The split checks fail before the check that every lens has a bundle.
+ *
+ * @param lenses - The built-in lens keys the bundle covers
+ * @param extra - More bundle fields, such as `split`
+ * @returns The bundle
+ */
+function bundleOf(lenses, extra = {}) {
+  return { key: 'b', scope: 'target', model: 'opus', lenses, ...extra };
+}
+
 const DIFF_ARGS = {
   mode: 'diff',
   target: 'feat/x',
@@ -125,7 +136,14 @@ describe('resolveReviewConfig', () => {
 
   test('keeps the repository’s lens order ahead of the built-ins', () => {
     const review = resolve({
-      lenses: { events: { judges: 'E.', bundle: 'correctness' }, bugs: {} },
+      lenses: {
+        events: {
+          judges: 'E.',
+          route: { always: 'code' },
+          bundle: 'correctness',
+        },
+        bugs: {},
+      },
     });
 
     assert.deepEqual(Object.keys(review.lenses).slice(0, 2), [
@@ -157,7 +175,7 @@ describe('resolveReviewConfig', () => {
     ],
     [
       'a lens in no bundle',
-      { lenses: { x: { judges: 'X.' } } },
+      { lenses: { x: { judges: 'X.', route: { always: 'code' } } } },
       /"x" sits in no bundle/,
     ],
     [
@@ -228,6 +246,78 @@ describe('resolveReviewConfig', () => {
       { prepass: { tools: [{ key: 'sentinel', label: 'x', command: 'x' }] } },
       /is taken/,
     ],
+    [
+      'a split that is not a list',
+      { bundles: [bundleOf(['bugs'], { split: { lenses: ['bugs'] } })] },
+      /bundle "b" split must be a list/,
+    ],
+    [
+      'a split part whose lenses are not a list',
+      {
+        bundles: [
+          bundleOf(['bugs', 'ci'], {
+            split: [
+              { lenses: 'bugs', model: 'opus' },
+              { lenses: ['ci'], model: 'opus' },
+            ],
+          }),
+        ],
+      },
+      /split part of "b" needs a list of lenses/,
+    ],
+    [
+      'a split that leaves a lens out',
+      {
+        bundles: [
+          bundleOf(['bugs', 'ci', 'security'], {
+            split: [
+              { lenses: ['bugs'], model: 'opus' },
+              { lenses: ['ci'], model: 'opus' },
+            ],
+          }),
+        ],
+      },
+      /split of "b" leaves out "security"/,
+    ],
+    [
+      'a split naming one lens in two parts',
+      {
+        bundles: [
+          bundleOf(['bugs', 'ci'], {
+            split: [
+              { lenses: ['bugs', 'ci'], model: 'opus' },
+              { lenses: ['ci'], model: 'opus' },
+            ],
+          }),
+        ],
+      },
+      /split of "b" names "ci" in two parts/,
+    ],
+    [
+      'a new lens with no route',
+      { lenses: { mine: { judges: 'Mine.', bundle: 'correctness' } } },
+      /lens "mine" route never fires/,
+    ],
+    [
+      'a built-in route emptied out',
+      { lenses: { ci: { route: { paths: [] } } } },
+      /lens "ci" route never fires/,
+    ],
+    [
+      'a global file pattern',
+      { files: { code: /\.ts$/g } },
+      /files\.code must not use the g or y flag/,
+    ],
+    [
+      'a sticky route pattern',
+      { lenses: { ci: { route: { paths: [/\.yml$/y] } } } },
+      /lens "ci" route\.paths must not use the g or y flag/,
+    ],
+    [
+      'a global graph pattern',
+      { prepass: { graph: { sources: /\.ts$/g } } },
+      /prepass\.graph\.sources must not use the g or y flag/,
+    ],
   ]) {
     test(`rejects ${what}`, () => {
       assert.throws(() => resolve(raw), message);
@@ -246,15 +336,40 @@ describe('resolveReviewConfig', () => {
         },
       ).prepass.tools.map((tool) => tool.key);
 
-    assert.deepEqual(keys([]), ['tsc', 'lint']);
-    assert.deepEqual(keys(['@euanmsm/terse', 'knip']), [
+    assert.deepEqual(keys(['typescript']), ['tsc', 'lint']);
+    assert.deepEqual(keys(['typescript', '@euanmsm/terse', 'knip']), [
       'tsc',
       'lint',
       'comments',
       'knip',
     ]);
-    assert.deepEqual(keys(['knip'], { knip: false }), ['tsc', 'lint']);
-    assert.deepEqual(keys([], { comments: true }), ['tsc', 'lint', 'comments']);
+    assert.deepEqual(keys(['typescript', 'knip'], { knip: false }), [
+      'tsc',
+      'lint',
+    ]);
+    assert.deepEqual(keys([], { comments: true }), ['lint', 'comments']);
+  });
+
+  test('runs the default typecheck only when typescript is installed, and never fetches it', () => {
+    const tools = (installed) =>
+      resolveReviewConfig(
+        {},
+        {
+          name: 'r',
+          skillsDir: 's',
+          source: 't',
+          installed: new Set(installed),
+        },
+      ).prepass.tools;
+
+    assert.deepEqual(
+      tools([]).map((tool) => tool.key),
+      ['lint'],
+    );
+    assert.equal(
+      tools(['typescript']).find((tool) => tool.key === 'tsc').command,
+      'npx --no-install tsc --noEmit',
+    );
   });
 
   test('a listed tool with a built-in key keeps the built-in behaviour', () => {
@@ -336,6 +451,28 @@ describe('the generated workflow', () => {
       assert.ok(calls.some((call) => call.label.startsWith('verify:')));
     });
   }
+
+  test('says in the header which state of the branch was reviewed', async () => {
+    const source = renderEngine(ENGINE, resolve({}));
+    const run = (treeState) =>
+      runWorkflow(source, {
+        ...DIFF_ARGS,
+        changedFiles: ['src/a.ts'],
+        treeState,
+      });
+
+    const dirty = (await run('commit abc1234; 2 uncommitted file(s) left out'))
+      .result.markdown;
+    assert.match(
+      dirty,
+      /^\*\*State reviewed:\*\* commit abc1234; 2 uncommitted file\(s\) left out$/m,
+    );
+
+    assert.doesNotMatch(
+      (await run(undefined)).result.markdown,
+      /State reviewed/,
+    );
+  });
 
   test('carries the skill name in its meta and no leftover markers', () => {
     const source = renderEngine(ENGINE, resolve({}));
@@ -497,6 +634,153 @@ describe('merging findings', () => {
     assert.equal(both.stats.critical, 0);
     assert.equal(both.stats.refuted, 1);
   });
+
+  /**
+   * Reviews `src/a.ts` on the default config, letting a function replace any reply.
+   *
+   * @param override - Returns the reply for a label, or undefined to keep the canned one
+   * @returns The workflow's result, calls and logs
+   */
+  function reviewWith(override) {
+    return runWorkflow(
+      renderEngine(ENGINE, resolve({})),
+      {
+        ...DIFF_ARGS,
+        changedFiles: ['src/a.ts'],
+        toolReports: {
+          lint: 't/_lint.tmp.txt',
+          importGraph: 't/_import-graph.tmp.md',
+          sentinel: 't/_prepass.done.json',
+        },
+      },
+      {
+        reply: (label, prompt) => {
+          const own = override(label, prompt, reply(label, prompt));
+          return own === undefined ? reply(label, prompt) : own;
+        },
+      },
+    );
+  }
+
+  test('lists a reviewer that returned nothing as dead, with its banner', async () => {
+    const { result } = await reviewWith((label) =>
+      label === 'review:security' ? null : undefined,
+    );
+
+    assert.deepEqual(result.bundlesDied, ['security']);
+    assert.match(
+      result.markdown,
+      /### Security\n\n\*\*A reviewer for this bundle returned nothing/,
+    );
+    assert.doesNotMatch(
+      result.markdown,
+      /### Performance\n\n\*\*A reviewer for this bundle/,
+    );
+  });
+
+  test('says a finding is unverified because its verifier returned nothing', async () => {
+    const { result } = await reviewWith((label) =>
+      label.startsWith('verify:') ? null : undefined,
+    );
+
+    assert.ok(result.stats.findings > 0);
+    assert.equal(result.stats.unverified, result.stats.findings);
+    assert.match(
+      result.markdown,
+      /Not verified — the verifier returned nothing/,
+    );
+    assert.doesNotMatch(result.markdown, /verification cap/);
+  });
+
+  test('says a finding is unverified because its verifier left its id out', async () => {
+    const { result } = await reviewWith((label, _prompt, canned) =>
+      label.startsWith('verify:')
+        ? {
+            verdicts: canned.verdicts.filter((one) => one.id !== 'bugs-1'),
+          }
+        : undefined,
+    );
+
+    assert.equal(result.stats.unverified, 1);
+    assert.match(
+      result.markdown,
+      /Not verified — the verifier gave no verdict for this finding/,
+    );
+  });
+
+  test('says a finding is unverified because it was over the cap', async () => {
+    const many = Array.from({ length: 13 }, (_, i) =>
+      finding(`bugs-${i}`, 'bugs', String(10 + i * 10), 'medium', `Bug ${i}`),
+    );
+    const { result } = await review({ 'correctness-1': many });
+
+    assert.equal(result.stats.unverified, 1);
+    assert.match(
+      result.markdown,
+      /Not verified — over the per-bundle verification cap/,
+    );
+  });
+
+  test('ignores a corrected severity outside the scale', async () => {
+    const { result, calls } = await reviewWith((label, _prompt, canned) =>
+      label.startsWith('verify:')
+        ? {
+            verdicts: canned.verdicts.map((one) => ({
+              ...one,
+              verdict: 'amended',
+              corrected: { severity: 'moderate' },
+            })),
+          }
+        : undefined,
+    );
+
+    const { critical, high, medium, low, findings } = result.stats;
+    assert.equal(critical + high + medium + low, findings);
+    assert.doesNotMatch(result.markdown, /\| undefined \|/);
+
+    const corrected = calls.find((call) => call.label.startsWith('verify:'))
+      .schema.properties.verdicts.items.properties.corrected;
+    assert.deepEqual(corrected.properties.severity.enum, [
+      'critical',
+      'high',
+      'medium',
+      'low',
+    ]);
+    assert.equal(corrected.additionalProperties, false);
+  });
+
+  test('escapes pipes and newlines in a summary table cell', async () => {
+    const { result } = await review({
+      'correctness-1': [
+        finding('bugs-x', 'bugs', '40', 'high', '`a || b`\nswallows 0'),
+      ],
+    });
+
+    assert.match(result.markdown, /\| `a \\\|\\\| b` swallows 0 \|/);
+  });
+
+  test('Recon is told the tool reports exist but never waits for them', async () => {
+    const { calls } = await reviewWith(() => undefined);
+    const recon = calls.find((call) => call.label === 'recon');
+    const reviewer = calls.find((call) => call.label.startsWith('review:'));
+
+    assert.doesNotMatch(
+      recon.prompt,
+      /_prepass\.done\.json|Wait for the prepass/,
+    );
+    assert.match(recon.prompt, /If `t\/_import-graph\.tmp\.md` exists/);
+    assert.match(reviewer.prompt, /Wait for the prepass/);
+    assert.match(reviewer.prompt, /t\/_prepass\.done\.json/);
+  });
+
+  test('tells the agents where each file’s patch is', async () => {
+    const { calls } = await reviewWith(() => undefined);
+
+    for (const label of ['recon', 'review:security', 'verify:a.ts']) {
+      const call = calls.find((one) => one.label === label);
+      assert.match(call.prompt, /`tmp\/patch\/<path>\.patch`/, label);
+    }
+  });
 });
 
 describe('sync with code-review', () => {
@@ -541,6 +825,40 @@ describe('sync with code-review', () => {
     assert.doesNotMatch(skill, /Deliver to GitHub|pr-reviews/);
     assert.match(skill, /Nothing is posted anywhere/);
     assert.match(skill, /## 6\. Present to the user/);
+  });
+
+  test('the page checks the PR, the base, the tree and clears the last run', async () => {
+    const files = await plan(reviewRepo({ githubReview: true }));
+    const skill = files.find((file) => file.path.endsWith('SKILL.md')).content;
+
+    assert.match(skill, /gh pr view <n> --json number,headRefName,baseRefName/);
+    assert.match(skill, /gh pr checkout <n>/);
+    assert.match(skill, /BASE_BRANCH="main"\s+# "\$PR_BASE" in pr mode/);
+    assert.match(skill, /refs\/remotes\/origin\/\$BASE_BRANCH/);
+    assert.match(
+      skill,
+      /BRANCH_LEAF="detached-\$\(git rev-parse --short HEAD\)"/,
+    );
+    assert.match(skill, /git status --porcelain/);
+    assert.match(skill, /treeState: TREE_STATE/);
+    assert.match(skill, /git -c core\.quotePath=false diff --name-only/);
+    assert.match(
+      skill,
+      /rm -f "\$SCRATCH_DIR\/_prepass\.done\.json"[\s\S]*prepass tools/,
+    );
+    assert.doesNotMatch(skill, /prNumber/);
+  });
+
+  test('pr-reviews sets the body once and asks which event to submit', async () => {
+    const files = await plan(reviewRepo({ githubReview: true }));
+    const rule = files.find((file) =>
+      file.path.endsWith('pr-reviews.md'),
+    ).content;
+
+    assert.match(rule, /reviews\/<ID>\/events -f event="<EVENT>"\n/);
+    assert.doesNotMatch(rule, /events[^\n]*\\\n[^\n]*body=/);
+    assert.doesNotMatch(rule, /default unless the user says otherwise/);
+    assert.match(rule, /ask which event/);
   });
 
   test('names the skill folder and slash command after the name option', async () => {
@@ -609,30 +927,181 @@ describe('prepass', () => {
   const git = (root, ...args) =>
     execFileSync('git', args, { cwd: root, stdio: 'pipe' }).toString();
 
-  test('split writes one patch per changed file', async () => {
+  /**
+   * Makes a real repository with a base commit and a change commit on top.
+   *
+   * @param base - File contents by path for the first commit; a Buffer is written as it is
+   * @param change - Edits for the second commit: contents by path, null to delete, or `{ from }` to rename
+   * @param config - Local git settings to apply before diffing, by key
+   * @returns The repository root
+   */
+  function historyRepo(base, change, config = {}) {
     const root = makeRepo();
     execFileSync('rm', ['-r', join(root, '.git')]);
     git(root, 'init', '-q', '-b', 'main');
     git(root, 'config', 'user.email', 't@t');
     git(root, 'config', 'user.name', 't');
-    write(root, 'a.ts', 'one\n');
-    git(root, 'add', '.');
-    git(root, 'commit', '-qm', 'base');
-    write(root, 'a.ts', 'two\n');
-    write(root, 'src/b c.ts', 'new\n');
-    git(root, 'add', '.');
-    git(root, 'commit', '-qm', 'change');
+    git(root, 'config', 'commit.gpgsign', 'false');
 
-    const summary = await splitPatches(root, {
-      base: 'HEAD~1',
-      target: 'HEAD',
-      out: 'tmp/patch',
-    });
+    const commit = (files, message) => {
+      for (const [file, body] of Object.entries(files)) {
+        if (body === null) git(root, 'rm', '-q', file);
+        else if (body?.from) git(root, 'mv', body.from, file);
+        else write(root, file, body);
+      }
+      git(root, 'add', '-A');
+      git(root, 'commit', '-q', '--allow-empty', '-m', message);
+    };
+
+    commit(base, 'base');
+    commit(change, 'change');
+    for (const [key, value] of Object.entries(config)) {
+      git(root, 'config', key, value);
+    }
+
+    return root;
+  }
+
+  /**
+   * Splits HEAD~1..HEAD into `tmp/patch`.
+   *
+   * @param root - The repository root
+   * @returns The split summary
+   */
+  const split = (root) =>
+    splitPatches(root, { base: 'HEAD~1', target: 'HEAD', out: 'tmp/patch' });
+
+  /**
+   * Reads one patch file the split wrote.
+   *
+   * @param root - The repository root
+   * @param file - The changed file's path
+   * @returns The patch text
+   */
+  const patchFor = (root, file) =>
+    readFileSync(join(root, 'tmp/patch', `${file}.patch`), 'utf8');
+
+  test('split writes one patch per changed file, mirroring the folder tree', async () => {
+    const root = historyRepo(
+      { 'a.ts': 'one\n' },
+      { 'a.ts': 'two\n', 'src/b c.ts': 'new\n' },
+    );
+
+    const summary = await split(root);
 
     assert.equal(summary.files, 2);
+    assert.equal(summary.unnamed, 0);
     assert.equal(summary.largeDiff, false);
-    assert.ok(existsSync(join(root, 'tmp/patch/a.ts.patch')));
-    assert.ok(existsSync(join(root, 'tmp/patch/src_b c.ts.patch')));
+    assert.match(patchFor(root, 'a.ts'), /^\+two$/m);
+    assert.match(patchFor(root, 'src/b c.ts'), /^\+new$/m);
+  });
+
+  test('split keeps a/b.ts and a_b.ts apart', async () => {
+    const root = historyRepo(
+      { 'keep.ts': 'x\n' },
+      { 'src/a/b.ts': 'nested\n', 'src/a_b.ts': 'flat\n' },
+    );
+
+    const summary = await split(root);
+
+    assert.equal(summary.files, 2);
+    assert.match(patchFor(root, 'src/a/b.ts'), /^\+nested$/m);
+    assert.match(patchFor(root, 'src/a_b.ts'), /^\+flat$/m);
+  });
+
+  test('split names a deleted file by its old path', async () => {
+    const root = historyRepo(
+      { 'src/gone.ts': 'bye\n', 'keep.ts': 'x\n' },
+      { 'src/gone.ts': null },
+    );
+
+    const summary = await split(root);
+
+    assert.equal(summary.files, 1);
+    assert.match(patchFor(root, 'src/gone.ts'), /^-bye$/m);
+  });
+
+  test('split names a pure rename by its new path', async () => {
+    const root = historyRepo(
+      { 'src/old.ts': 'same\n' },
+      { 'src/new name.ts': { from: 'src/old.ts' } },
+    );
+
+    const summary = await split(root);
+
+    assert.equal(summary.files, 1);
+    assert.equal(summary.unnamed, 0);
+    assert.match(
+      patchFor(root, 'src/new name.ts'),
+      /^rename to src\/new name\.ts$/m,
+    );
+  });
+
+  test('split names a binary file from its header', async () => {
+    const root = historyRepo(
+      { 'keep.ts': 'x\n' },
+      { 'img/logo.png': Buffer.from([0, 1, 2, 0, 255, 0]) },
+    );
+
+    const summary = await split(root);
+
+    assert.equal(summary.files, 1);
+    assert.match(patchFor(root, 'img/logo.png'), /Binary files/);
+  });
+
+  test('split names a non-ASCII path as it is, not quoted', async () => {
+    const root = historyRepo({ 'keep.ts': 'x\n' }, { 'src/café.ts': 'hi\n' });
+
+    const summary = await split(root);
+
+    assert.equal(summary.files, 1);
+    assert.equal(summary.unnamed, 0);
+    assert.match(patchFor(root, 'src/café.ts'), /^\+hi$/m);
+  });
+
+  test('split names a path git has to quote', async () => {
+    const root = historyRepo(
+      { 'keep.ts': 'x\n' },
+      { 'src/say "hi".ts': 'q\n' },
+    );
+
+    const summary = await split(root);
+
+    assert.equal(summary.files, 1);
+    assert.match(patchFor(root, 'src/say "hi".ts'), /^\+q$/m);
+  });
+
+  test('split ignores the user’s diff prefix, colour and external diff settings', async () => {
+    const root = historyRepo(
+      { 'a.ts': 'one\n' },
+      { 'a.ts': 'two\n' },
+      {
+        'diff.noprefix': 'true',
+        'color.diff': 'always',
+        'color.ui': 'always',
+        'diff.external': 'echo external',
+      },
+    );
+
+    const summary = await split(root);
+
+    assert.equal(summary.files, 1);
+    assert.equal(summary.unnamed, 0);
+    assert.match(patchFor(root, 'a.ts'), /^--- a\/a\.ts$/m);
+    assert.doesNotMatch(patchFor(root, 'a.ts'), /\x1b\[/);
+  });
+
+  test('split of an empty diff writes nothing and counts nothing', async () => {
+    const root = historyRepo({ 'a.ts': 'one\n' }, {});
+
+    assert.deepEqual(await split(root), {
+      patchDir: 'tmp/patch',
+      files: 0,
+      unnamed: 0,
+      patchLines: 0,
+      largeDiff: false,
+    });
+    assert.ok(existsSync(join(root, 'tmp/patch')));
   });
 
   test('tools lands every report, then the sentinel naming each', async () => {
@@ -654,8 +1123,8 @@ describe('prepass', () => {
     const status = await runTools(root, config, { scratch: 'tmp', files: [] });
 
     assert.deepEqual(status, {
-      lint: 'ok',
-      deps: 'ok',
+      lint: { status: 'ok', exitCode: 0 },
+      deps: { status: 'ok', exitCode: 0 },
       importGraph: 'ok',
       files: 0,
     });
@@ -671,6 +1140,80 @@ describe('prepass', () => {
       JSON.parse(readFileSync(join(root, 'tmp/_prepass.done.json'), 'utf8')),
       status,
     );
+  });
+
+  /**
+   * Runs one tool through the prepass and reads back what it landed.
+   *
+   * @param command - The tool's shell command
+   * @param options - A `root` to run in, and `timeoutMs` in place of the default
+   * @returns The tool's sentinel entry and its report text
+   */
+  async function runOne(command, { root = makeRepo(), timeoutMs } = {}) {
+    const config = resolve({
+      prepass: { tools: [{ key: 'one', label: 'One', command }] },
+    });
+    const status = await runTools(root, config, {
+      scratch: 'tmp',
+      files: [],
+      timeoutMs,
+    });
+
+    return {
+      entry: status.one,
+      report: readFileSync(join(root, 'tmp/_one.tmp.txt'), 'utf8'),
+      sentinel: existsSync(join(root, 'tmp/_prepass.done.json')),
+    };
+  }
+
+  test('a tool that exits non-zero because it found something is ok', async () => {
+    const { entry, report } = await runOne('echo "2 problems"; exit 1');
+
+    assert.deepEqual(entry, { status: 'ok', exitCode: 1 });
+    assert.match(report, /2 problems/);
+  });
+
+  test('a command the shell cannot find is failed', async () => {
+    const { entry } = await runOne('definitely-not-a-real-tool --check');
+
+    assert.deepEqual(entry, { status: 'failed', exitCode: 127 });
+  });
+
+  test('a command the shell cannot execute is failed', async () => {
+    const root = makeRepo();
+    write(root, 'not-executable.sh', 'echo hi\n');
+
+    const { entry } = await runOne('./not-executable.sh', { root });
+
+    assert.deepEqual(entry, { status: 'failed', exitCode: 126 });
+  });
+
+  test('an npm script the package does not have is failed', async () => {
+    const root = makeRepo();
+    write(root, 'package.json', '{"name":"x","scripts":{}}\n');
+
+    const { entry, report } = await runOne('npm run lint', { root });
+
+    assert.equal(entry.status, 'failed');
+    assert.match(report, /Missing script/);
+  });
+
+  test('a tool reading stdin gets end of input rather than hanging', async () => {
+    const { entry } = await runOne('cat', { timeoutMs: 5000 });
+
+    assert.deepEqual(entry, { status: 'ok', exitCode: 0 });
+  });
+
+  test('a tool past its timeout is stopped, reported and the sentinel still lands', async () => {
+    const { entry, report, sentinel } = await runOne(
+      'echo started; sleep 30 & wait',
+      { timeoutMs: 300 },
+    );
+
+    assert.deepEqual(entry, { status: 'timedOut', exitCode: null });
+    assert.match(report, /timed out after 0\.3s/);
+    assert.match(report, /started/);
+    assert.ok(sentinel);
   });
 
   test('passes the files under review that still exist to an appendFiles tool', async () => {

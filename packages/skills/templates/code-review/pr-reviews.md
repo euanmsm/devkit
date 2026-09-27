@@ -23,7 +23,7 @@ and heredoc bodies rather than shell string quoting:
 
 ```json
 {
-  "body": "",
+  "body": "The review summary. This is the only time it is set.",
   "comments": [
     { "path": "src/foo.ts", "line": 42, "side": "RIGHT", "body": "..." },
     {
@@ -39,7 +39,8 @@ and heredoc bodies rather than shell string quoting:
 ```
 
 A single line takes `line` + `side`. A range takes `start_line` + `line` and
-both `*_side` fields.
+both `*_side` fields. `body` is the PR-level summary — `/code-review` puts its
+`prBody` here. Submitting leaves it alone, so write it now.
 
 POST it, and **omit `event` entirely** — that omission is what leaves the review
 `PENDING`:
@@ -132,13 +133,17 @@ the file. See [Position is not line](#position-is-not-line).
 
 ## 6. Wait for the user
 
-Do not submit. When the user says submit, request changes, or approve, fire the
-event then:
+Do not submit. When the user says submit, request changes, comment or approve,
+fire the event then. **If they say only "submit", ask which event** —
+`REQUEST_CHANGES`, `COMMENT` or `APPROVE`. Never pick one for them: a request for
+changes blocks the PR.
 
 ```bash
-gh api repos/:owner/:repo/pulls/<PR>/reviews/<ID>/events \
-  -f event="REQUEST_CHANGES" -f body="..."
+gh api repos/:owner/:repo/pulls/<PR>/reviews/<ID>/events -f event="<EVENT>"
 ```
+
+Leave `body` out. The summary was set when the review was created, and a
+`body` here would replace it.
 
 ## Node ids
 
@@ -210,7 +215,9 @@ batch well under 80, and pace everything after it.
 
 ## Event values
 
-- `REQUEST_CHANGES` — the default unless the user says otherwise
+There is no default. Ask when the user has not said which.
+
+- `REQUEST_CHANGES` — blocks the merge until the author responds
 - `APPROVE`
 - `COMMENT` — neutral
 - omitted, leaving the review `PENDING` — keep it as a draft
@@ -223,8 +230,9 @@ batch well under 80, and pace everything after it.
   or DELETE the single comment.
 - **Never** submit on your own. A pending review stays pending until the user
   says to submit it.
-- Inline only. The PR-level summary belongs in the submit `body`, not in a
-  separate issue comment.
+- Inline only. The PR-level summary belongs in the review `body` set when the
+  review is created, not in a separate issue comment and not in the submit
+  call.
 - Suggestions go in a ` ```suggestion ` fenced block inside the comment body.
 - Keep the payload on disk as the source of truth. The local file is free to
   edit; the API is not.
