@@ -31,7 +31,19 @@ them from `.devkit/skills.json` instead of keeping a hand-written copy.
 
 ## Next
 
-- [ ] **Publish `@euanmsm/skills`** — everything below waits on this
+- [ ] **A dead-code package** — `@euanmsm/dead-code`, owning the dead-code
+      checks the way terse owns the comment checks
+  - Commands wrapping knip with a repo's settings: a whole-repo check, a check
+    of named files, and a branch check that fails only on newly dead code, as
+    `terse` does for comments
+  - A `.devkit/dead-code.json` for the standing false positives Curricular's
+    `dead-code` skill lists by hand today
+  - The review prepass then runs it instead of calling knip directly, and the
+    report explains which findings are known false positives
+  - Comes before publishing, so the first `@euanmsm/skills` release already runs
+    it
+
+- [ ] **Publish `@euanmsm/skills`** — adoption waits on this
   - Push `euanmadhar/skills-package` and open a pull request into `main`
   - Merge it once CI passes
   - Merge the Version Packages pull request the release workflow then opens,
@@ -49,6 +61,8 @@ them from `.devkit/skills.json` instead of keeping a hand-written copy.
   - Delete the hand-written copies, then run `npx skills sync`
   - Add `skills check` to CI, and the generated paths to `.prettierignore`
   - Install ripgrep in any CI job that runs the review prepass
+  - Install `@euanmsm/dead-code` and write each repo's `.devkit/dead-code.json`;
+    Curricular moves its `dead-code` skill's false-positive list into it
   - Curricular: upgrade `@euanmsm/terse` to 0.3.0 or newer. The review's comment
     check runs `terse scan`, which 0.2.0 does not have
   - PR skill, both repos: copy the matching fixture from
@@ -61,16 +75,6 @@ them from `.devkit/skills.json` instead of keeping a hand-written copy.
     `Manual QA` is still the required status check
   - Sales harness: delete `.agents/skills/pr/`'s hand-written files. The gate
     closes that repository's `manual-qa-gate` TODO item
-
-- [ ] **A dead-code package** — `@euanmsm/dead-code`, owning the dead-code
-      checks the way terse owns the comment checks
-  - Commands wrapping knip with a repo's settings: a whole-repo check, a check
-    of named files, and a branch check that fails only on newly dead code, as
-    `terse` does for comments
-  - A `.devkit/dead-code.json` for the standing false positives Curricular's
-    `dead-code` skill lists by hand today
-  - The review prepass then runs it instead of calling knip directly, and the
-    report explains which findings are known false positives
 
 - [ ] **Measure the PR skill's experiments** — once both repos use it, run `/pr`
       on the same branches with `narrowRounds` and `dropCrossCutting` on and
