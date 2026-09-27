@@ -1,10 +1,9 @@
 ---
 name: comments-specialist
 description: >
-  Use this agent to fix comment debt in a batch of files — file headers, JSDoc,
-  property docs and `//` lines breaking the comment contract. Spawned in
-  parallel by /clean-comments, one per batch. WHENEVER cleaning comments across
-  more than a couple of files, hand each batch to this agent.
+  Spawned by /clean-comments for one batch of files. Fixes the file headers,
+  JSDoc, property docs and `//` lines in that batch that break the comment
+  contract.
 tools: Bash, Read, Edit, Grep, Glob
 model: sonnet
 skills:
@@ -94,11 +93,18 @@ Must report zero findings. If something genuinely cannot be fixed without
 touching code, leave it and name it in your summary — do not edit code to
 satisfy the scanner.
 
-Then confirm you changed nothing but comments:
+Then confirm you changed nothing but comments. Your prompt names a snapshot
+folder holding each file as it was before any edit, under the same path relative
+to the repository root. From the root, diff every file, by that relative path,
+against it and read each changed line:
 
 ```bash
-git diff --stat -- <your files>
+for f in <your files>; do git diff --no-index -- "<snapshot>/$f" "$f"; done
 ```
+
+Every changed line must be a comment. Put back any code change you find. Your
+files may carry the user's own uncommitted edits, which is why the check is
+against the snapshot and not against git.
 
 ## If an edit is blocked
 

@@ -42,6 +42,9 @@ The first rule that matches wins:
 4. **Nothing either way** — it says so and stops. It never goes looking for
    comment problems elsewhere in the repository.
 
+Deleted files are left out of rules 2 and 3, and paths with spaces are kept
+whole.
+
 ### 3. Finds the problems
 
 It runs `npx --no-install terse scan` over those files. The scan keeps only the
@@ -53,12 +56,17 @@ Two rules can't be checked by a script — whether a `//` comment should exist a
 all, and whether a comment says _what_ instead of _why_ — so a clean scan still
 gets a read-through.
 
+Before editing anything, it copies those files to its scratch folder. The check
+in step 5 compares against that copy, so your own uncommitted edits to the same
+files don't get mixed up with the cleanup, and new files that git doesn't track
+yet are checked too.
+
 ### 4. Does the work itself, or splits it up
 
-| How much there is             | What happens                                     |
-| ----------------------------- | ------------------------------------------------ |
-| Up to 3 files, or 40 findings | It fixes them itself                             |
-| More than that                | It hands batches to `comments-specialist` agents |
+| How much there is                   | What happens                                     |
+| ----------------------------------- | ------------------------------------------------ |
+| Up to 3 files and up to 40 findings | It fixes them itself                             |
+| More files, or more findings        | It hands batches to `comments-specialist` agents |
 
 When it splits the work:
 
@@ -66,13 +74,14 @@ When it splits the work:
 - Batches are balanced by number of findings, not number of files.
 - At most 8 agents run, all started at once.
 
-Each agent gets its file list and its share of the scanner output, nothing more.
-The agent already has the comment skills loaded.
+Each agent gets its file list, its share of the scanner output and the path of
+the copy, nothing more. The agent already has the comment skills loaded.
 
 ### 5. Checks the result
 
 - Runs the scanner again over every file.
-- Reads the diff to confirm every changed line is a comment.
+- Diffs every file against the copy made before editing, to confirm every
+  changed line is a comment.
 - If `typecheck` is set, runs it — a broken block comment can swallow code.
 
 ### 6. Reports
@@ -85,14 +94,14 @@ suggests a commit message and stops. It never stages or commits.
 
 Installing `clean-comments` also writes an agent,
 `<agentsDir>/comments-specialist.md`. It runs on Sonnet with Bash, Read, Edit,
-Grep and Glob, and has the `preloadSkills` loaded before it starts. Its whole
-job is one batch of files:
+Grep and Glob, and has the `preloadSkills` loaded before it starts. Only
+`/clean-comments` spawns it, and its whole job is one batch of files:
 
 1. Re-run the scanner on its files.
 2. Fix each mechanical finding.
 3. Read every remaining `//` comment and delete the ones that add nothing.
-4. Re-run the scanner, which must report zero, and confirm only comments
-   changed.
+4. Re-run the scanner, which must report zero, then diff each file against the
+   copy it was given and confirm only comments changed.
 5. Report back.
 
 It is told never to touch files outside its batch, never to change code, and

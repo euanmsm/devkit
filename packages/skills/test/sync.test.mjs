@@ -434,10 +434,118 @@ describe('generated commands', () => {
       'clean-commit-history/SKILL.md',
     );
 
-    assert.match(content, /FORK=\$\(git merge-base "\$BASE" HEAD\)/);
-    assert.match(content, /git reset --soft "\$FORK"/);
-    assert.match(content, /git diff --name-status "\$FORK" HEAD/);
-    assert.doesNotMatch(content, /reset --soft \$BASE|\$BASE\.\.HEAD/);
+    assert.match(content, /git merge-base "\$BASE" HEAD/);
+    assert.match(content, /git reset -q --soft "\$FORK"/);
+    assert.match(content, /git diff --name-status <FORK> HEAD/);
+    assert.doesNotMatch(content, /reset (-q )?--soft "?\$BASE|\$BASE\.\.HEAD/);
+  });
+
+  test('takes the base branch from $ARGUMENTS and checks it exists', async () => {
+    const content = await planned(
+      makeRepo({ 'skills.json': BOTH }),
+      'clean-commit-history/SKILL.md',
+    );
+
+    assert.match(
+      content,
+      /Base branch: `\$ARGUMENTS` if given, otherwise `main`/,
+    );
+    assert.match(
+      content,
+      /git rev-parse --verify --quiet "\$BASE\^\{commit\}"/,
+    );
+    assert.doesNotMatch(content, /\$1\b|\$\{1:-/);
+  });
+
+  test('always creates a local backup, reusing one at the same commit', async () => {
+    const content = await planned(
+      makeRepo({ 'skills.json': BOTH }),
+      'clean-commit-history/SKILL.md',
+    );
+
+    assert.match(
+      content,
+      /Always create a local backup branch, even when the branch is\s+pushed/,
+    );
+    assert.match(content, /git branch "\$BACKUP" <ORIGINAL_HEAD>/);
+    assert.match(content, /reusing \$BACKUP/);
+    assert.doesNotMatch(content, /the remote is the backup/);
+  });
+
+  test('restores the original commit when the script fails', async () => {
+    const content = await planned(
+      makeRepo({ 'skills.json': BOTH }),
+      'clean-commit-history/SKILL.md',
+    );
+    const script = content.slice(content.indexOf('#!/usr/bin/env bash'));
+
+    assert.match(script, /^ORIGINAL_HEAD=<full sha>$/m);
+    const trap = script.indexOf(`trap 'git reset -q --hard "$ORIGINAL_HEAD"`);
+    assert.ok(trap > 0, 'the script sets the ERR trap');
+    assert.match(script, /' ERR$/m);
+    assert.ok(
+      trap < script.indexOf('git reset -q --soft "$FORK"'),
+      'the trap is armed before the first reset',
+    );
+    assert.doesNotMatch(content, /unchanged from the last good commit/);
+  });
+
+  test('warns about commit hooks and signing, and never skips them', async () => {
+    const content = await planned(
+      makeRepo({ 'skills.json': BOTH }),
+      'clean-commit-history/SKILL.md',
+    );
+
+    assert.match(content, /git config --get core\.hooksPath/);
+    assert.match(content, /test -d \.husky/);
+    assert.match(content, /git config --get commit\.gpgsign/);
+    assert.match(content, /warn the user before running the script/);
+    assert.match(content, /Do not skip them with `--no-verify`/);
+  });
+
+  test('checks a comment cleanup against a snapshot, not git', async () => {
+    const root = makeRepo({ 'skills.json': BOTH });
+    const skill = await planned(root, 'clean-comments/SKILL.md');
+    const agent = await planned(root, 'comments-specialist.md');
+
+    assert.match(skill, /tar -cf - -- <files> \| tar -xf - -C <snapshot>/);
+    assert.match(skill, /The snapshot folder's absolute path/);
+    for (const [name, content] of [
+      ['skill', skill],
+      ['agent', agent],
+    ]) {
+      assert.match(
+        content,
+        /git diff --no-index -- "<snapshot>\/\$f" "\$f"/,
+        name,
+      );
+      assert.doesNotMatch(content, /git diff (--stat )?-- </, name);
+    }
+  });
+
+  test('leaves deleted files out of the comment cleanup scope', async () => {
+    const content = await planned(
+      makeRepo({ 'skills.json': BOTH }),
+      'clean-comments/SKILL.md',
+    );
+
+    assert.match(content, /diff --name-only --diff-filter=d HEAD/);
+    assert.match(content, /diff --name-only --diff-filter=d main\.\.\.HEAD/);
+    assert.match(content, /ls-files --others --exclude-standard/);
+    assert.doesNotMatch(content, /awk '\{print \$NF\}'/);
+  });
+
+  test('fans out unless both the file and the finding counts are small', async () => {
+    const root = makeRepo({ 'skills.json': BOTH });
+    const skill = await planned(root, 'clean-comments/SKILL.md');
+    const agent = await planned(root, 'comments-specialist.md');
+
+    assert.match(skill, /≤ 3 files and ≤ 40 findings/);
+    assert.match(
+      agent,
+      /^description: >\n {2}Spawned by \/clean-comments for one batch of files\./m,
+    );
+    assert.doesNotMatch(agent, /WHENEVER/);
   });
 
   test('never runs a bare `npx skills`, which npm resolves to a stranger', async () => {

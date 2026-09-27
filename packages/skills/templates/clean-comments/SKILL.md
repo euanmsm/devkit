@@ -41,23 +41,27 @@ hitting the gate. Skip this step and the fan-out stalls on its first edit.
 
 ## 2. Resolve the scope
 
-First rule that matches wins.
+Run everything from the repository root. First rule that matches wins.
 
 **Paths given** → use them. Expand a directory with `git ls-files <dir>`.
 
-**No paths, working tree dirty** → the changed files. `-uall` matters: plain
-`--short` collapses an untracked directory to one entry and its files never
-reach the scan.
+**No paths, working tree dirty** → the changed files that still exist, plus
+every untracked file, including those inside new folders:
 
 ```bash
-git status --short -uall | awk '{print $NF}'
+git -c core.quotePath=false diff --name-only --diff-filter=d HEAD
+git -c core.quotePath=false ls-files --others --exclude-standard
 ```
 
-**No paths, working tree clean** → the branch's own changes:
+**No paths, working tree clean** → the branch's own changes, minus the files it
+deleted:
 
 ```bash
-git diff --name-only {{baseBranch}}...HEAD
+git -c core.quotePath=false diff --name-only --diff-filter=d {{baseBranch}}...HEAD
 ```
+
+Each line is one path. A path can contain spaces, so quote every path in every
+command from here on.
 
 **Nothing either way** → say the tree and branch are both clean, and stop. Do
 not go hunting the repo for debt to fix — that is not what was asked for.
@@ -77,12 +81,29 @@ there is one. Zero findings does **not** mean there is nothing to do —
 `logic-comment-exception` and `what-not-why` are invisible to the scanner, so a
 clean report still earns a judgement pass. Say so rather than declaring victory.
 
+### Snapshot before editing
+
+Copy the governed files to a fresh folder in the scratchpad before anything is
+edited, keeping their paths relative to the repository root:
+
+```bash
+mkdir -p <snapshot> && tar -cf - -- <files> | tar -xf - -C <snapshot>
+```
+
+Step 5 compares against this copy, not against git. The files in scope may
+already carry the user's own uncommitted edits, and untracked files have nothing
+in git to compare with. Write the snapshot's absolute path down: shell variables
+do not survive between commands.
+
 ## 4. Decide whether to fan out
 
 | Scope                       | How                                          |
 | --------------------------- | -------------------------------------------- |
-| ≤ 3 files, or ≤ 40 findings | Do it yourself. Spawning costs more          |
-| More than that              | Fan out, one `comments-specialist` per batch |
+| ≤ 3 files and ≤ 40 findings | Do it yourself. Spawning costs more          |
+| More files or more findings | Fan out, one `comments-specialist` per batch |
+
+Every file needs the judgement pass whatever its finding count, so many files
+with few findings still fan out.
 
 ### Batching
 
@@ -102,6 +123,7 @@ Each prompt carries:
 
 - The exact file list for that batch, absolute paths
 - That batch's slice of the scanner output, verbatim
+- The snapshot folder's absolute path
 - Nothing else — the contract is already preloaded in the agent
 
 ## 5. Verify
@@ -112,12 +134,15 @@ Re-run the scanner across the whole scope:
 npx --no-install terse scan <files>
 ```
 
-Then confirm the invariant held. Read the diff and check that every changed line
-is a comment:
+Then confirm the invariant held. Diff each file against its snapshot and check
+that every changed line is a comment:
 
 ```bash
-git diff -- <files>
+for f in <files>; do git diff --no-index -- "<snapshot>/$f" "$f"; done
 ```
+
+Only the cleanup shows up: the user's earlier edits are in the snapshot too, and
+untracked files are covered.
 
 {{#typecheck}}Typecheck — a mangled block comment can swallow code:
 

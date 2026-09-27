@@ -53,12 +53,12 @@ Reformatting a generated file makes `skills check` report it as edited.
 
 ## The skills
 
-| Skill                  | What it does                                                                                                          |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `clean-commit-history` | Regroups a branch's commits into a clean, layered sequence without changing a byte of the final tree                  |
-| `clean-comments`       | Fixes comment debt found by [`@euanmsm/terse`](../terse), fanning out to parallel agents on a big change. Needs terse |
-| `code-review`          | Deep multi-agent review of a branch or named files, every finding checked by a second agent trying to disprove it     |
-| `pr`                   | Opens the PR with a summary and a Manual QA checklist whose every step is checked against the code                    |
+| Skill                  | What it does                                                                                                                      |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `clean-commit-history` | Regroups a branch's commits into a clean, layered sequence without changing a byte of the final tree, after backing the branch up |
+| `clean-comments`       | Fixes comment debt found by [`@euanmsm/terse`](../terse), fanning out to parallel agents on a big change. Needs terse             |
+| `code-review`          | Deep multi-agent review of a branch or named files, every finding checked by a second agent trying to disprove it                 |
+| `pr`                   | Opens the PR with a summary and a Manual QA checklist whose every step is checked against the code                                |
 
 `clean-comments` also writes the `comments-specialist` agent it hands each batch
 of files to.
