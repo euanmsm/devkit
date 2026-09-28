@@ -64,8 +64,9 @@ generates from your config.
 - **Diff mode**: the changed files between the base branch and the current
   branch, diffed from their merge base so commits landed on the base afterwards
   do not count. It stops if you are on the base branch or nothing changed.
-  - The base is `baseBranch`, or `origin/<baseBranch>` when there is no local
-    branch of that name.
+  - The base is `baseBranch` or `origin/<baseBranch>`, whichever the branch left
+    later, so a local copy that was never pulled does not add commits that
+    landed upstream since.
   - On a detached HEAD it reviews `HEAD`, and names the report
     `detached-<short sha>`.
   - It reviews commits, but agents and tools read files from disk. So with
@@ -351,7 +352,7 @@ repository gets no typecheck report rather than a wrong one. Each tool has:
 | `label`                | yes      | How the report is described to reviewers, for example `ESLint output, including the import law`                                                                        |
 | `command`              | yes      | A shell command, run from the repository root                                                                                                                          |
 | `json`                 | no       | `true` when the tool prints JSON with other lines around it (npm banners, say). Keeps only the JSON on stdout, and names the report `_<key>.tmp.json`                  |
-| `appendFiles`          | no       | `true` to add the files under review to the end of the command, each quoted. Files the diff deleted are left out. With no files left, the tool is not run              |
+| `appendFiles`          | no       | `true` to add the files under review to the end of the command, each as its own argument. Files the diff deleted are left out. With no files left, the tool is not run |
 | `onlyFilesUnderReview` | no       | `true` for a JSON report shaped like knip's. Keeps only the entries for files under review, and records how many other files had entries as `filesOutsideReview`       |
 | `baseCommand`          | no       | A command to run instead in diff mode, with the diff's base commit added to the end, quoted. The files are not added. Without a base, `command` runs as usual          |
 | `errorExitCodes`       | no       | Exit codes the tool keeps for its own errors, such as `[2]`. The tool is then `failed` rather than `ok`, and its report is its JSON if it printed any, else its output |
@@ -644,15 +645,21 @@ new one, and a binary file from its header.
 
 ### `skills prepass tools --scratch <folder> --files-from <list> [--base <commit>]`
 
+The list holds one path per line, from the repository root. `./src/a.ts`, or an
+absolute path inside the repository, is read as `src/a.ts`, the way tools name
+it.
+
 1. Deletes any report left from an earlier run, so an old file can never pass
    for a finished one.
 2. Starts every tool — those in `prepass.tools` plus the built-in checks — and
    the import graph at the same time. Each tool runs through the shell from the
    repository root, with colour output switched off and no input, so nothing can
    wait on a prompt. A tool with `appendFiles` gets the files under review added
-   to its command, leaving out any the diff deleted. With `--base`, a tool with
-   a `baseCommand` runs that instead, with the base added. The skill passes
-   `--base` in diff mode only, and an empty one counts as none.
+   to its command as separate arguments, leaving out any the diff deleted. A
+   list too long for the system to start the command with fails that tool alone.
+   With `--base`, a tool with a `baseCommand` runs that instead, with the base
+   added. The skill passes an empty `--base` in target mode, which counts as
+   none.
 3. Writes each report as it finishes — to a temporary file first, then renamed
    into place, so **a report that exists is complete**.
 4. Writes `_prepass.done.json` last. It gives each tool's
@@ -721,6 +728,7 @@ request, then add each later comment one at a time — is in the generated
 | A lens names a skill that has no `<skillsDir>/<skill>/SKILL.md` | Create the skill, fix the name, or set `skill: null`                             |
 | A lens sits in no bundle                                        | Add it to a bundle's `lenses`, set its `bundle` field, or remove it with `false` |
 | A lens is in two bundles                                        | Take it out of one                                                               |
+| Two bundles use the same key                                    | Rename one, or merge their lenses into one bundle                                |
 | A bundle or split names a lens that does not exist              | Fix the name, or define the lens                                                 |
 | A split names a lens outside its bundle                         | Add the lens to the bundle's `lenses` too                                        |
 | A split leaves a bundle's lens out, or names one lens twice     | Put each of the bundle's lenses in exactly one part                              |

@@ -34,7 +34,10 @@ export function exec(program, args, { cwd, env = {}, shell = false } = {}) {
       shell,
     });
 
-    child.on('error', () => done(127));
+    child.on('error', (error) => {
+      console.error(`wt: could not run ${program}: ${error.message}`);
+      done(127);
+    });
     child.on('close', (code) => done(code ?? 1));
   });
 }

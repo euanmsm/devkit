@@ -9,7 +9,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { repoRoot } from '@euanmsm/devkit-core';
 import { loadWtConfig } from '../config.mjs';
-import { OVERRIDE_DIR } from './project.mjs';
+import { configMain } from '../git.mjs';
+import { OVERRIDE_DIR, getValue } from './project.mjs';
 
 const DEFAULT_API_PORT = 54321;
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '0.0.0.0', '::1']);
@@ -21,7 +22,7 @@ export const BYPASS_VAR = 'SUPABASE_ALLOW_CROSS_WORKTREE';
 // ============================================================================
 
 /**
- * Reads the first of several keys an env file defines.
+ * Reads the first of several keys an env file defines, parsed as dotenv does.
  *
  * @param path - Absolute path to a `.env`-style file, which may be missing
  * @param keys - Key names to try, in order
@@ -33,10 +34,13 @@ function readEnvFile(path, keys) {
   const contents = readFileSync(path, 'utf8');
 
   for (const key of keys) {
-    const match = contents.match(new RegExp(`^${key}=(.+)$`, 'm'));
-    if (!match) continue;
+    // Matches `KEY=value` with an optional `export` and spaces around `=`; the last one wins.
+    const line = new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=(.*)$`, 'gm');
+    const raw = [...contents.matchAll(line)].at(-1)?.[1].trim();
+    if (!raw) continue;
 
-    const value = match[1].trim().replace(/^['"]|['"]$/g, '');
+    const quoted = /^(['"`])(.*?)\1/.exec(raw);
+    const value = quoted ? quoted[2] : raw.replace(/#.*$/, '').trim();
     if (value) return { value, key };
   }
 
@@ -62,7 +66,7 @@ function readProcessEnv(key) {
  */
 function supabaseConfig(root) {
   try {
-    return loadWtConfig(root).supabase;
+    return loadWtConfig(root, configMain(root)).supabase;
   } catch {
     return null;
   }
@@ -90,22 +94,9 @@ function configPath(root, dir) {
  * @returns The pinned port, or null when the table omits it
  */
 function readApiPort(path) {
-  let inApi = false;
-
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
-    const trimmed = line.trim();
-
-    if (trimmed.startsWith('[')) {
-      inApi = trimmed === '[api]';
-      continue;
-    }
-    if (!inApi) continue;
-
-    const match = trimmed.match(/^port\s*=\s*(\d+)/);
-    if (match) return Number(match[1]);
-  }
-
-  return null;
+  const value = getValue(readFileSync(path, 'utf8'), 'api', 'port');
+  const match = value?.match(/^(\d+)/);
+  return match ? Number(match[1]) : null;
 }
 
 /**

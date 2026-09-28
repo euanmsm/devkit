@@ -34,26 +34,69 @@ NC='\033[0m'
 
 echo "--- Check A: Scanning config files for malicious patterns ---"
 
-CONFIG_FILES=$(find . \
+# Prints the files among "$@" whose content matches the pattern, batched so a
+# long list cannot overflow the argument limit. Returns 2 when grep could not
+# read a file, so an unreadable file fails the check instead of passing it.
+grep_files() {
+	local pattern=$1 status=0 rc n
+	shift
+	while [ $# -gt 0 ]; do
+		n=$(( $# < 500 ? $# : 500 ))
+		rc=0
+		grep -lE -- "$pattern" "${@:1:n}" || rc=$?
+		[ "$rc" -gt 1 ] && status=2
+		shift "$n"
+	done
+	return "$status"
+}
+
+# Prints the staged files among "$@" whose staged content matches the pattern.
+# Reads the index, not the working tree, so it checks what is being committed.
+grep_staged() {
+	local pattern=$1 status=0 rc n i
+	local batch
+	shift
+	while [ $# -gt 0 ]; do
+		n=$(( $# < 500 ? $# : 500 ))
+		batch=()
+		for (( i = 1; i <= n; i++ )); do batch+=(":(literal)${!i}"); done
+		rc=0
+		git grep --cached -lE -e "$pattern" -- "${batch[@]}" || rc=$?
+		[ "$rc" -gt 1 ] && status=2
+		shift "$n"
+	done
+	return "$status"
+}
+
+CONFIG_FILES=()
+while IFS= read -r -d '' file; do
+	# Skips gitignored build output; outside a repo check-ignore errors and the file is kept
+	if git check-ignore -q -- "$file" 2>/dev/null; then continue; fi
+	CONFIG_FILES+=("$file")
+done < <(find . \
 	-not -path '*/node_modules/*' \
 	-not -path '*/.next/*' \
 	-not -path '*/dist/*' \
 	-not -path '*/build/*' \
 	-type f \( -name '*.config.js' -o -name '*.config.mjs' -o -name '*.config.ts' \) \
-	2>/dev/null || true)
+	-print0 2>/dev/null || true)
 
-if [ -n "$CONFIG_FILES" ]; then
+# Names start at an identifier boundary, so isFunction( or retrieval( do not
+# count as a call.
+B='(^|[^A-Za-z0-9_$])'
+
+if [ ${#CONFIG_FILES[@]} -gt 0 ]; then
 	# Pattern: description
 	PATTERNS=(
-		'eval\('                    # Direct code execution
-		'Function\('                # Indirect eval via Function constructor
-		'new Function'              # Indirect eval via new Function
-		'global\['                  # Global namespace manipulation
-		'globalThis\['              # Global namespace manipulation
+		"${B}eval\\("              # Direct code execution
+		"${B}Function\\("          # Indirect eval via Function constructor
+		"${B}new Function"          # Indirect eval via new Function
+		"${B}global\\["            # Global namespace manipulation
+		"${B}globalThis\\["        # Global namespace manipulation
 		'\\x[0-9a-fA-F]{2}'        # Hex escape obfuscation
 		'String\.fromCharCode'      # Character code obfuscation
-		'atob\('                    # Base64 decode in config
-		'btoa\('                    # Base64 encode in config
+		"${B}atob\\("              # Base64 decode in config
+		"${B}btoa\\("              # Base64 encode in config
 	)
 
 	PATTERN_NAMES=(
@@ -68,8 +111,9 @@ if [ -n "$CONFIG_FILES" ]; then
 		"btoa()"
 	)
 
+	UNREADABLE=0
 	for i in "${!PATTERNS[@]}"; do
-		MATCHES=$(echo "$CONFIG_FILES" | xargs grep -lE "${PATTERNS[$i]}" 2>/dev/null || true)
+		MATCHES=$(grep_files "${PATTERNS[$i]}" "${CONFIG_FILES[@]}" 2>/dev/null) || UNREADABLE=1
 		if [ -n "$MATCHES" ]; then
 			echo -e "${RED}FAIL: ${PATTERN_NAMES[$i]} found in config files:${NC}"
 			echo "$MATCHES" | sed 's/^/  /'
@@ -77,15 +121,21 @@ if [ -n "$CONFIG_FILES" ]; then
 		fi
 	done
 
+	if [ "$UNREADABLE" -ne 0 ]; then
+		echo -e "${RED}FAIL: some config files could not be read, so they were not scanned:${NC}"
+		grep_files 'x' "${CONFIG_FILES[@]}" 2>&1 >/dev/null | sed 's/^/  /' || true
+		FAILED=1
+	fi
+
 	# Check for suspiciously long lines (code hidden beyond viewport)
-	while IFS= read -r file; do
+	for file in "${CONFIG_FILES[@]}"; do
 		LONG_LINES=$(awk -v max="${DEVKIT_MAX_CONFIG_LINE:-200}" 'length > max { print NR": "length" chars" }' "$file" 2>/dev/null || true)
 		if [ -n "$LONG_LINES" ]; then
 			echo -e "${RED}FAIL: Lines exceeding ${DEVKIT_MAX_CONFIG_LINE:-200} chars in $file:${NC}"
 			echo "$LONG_LINES" | sed 's/^/  /'
 			FAILED=1
 		fi
-	done <<< "$CONFIG_FILES"
+	done
 fi
 
 if [ "$FAILED" -eq 0 ]; then
@@ -110,12 +160,48 @@ if [ ${#REQUIRED_PATTERNS[@]} -eq 0 ]; then
 	echo -e "${YELLOW}SKIP: no gitignoreRequired patterns configured${NC}"
 fi
 
+# Directories below the root with their own .gitignore, which can negate an
+# unanchored root pattern for the paths under them.
+NESTED_DIRS=()
+if [ ${#REQUIRED_PATTERNS[@]} -gt 0 ]; then
+	while IFS= read -r -d '' file; do
+		[ "$file" = .gitignore ] || NESTED_DIRS+=("${file%/.gitignore}/")
+	done < <(git ls-files -z --cached --others --exclude-standard \
+		-- ':(glob)**/.gitignore' 2>/dev/null || true)
+fi
+
 for pattern in ${REQUIRED_PATTERNS[@]+"${REQUIRED_PATTERNS[@]}"}; do
-	if ! grep -qxF "$pattern" .gitignore 2>/dev/null; then
+	# Trailing spaces and a CRLF's carriage return do not change the rule git reads
+	if ! PATTERN="$pattern" LC_ALL=C awk 'BEGIN { p = ENVIRON["PATTERN"]; sub(/ +$/, "", p) }
+		{ sub(/\r$/, ""); sub(/ +$/, "") } $0 == p "" { found = 1 } END { exit !found }' .gitignore 2>/dev/null; then
 		echo -e "${RED}FAIL: Missing required .gitignore pattern: $pattern${NC}"
 		GITIGNORE_CHECK_FAILED=1
 		FAILED=1
+		continue
 	fi
+
+	# The line alone is not enough: a later !pattern un-ignores the path again.
+	# Ask git about a name the pattern matches, with a placeholder for * and ?
+	# and trailing spaces dropped, as git drops them from the rule.
+	case "$pattern" in '!'* | '#'* | *'['* | *'\'*) continue ;; esac
+	sample=$(printf '%s' "$pattern" | sed -e 's#^/##' -e 's/ *$//' \
+		-e 's/[*?]\{1,\}/__devkit_probe__/g')
+	[ -n "$sample" ] || continue
+	samples=("$sample")
+	anchor=${pattern#\*\*/}
+	case "${anchor%/}" in
+		*/*) ;;
+		*) for dir in ${NESTED_DIRS[@]+"${NESTED_DIRS[@]}"}; do samples+=("$dir$sample"); done ;;
+	esac
+	for path in "${samples[@]}"; do
+		rc=0
+		git check-ignore -q --no-index -- "$path" 2>/dev/null || rc=$?
+		if [ "$rc" -eq 1 ]; then
+			echo -e "${RED}FAIL: .gitignore contains $pattern but no longer ignores $path${NC}"
+			GITIGNORE_CHECK_FAILED=1
+			FAILED=1
+		fi
+	done
 done
 
 if [ "$GITIGNORE_CHECK_FAILED" -eq 0 ]; then
@@ -131,23 +217,31 @@ if [ "${PRE_COMMIT:-0}" = "1" ]; then
 	echo "--- Check C: Scanning staged files for obfuscation ---"
 
 	STAGED_CHECK_FAILED=0
-	STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -E '\.(js|mjs|ts|tsx)$' || true)
+	STAGED_FILES=()
+	while IFS= read -r -d '' file; do
+		case "$file" in
+			*.js | *.mjs | *.ts | *.tsx) STAGED_FILES+=("$file") ;;
+		esac
+	done < <(git diff --cached --name-only -z --diff-filter=ACMR 2>/dev/null || true)
 
-	if [ -n "$STAGED_FILES" ]; then
-		# C2 identifier pattern: global['...']
-		MATCHES=$(echo "$STAGED_FILES" | xargs grep -lE "global\['" 2>/dev/null || true)
-		if [ -n "$MATCHES" ]; then
-			echo -e "${RED}FAIL: Suspicious global['...'] pattern in staged files:${NC}"
-			echo "$MATCHES" | sed 's/^/  /'
-			STAGED_CHECK_FAILED=1
-			FAILED=1
-		fi
+	if [ ${#STAGED_FILES[@]} -gt 0 ]; then
+		STAGED_PATTERNS=("${B}global\\['" '(\\x[0-9a-fA-F]{2}){3,}')
+		STAGED_NAMES=("Suspicious global['...'] pattern" "Consecutive hex escapes")
 
-		# Consecutive hex escapes (3+ on one line)
-		MATCHES=$(echo "$STAGED_FILES" | xargs grep -lE '(\\x[0-9a-fA-F]{2}){3,}' 2>/dev/null || true)
-		if [ -n "$MATCHES" ]; then
-			echo -e "${RED}FAIL: Consecutive hex escapes in staged files:${NC}"
-			echo "$MATCHES" | sed 's/^/  /'
+		UNREADABLE=0
+		for i in "${!STAGED_PATTERNS[@]}"; do
+			MATCHES=$(grep_staged "${STAGED_PATTERNS[$i]}" "${STAGED_FILES[@]}" 2>/dev/null) || UNREADABLE=1
+			if [ -n "$MATCHES" ]; then
+				echo -e "${RED}FAIL: ${STAGED_NAMES[$i]} in staged files:${NC}"
+				echo "$MATCHES" | sed 's/^/  /'
+				STAGED_CHECK_FAILED=1
+				FAILED=1
+			fi
+		done
+
+		if [ "$UNREADABLE" -ne 0 ]; then
+			echo -e "${RED}FAIL: git could not search the staged files:${NC}"
+			grep_staged 'x' "${STAGED_FILES[@]}" 2>&1 >/dev/null | sed 's/^/  /' || true
 			STAGED_CHECK_FAILED=1
 			FAILED=1
 		fi

@@ -39,17 +39,24 @@ const MAX_COMMENT_PAGES = 50;
 /**
  * A markdown task-list item, ticked or not.
  *
- * GitHub accepts `-`, `*` and `+` as the bullet, so all three match: a `* [x]`
- * that reset skipped would be a ticked box surviving a push.
+ * GitHub accepts `-`, `*`, `+`, `1.` and `1)` as the marker, followed by up to
+ * four spaces or a tab, so all of them match: a `* [x]` that reset skipped
+ * would be a ticked box surviving a push.
  */
-const BOX_PATTERN = /^[ \t]*[-*+] \[[ xX]\](?=\s|$)/;
+const BOX_PATTERN =
+  /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?: {1,4}|\t)\[[ xX]\](?=\s|$)/;
 
 /** The same item, split so the state character can be replaced on its own. */
-const TICKED_BOX_PATTERN = /^([ \t]*[-*+] \[)[xX](\](?=\s|$))/;
+const TICKED_BOX_PATTERN =
+  /^([ \t]*(?:[-*+]|\d{1,9}[.)])(?: {1,4}|\t)\[)[xX](\](?=\s|$))/;
 
 /** The checklist's visible heading, which carries a short SHA of its own. */
 const HEADING_PATTERN =
   /^(##[ \t]+Manual QA[ \t]+—[ \t]+`)[0-9a-fA-F]{7,40}(`)/m;
+
+/** The part count a split checklist's first heading carries. */
+const PART_COUNT_PATTERN =
+  /^##[ \t]+Manual QA[ \t]+—[ \t]+`[0-9a-fA-F]{7,40}`[ \t]+\(part 1 of (\d+)\)/m;
 
 const MONTHS = [
   'Jan',
@@ -312,8 +319,8 @@ function describeStaleStamp(stamped, headSha) {
 /**
  * Decides what the `Manual QA` commit status should say.
  *
- * Checks for a missing checklist first, then a stale stamp on any comment,
- * then outstanding boxes across every comment.
+ * Checks for a missing checklist or part first, then a stale stamp on any
+ * comment, then outstanding boxes across every comment.
  *
  * @param context - The checklist `main` comment or null, its continuation `parts`, and the `headSha` the status attaches to
  * @returns The status `state` and `description`
@@ -321,6 +328,17 @@ function describeStaleStamp(stamped, headSha) {
 export function computeStatus({ main, parts = [], headSha }) {
   if (!main) {
     return { state: 'failure', description: 'no QA checklist — run /pr' };
+  }
+
+  // A part that was never posted, or was deleted, would drop its boxes unseen.
+  const expected = Number(PART_COUNT_PATTERN.exec(main.body ?? '')?.[1] ?? 1);
+  for (let n = 2; n <= expected; n += 1) {
+    if (!parts.some(({ part }) => part === n)) {
+      return {
+        state: 'failure',
+        description: `checklist part ${n} of ${expected} is missing — re-run /pr`,
+      };
+    }
   }
 
   const bodies = [
@@ -474,7 +492,14 @@ export async function runGate(
           continue;
         }
 
-        const body = resetBody(comment.body ?? '', {
+        // Re-read first: a publish since the listing may have stamped it already.
+        const fresh = await api(`/repos/${repo}/issues/comments/${comment.id}`);
+        if (sameCommit(readStampedSha(fresh.body ?? ''), head)) {
+          updated.push(fresh);
+          continue;
+        }
+
+        const body = resetBody(fresh.body ?? '', {
           headSha: head,
           now,
           counts,

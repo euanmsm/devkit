@@ -12,14 +12,41 @@ import { config, newFindings, governs } from './scanner.mjs';
 // A missed rename reads a moved file's existing debt as new.
 const RENAMES = '--find-renames=20%';
 
+const tops = new Map();
+
 /**
- * Runs git, throwing an error carrying its stderr.
+ * Finds the top of the working tree holding the current directory.
+ *
+ * @returns The worktree root, or the current directory outside a repository
+ */
+function top() {
+  const cwd = process.cwd();
+  if (!tops.has(cwd)) {
+    let dir = cwd;
+    try {
+      dir =
+        execFileSync('git', ['rev-parse', '--show-toplevel'], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim() || cwd;
+    } catch {}
+    tops.set(cwd, dir);
+  }
+  return tops.get(cwd);
+}
+
+/**
+ * Runs git from the worktree root, throwing an error carrying its stderr.
+ *
+ * Diff output names files from the root, so pathspecs fed back in must resolve
+ * from there too, wherever the check was started.
  *
  * @param args - Arguments after `git`
  * @returns What the command wrote to stdout
  */
 function run(args) {
   return execFileSync('git', args, {
+    cwd: top(),
     encoding: 'utf8',
     maxBuffer: 1 << 28,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -57,9 +84,9 @@ export function mergeBase(base) {
  * @returns Repo-relative paths the contract governs
  */
 export function changedFiles(from) {
-  return run(['diff', '--name-only', '--diff-filter=d', from, 'HEAD'])
-    .split('\n')
-    .map((f) => f.trim())
+  // NUL-separated output leaves a path unquoted, whatever characters it holds.
+  return run(['diff', '--name-only', '-z', '--diff-filter=d', from, 'HEAD'])
+    .split('\0')
     .filter(governs);
 }
 
@@ -92,16 +119,23 @@ export function addedRanges(patch) {
  */
 export function renamedFrom(from) {
   const out = new Map();
-
-  for (const line of run([
+  const fields = run([
     'diff',
     '--name-status',
+    '-z',
     RENAMES,
     from,
     'HEAD',
-  ]).split('\n')) {
-    const [code, old, now] = line.split('\t');
-    if (code?.startsWith('R') && old && now) out.set(now, old);
+  ]).split('\0');
+
+  // A rename or copy names two paths after its status, every other change one.
+  for (let i = 0; i < fields.length;) {
+    const code = fields[i];
+    if (/^[RC]/.test(code)) {
+      if (code.startsWith('R') && fields[i + 1] && fields[i + 2])
+        out.set(fields[i + 2], fields[i + 1]);
+      i += 3;
+    } else i += 2;
   }
 
   return out;
@@ -122,7 +156,11 @@ export function addedRangesByFile(from, paths) {
   let hunks = [];
 
   for (const line of run([
+    '-c',
+    'core.quotePath=false',
     'diff',
+    '--no-color',
+    '--no-ext-diff',
     '-U0',
     RENAMES,
     from,
@@ -130,14 +168,14 @@ export function addedRangesByFile(from, paths) {
     '--',
     ...paths,
   ]).split('\n')) {
-    const header = /^diff --git a\/.+ b\/(.+)$/.exec(line);
-    if (!header) {
+    if (!line.startsWith('diff --git ')) {
       if (file) hunks.push(line);
       continue;
     }
 
     if (file) out.set(file, addedRanges(hunks.join('\n')));
-    file = header[1];
+    // A quoted header is left unread, so its file gets a diff of its own.
+    file = /^diff --git a\/.+ b\/(.+)$/.exec(line)?.[1] ?? null;
     hunks = [];
   }
 
@@ -162,7 +200,20 @@ function checkFile(file, from, renames, spans) {
   // Git quotes a header path holding a space, which the batched split misses.
   const span =
     spans.get(file) ??
-    addedRanges(run(['diff', '-U0', RENAMES, from, 'HEAD', '--', was, file]));
+    addedRanges(
+      run([
+        'diff',
+        '--no-color',
+        '--no-ext-diff',
+        '-U0',
+        RENAMES,
+        from,
+        'HEAD',
+        '--',
+        was,
+        file,
+      ]),
+    );
   if (span.length === 0) return [];
 
   const before = git('show', `${from}:${was}`) ?? '';

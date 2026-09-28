@@ -5,7 +5,9 @@ secret committed by accident, and malicious code arriving through a dependency
 or a tampered config file.
 
 Both run in two modes. Before a commit they look only at staged files, so the
-check is fast enough that nobody disables it. In CI they scan the whole tree.
+check is fast enough that nobody disables it. They read the staged content, not
+your working copy, so what they scan is what gets committed. In CI they scan the
+whole tree.
 
 ## What it checks
 
@@ -30,13 +32,14 @@ check is fast enough that nobody disables it. In CI they scan the whole tree.
 ## Installing
 
 ```sh
-npm i -D @euanmsm/secure
+npm i -D @euanmsm/secure lockfile-lint
 brew install gitleaks semgrep
 ```
 
-`gitleaks` and `semgrep` are external binaries. If either is missing the scan
-**skips that check and still passes** — so install them in CI, or a green build
-means less than it looks like.
+`gitleaks` and `semgrep` are external binaries, and `lockfile-lint` is a
+separate npm package. If any of the three is missing the scan **skips that check
+and still passes** — so install them in CI, or a green build means less than it
+looks like.
 
 Wire both into a pre-commit hook:
 
@@ -56,13 +59,13 @@ cp node_modules/@euanmsm/secure/secure.example.json \
    .devkit/secure.json
 ```
 
-| Setting                | Default                  | What it controls                         |
-| ---------------------- | ------------------------ | ---------------------------------------- |
-| `gitignoreRequired`    | none                     | Patterns `.gitignore` must still contain |
-| `lockfileAllowedHosts` | `["npm"]`                | Registries a lockfile may resolve to     |
-| `semgrepConfigs`       | supply-chain, javascript | Rulesets to scan with                    |
-| `maxConfigLineLength`  | 200                      | Longest permitted line in a config file  |
-| `docsUrl`              | none                     | Link shown when the check fails          |
+| Setting                | Default                  | What it controls                                          |
+| ---------------------- | ------------------------ | --------------------------------------------------------- |
+| `gitignoreRequired`    | none                     | Patterns `.gitignore` must still contain and still ignore |
+| `lockfileAllowedHosts` | `["npm"]`                | Registries a lockfile may resolve to                      |
+| `semgrepConfigs`       | supply-chain, javascript | Rulesets to scan with                                     |
+| `maxConfigLineLength`  | 200                      | Longest permitted line in a config file                   |
+| `docsUrl`              | none                     | Link shown when the check fails                           |
 
 With no config the gitignore check skips rather than inventing a list of files
 it guesses you care about.

@@ -27,7 +27,7 @@ import {
 } from './git.mjs';
 import { open } from './open.mjs';
 import { runHooks } from './run.mjs';
-import { nextSlot, usedSlots, writeRecord } from './slots.mjs';
+import { claimSlot, writeRecord } from './slots.mjs';
 import { buildProject, supabaseMappings } from './supabase/project.mjs';
 import { provision } from './supabase/stack.mjs';
 
@@ -143,17 +143,41 @@ export async function create({
     return path;
   }
 
-  const slot = nextSlot(usedSlots(cwd));
+  const found = envFiles(main, config.env);
+  const { slot, release } = claimSlot(cwd);
   const shift = slot * config.ports.step;
+  let root;
 
-  mkdirSync(dir, { recursive: true });
-  addWorktree({ cwd: here, path, branch, base, detach, remote: config.remote });
+  try {
+    const top = Math.max(
+      ...Object.values(config.ports.services).map((p) => p + shift),
+      ...(config.supabase
+        ? supabaseMappings(config.supabase, slot).map(([, to]) => to)
+        : []),
+    );
+    if (top > 65535) {
+      throw new Error(
+        `Slot ${slot} would need port ${top}, past 65535. Delete a worktree or lower the port steps.`,
+      );
+    }
 
-  const root = real(path);
-  writeRecord(root, { name, slot });
+    mkdirSync(dir, { recursive: true });
+    addWorktree({
+      cwd: here,
+      path,
+      branch,
+      base,
+      detach,
+      remote: config.remote,
+    });
 
-  const copied = envFiles(main, config.env);
-  copyFiles(main, root, copied);
+    root = real(path);
+    writeRecord(root, { name, slot });
+  } finally {
+    release();
+  }
+
+  const copied = copyFiles(main, root, found);
   if (copied.length > 0) console.log(`Copied ${copied.join(', ')}`);
 
   const mappings = serviceMappings(config.ports.services, shift);
@@ -166,6 +190,10 @@ export async function create({
       : null;
     stack = buildProject(root, sb, slot, appPort);
     if (stack) mappings.push(...supabaseMappings(sb, slot));
+    else
+      console.warn(
+        `  Warning: no ${sb.dir}/config.toml on this branch, so no Supabase override was written. Run wt supabase from the worktree once the branch has one.`,
+      );
   }
 
   rewriteFiles(root, copied, mappings);
@@ -189,6 +217,10 @@ export async function create({
     WT_BASE: base ?? '',
     WT_SLOT: String(slot),
     WT_OFFSET: String(shift),
+    // Drops an inherited offset, so the new worktree's own env files decide.
+    ...(config.ports.offsetEnv && {
+      [config.ports.offsetEnv.name]: undefined,
+    }),
   };
   try {
     await runHooks(config.hooks.postCreate, root, env);

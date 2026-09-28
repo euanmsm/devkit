@@ -51,6 +51,12 @@ describe('loadConfig', () => {
       /t\.json is not valid JSON/,
     );
   });
+
+  test('reads a config saved with a byte order mark', () => {
+    const root = fixture('t.json', '\uFEFF{ "a": 1 }');
+
+    assert.deepEqual(loadConfig('t.json', null, root), { a: 1 });
+  });
 });
 
 describe('compile', () => {
@@ -63,5 +69,13 @@ describe('compile', () => {
 
   test('drops an unusable pattern rather than failing the whole run', () => {
     assert.equal(compile(['^a/', '(((']).length, 1);
+  });
+
+  test('treats a lone string as one pattern', () => {
+    assert.deepEqual(compile('^dist/'), [/^dist\//]);
+  });
+
+  test('treats null as no patterns', () => {
+    assert.deepEqual(compile(null), []);
   });
 });

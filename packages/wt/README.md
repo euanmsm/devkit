@@ -51,7 +51,8 @@ On create, `wt`:
 1. adds the worktree and records its slot inside git's own folder for that
    worktree, so the slot is freed when the worktree goes;
 2. copies every untracked env file matching `env.copy` from the main checkout,
-   and rewrites each `:<port>` for a listed service to the shifted port;
+   and rewrites each `:<port>` for a listed service to the shifted port. Folders
+   it cannot read, and symlinks to missing files, are skipped;
 3. writes the Supabase override project, if configured (see below);
 4. runs the `postCreate` hooks inside the new worktree, stopping if a required
    one fails;
@@ -60,7 +61,8 @@ On create, `wt`:
 
 On delete, it runs the `preDelete` hooks, stops everything `wt kill --all`
 would, deletes the Supabase data, removes the workspace entry, then the folder
-and the branch.
+and the branch. If the folder is already gone, the hooks are skipped and the
+rest still runs.
 
 ## Stopping a worktree
 
@@ -84,8 +86,8 @@ stops:
 You don't list what to stop. Whatever holds the worktree's ports is stopped,
 however it was started. Something with no port, such as `vitest --watch`, is
 only stopped with `--all`, which also stops any process whose working folder is
-inside the worktree. `--all` never stops shells, editors, Claude sessions, or
-the command you ran `wt` from.
+inside the worktree. `--all` never stops shells, editors, terminal multiplexers
+such as tmux, Claude sessions, or the command you ran `wt` from.
 
 Each process gets `SIGTERM`, then `SIGKILL` if it is still running five seconds
 later. The main checkout is never touched, and neither is any port it uses.
@@ -217,7 +219,10 @@ reset with `resetCommand` (or `supabase db reset`), and stopped again with its
 data kept. `--keep-supabase` leaves it running and `--no-supabase` skips the
 boot. `wt -d` stops it and deletes its data.
 
-Run the Supabase CLI through `wt` so it reads the right config:
+Run the Supabase CLI through `wt` so it reads the right config. In a worktree
+with no override, because its branch had no `config.toml` when it was made or
+`.wt-supabase/` was deleted, `wt supabase` writes the override and moves the
+Supabase ports in its env files before it runs:
 
 ```json
 {

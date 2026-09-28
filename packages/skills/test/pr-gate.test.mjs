@@ -241,6 +241,13 @@ describe('countBoxes', () => {
     });
   });
 
+  it('counts ordered items and wider gaps, which GitHub also renders as tasks', () => {
+    assert.deepEqual(
+      countBoxes('1. [ ] Safari\n2) [x] Firefox\n-  [x] Wide\n-\t[ ] Tab'),
+      { total: 4, ticked: 2, unticked: 2 },
+    );
+  });
+
   it('ignores a bracket pair that is not a task item', () => {
     assert.deepEqual(
       countBoxes(
@@ -271,6 +278,13 @@ describe('resetBody', () => {
     assert.deepEqual(countBoxes(result), { total: 5, ticked: 0, unticked: 5 });
     assert.ok(result.includes('- [ ] **[blocking]** Sign in as a teacher'));
     assert.ok(result.includes('    - [ ] Nested step, ticked'));
+  });
+
+  it('un-ticks ordered items and wider gaps', () => {
+    assert.equal(
+      resetBody('1. [x] Safari\n-  [X] Wide', { headSha: HEAD_SHA, now: NOW }),
+      '1. [ ] Safari\n-  [ ] Wide',
+    );
   });
 
   it('leaves already-unticked boxes alone', () => {
@@ -466,6 +480,23 @@ describe('computeStatus', () => {
     );
   });
 
+  it('fails when a part its heading counts is missing', () => {
+    const body = checklist({ sha: HEAD_SHA })
+      .replace(/- \[ \]/g, '- [x]')
+      .replace(/(## Manual QA — `\w+`)/, '$1 (part 1 of 3)');
+    const parts = [
+      { part: 2, comment: { body: part(2, HEAD_SHA, ['- [x] Done']) } },
+    ];
+
+    assert.deepEqual(
+      computeStatus({ main: { body }, parts, headSha: HEAD_SHA }),
+      {
+        state: 'failure',
+        description: 'checklist part 3 of 3 is missing — re-run /pr',
+      },
+    );
+  });
+
   it('fails with boxes outstanding, and succeeds with every box ticked', () => {
     assert.deepEqual(
       computeStatus({
@@ -583,10 +614,10 @@ function fakeApi(comments, head = HEAD_SHA) {
       const page = Number(/[?&]page=(\d+)/.exec(path)[1]);
       return store.slice((page - 1) * 100, page * 100);
     }
-    if (init.method === 'PATCH') {
+    if (path.includes('/issues/comments/')) {
       const id = Number(path.split('/').pop());
       const comment = store.find((c) => c.id === id);
-      comment.body = JSON.parse(init.body).body;
+      if (init.method === 'PATCH') comment.body = JSON.parse(init.body).body;
       return comment;
     }
     return null;
@@ -653,6 +684,35 @@ describe('runGate', () => {
     assert.ok(comments[0].body.includes('ticked 4 of 7 boxes'));
     assert.equal(countBoxes(comments[1].body).ticked, 0);
     assert.equal(readStampedSha(comments[1].body), HEAD_SHA);
+  });
+
+  it('does not overwrite a checklist a publish restamped after the listing', async () => {
+    const {
+      api: inner,
+      calls,
+      comments,
+    } = fakeApi([{ id: 7, body: checklist() }]);
+    const republished = checklist({ sha: HEAD_SHA, extra: '- [ ] New step' });
+    const api = async (path, init = {}) => {
+      const result = await inner(path, init);
+      if (!path.includes('/comments?')) return result;
+
+      // The publish lands between reset's listing and its write.
+      const listed = result.map((comment) => ({ ...comment }));
+      comments[0].body = republished;
+      return listed;
+    };
+
+    await runGate('reset', {
+      api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+      now: NOW,
+    });
+
+    assert.equal(comments[0].body, republished);
+    assert.ok(!calls.some((call) => call.method === 'PATCH'));
   });
 
   it('only reads and reports on status, fetching the head when the event has none', async () => {

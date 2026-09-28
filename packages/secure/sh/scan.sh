@@ -31,12 +31,34 @@ while IFS= read -r c; do
 done <<< "${DEVKIT_SEMGREP_CONFIGS:-p/supply-chain
 p/javascript}"
 
-LOCKFILE_HOSTS="${DEVKIT_LOCKFILE_HOSTS:-npm}"
+# lockfile-lint takes each allowed host as its own argument
+LOCKFILE_HOST_ARGS=()
+while IFS= read -r h; do
+	[ -n "$h" ] && LOCKFILE_HOST_ARGS+=("$h")
+done <<< "$(printf '%s\n' "${DEVKIT_LOCKFILE_HOSTS:-npm}" | tr ',' '\n' | tr -d '[:blank:]')"
+[ ${#LOCKFILE_HOST_ARGS[@]} -eq 0 ] && LOCKFILE_HOST_ARGS=(npm)
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
+
+# Pre-commit checks read staged content from a copy of the index, so they scan
+# what is being committed rather than the working tree.
+STAGED_DIR=""
+cleanup_staged() {
+	if [ -n "$STAGED_DIR" ]; then rm -rf "$STAGED_DIR"; fi
+}
+trap cleanup_staged EXIT
+
+# Copies the staged content of "$@" into STAGED_DIR, keeping each path.
+copy_staged() {
+	if [ -z "$STAGED_DIR" ]; then
+		local tmp_root=${TMPDIR:-/tmp}
+		STAGED_DIR=$(mktemp -d "${tmp_root%/}/secure-staged.XXXXXX") || return 1
+	fi
+	printf '%s\0' "$@" | git checkout-index --prefix="$STAGED_DIR/" -z --stdin
+}
 
 # -------------------------------------------------------------------------
 # Check A — Gitleaks (secret detection)
@@ -79,23 +101,47 @@ echo "--- Check B: Semgrep — scanning for malicious code patterns ---"
 
 if command -v semgrep &>/dev/null; then
 	if [ "${PRE_COMMIT:-0}" = "1" ]; then
-		# Get staged JS/TS files
-		STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null \
-			| grep -E '\.(js|mjs|cjs|ts|tsx|jsx)$' || true)
+		# Staged JS/TS files, renames included. -z keeps unusual names unquoted.
+		SCAN_ARGS=()
+		while IFS= read -r -d '' file; do
+			case "$file" in
+				*.js | *.mjs | *.cjs | *.ts | *.tsx | *.jsx) SCAN_ARGS+=("$file") ;;
+			esac
+		done < <(git diff --cached --name-only -z --diff-filter=ACMR 2>/dev/null || true)
 
-		if [ -n "$STAGED_FILES" ]; then
-			# Build a properly-quoted array of file paths (handles brackets in paths)
-			SCAN_ARGS=()
-			while IFS= read -r file; do
-				SCAN_ARGS+=("$file")
-			done <<< "$STAGED_FILES"
+		if [ ${#SCAN_ARGS[@]} -gt 0 ]; then
+			# semgrep runs inside the staged copy, so a config given as a local
+			# path is made absolute and the repo's .semgrepignore comes along
+			STAGED_CONFIG_ARGS=()
+			for arg in "${SEMGREP_CONFIG_ARGS[@]}"; do
+				case "$arg" in
+					--config | /*) ;;
+					*) if [ -e "$arg" ]; then arg="$PWD/$arg"; fi ;;
+				esac
+				STAGED_CONFIG_ARGS+=("$arg")
+			done
 
-			if ! semgrep scan \
-				"${SEMGREP_CONFIG_ARGS[@]}" \
-				--no-git-ignore \
-				--metrics off \
-				--error \
-				"${SCAN_ARGS[@]}"; then
+			if ! copy_staged "${SCAN_ARGS[@]}"; then
+				echo -e "${RED}FAIL: could not read the staged JS/TS files${NC}"
+				FAILED=1
+			elif ! (
+				if [ -f .semgrepignore ]; then
+					cp .semgrepignore "$STAGED_DIR/"
+					while read -r directive included || [ -n "$directive" ]; do
+						case "$included" in /* | *..*) continue ;; esac
+						if [ "$directive" = ":include" ] && [ -f "$included" ]; then
+							mkdir -p "$STAGED_DIR/$(dirname "$included")"
+							cp "$included" "$STAGED_DIR/$included"
+						fi
+					done < .semgrepignore
+				fi
+				cd "$STAGED_DIR" && semgrep scan \
+					"${STAGED_CONFIG_ARGS[@]}" \
+					--no-git-ignore \
+					--metrics off \
+					--error \
+					"${SCAN_ARGS[@]}"
+			); then
 				echo -e "${RED}FAIL: Semgrep detected suspicious patterns in staged files${NC}"
 				FAILED=1
 			else
@@ -141,44 +187,38 @@ fi
 echo ""
 echo "--- Check C: lockfile-lint — verifying package-lock.json integrity ---"
 
+LOCKFILES=()
 if [ "${PRE_COMMIT:-0}" = "1" ]; then
-	# Only run if package-lock.json is staged
-	LOCKFILE_STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null \
-		| grep -E 'package-lock\.json$' || true)
-
-	if [ -z "$LOCKFILE_STAGED" ]; then
-		echo -e "${GREEN}PASS: No lockfile changes staged — skipping${NC}"
-	else
-		HAS_LOCKFILE_LINT=0
-		if npx --no-install lockfile-lint --help &>/dev/null 2>&1; then
-			HAS_LOCKFILE_LINT=1
-		fi
-
-		if [ "$HAS_LOCKFILE_LINT" -eq 1 ]; then
-			for lockfile in $LOCKFILE_STAGED; do
-				if ! npx --no-install lockfile-lint \
-					--path "$lockfile" \
-					--type npm \
-					--allowed-hosts "$LOCKFILE_HOSTS" \
-					--validate-https 2>/dev/null; then
-					echo -e "${RED}FAIL: lockfile-lint detected issues in $lockfile${NC}"
-					FAILED=1
-				else
-					echo -e "${GREEN}PASS: $lockfile integrity verified${NC}"
-				fi
-			done
-		else
-			echo -e "${YELLOW}SKIP: lockfile-lint not installed${NC}"
-		fi
-	fi
+	# Only the staged lockfiles, renames included
+	while IFS= read -r -d '' file; do
+		case "$file" in
+			package-lock.json | */package-lock.json) LOCKFILES+=("$file") ;;
+		esac
+	done < <(git diff --cached --name-only -z --diff-filter=ACMR 2>/dev/null || true)
 else
-	# CI mode — check all lockfiles
-	for lockfile in $(find . -name 'package-lock.json' -not -path '*/node_modules/*' 2>/dev/null); do
+	# CI mode — every lockfile in the tree
+	while IFS= read -r -d '' file; do
+		LOCKFILES+=("$file")
+	done < <(find . -name 'package-lock.json' -not -path '*/node_modules/*' -print0 2>/dev/null || true)
+fi
+
+if [ ${#LOCKFILES[@]} -eq 0 ]; then
+	echo -e "${GREEN}PASS: No lockfiles to check — skipping${NC}"
+elif ! npx --no-install lockfile-lint --help &>/dev/null; then
+	echo -e "${YELLOW}SKIP: lockfile-lint not installed (npm i -D lockfile-lint)${NC}"
+elif [ "${PRE_COMMIT:-0}" = "1" ] && ! copy_staged "${LOCKFILES[@]}"; then
+	echo -e "${RED}FAIL: could not read the staged lockfiles${NC}"
+	FAILED=1
+else
+	for lockfile in "${LOCKFILES[@]}"; do
+		# Before a commit lockfile-lint reads the staged copy
+		lockfile_path=$lockfile
+		if [ "${PRE_COMMIT:-0}" = "1" ]; then lockfile_path="$STAGED_DIR/$lockfile"; fi
 		if npx --no-install lockfile-lint \
-			--path "$lockfile" \
+			--path "$lockfile_path" \
 			--type npm \
-			--allowed-hosts "$LOCKFILE_HOSTS" \
-			--validate-https 2>/dev/null; then
+			--allowed-hosts "${LOCKFILE_HOST_ARGS[@]}" \
+			--validate-https; then
 			echo -e "${GREEN}PASS: $lockfile integrity verified${NC}"
 		else
 			echo -e "${RED}FAIL: lockfile-lint detected issues in $lockfile${NC}"

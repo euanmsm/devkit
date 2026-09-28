@@ -113,10 +113,11 @@ place:
 `sync` only ever overwrites or deletes a file with that line in that place
 (unless you pass `--force`). Only the start of the line counts, so a file
 written by an older release, whose line is worded differently, is still
-recognised. A file that mentions the phrase anywhere else — a rule explaining
-generated files, say — is yours. Your own skills can sit in the same folders
-safely — `sync` will never touch `.claude/skills/comments/` because it did not
-write it.
+recognised, and so is one a Windows checkout gave CRLF line endings; `sync`
+writes it back with LF. A file that mentions the phrase anywhere else — a rule
+explaining generated files, say — is yours. Your own skills can sit in the same
+folders safely — `sync` will never touch `.claude/skills/comments/` because it
+did not write it.
 
 ### Files written once
 

@@ -81,12 +81,15 @@ async function running(child) {
 /**
  * Builds a repo with one worktree named `feat` in slot 1.
  *
+ * @param dir - The worktrees folder's name
  * @returns The temp folder, the repo root and the worktree path
  */
-function fixture() {
-  const { base, root } = makeRepo({ '.devkit/wt.json': CONFIG });
+function fixture(dir = 'app-wt') {
+  const { base, root } = makeRepo({
+    '.devkit/wt.json': { ...CONFIG, dir: `../${dir}` },
+  });
   wt(root, ['feat', '-b', 'feat']);
-  return { base, root, feat: join(base, 'app-wt', 'feat') };
+  return { base, root, feat: join(base, dir, 'feat') };
 }
 
 describe('wt kill', () => {
@@ -131,6 +134,24 @@ describe('wt kill', () => {
     wt(root, ['kill', 'feat', '--all']);
     assert.equal(await running(watcher), false);
     assert.equal(await running(shell), true);
+  });
+
+  test('stops a server whose path names Docker or Claude', async () => {
+    const { root, feat } = fixture('docker-claude-wt');
+    const mine = await start(
+      feat,
+      `/* ${feat} */ require('http').createServer(() => {}).listen(41100, () => console.log('ready'))`,
+    );
+    const watcher = await start(
+      feat,
+      `/* ${feat} */ console.log('ready'); setInterval(() => {}, 1000)`,
+    );
+
+    const { status, out } = wt(root, ['kill', 'feat', '--all']);
+
+    assert.equal(status, 0, out);
+    assert.equal(await running(mine), false);
+    assert.equal(await running(watcher), false);
   });
 
   test('stops the worktree it is run from when given no name', async () => {
@@ -229,7 +250,7 @@ describe('kill helpers', () => {
     assert.equal(programName(undefined, 'next-server'), 'next-server');
   });
 
-  test('protects shells, editors and Claude sessions', () => {
+  test('protects shells, editors, multiplexers and Claude sessions', () => {
     for (const name of [
       'zsh',
       '-bash',
@@ -237,10 +258,24 @@ describe('kill helpers', () => {
       'Code Helper (Plugin)',
       'nvim',
       'claude',
+      'nano',
+      'emacs',
+      'Emacs-arm64-11',
+      'hx',
+      'micro',
+      'zed',
+      'sublime_text',
+      'pwsh',
+      'nu',
+      'tmux',
+      'tmux: server',
+      'screen',
+      'zellij',
     ]) {
       assert.ok(isProtected(name), name);
     }
     assert.ok(isProtected('node', 'node /usr/local/bin/claude --resume'));
     assert.ok(!isProtected('node', 'node vitest --watch'));
+    assert.ok(!isProtected('screencapture'));
   });
 });

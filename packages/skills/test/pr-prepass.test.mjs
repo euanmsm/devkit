@@ -7,7 +7,14 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
@@ -17,6 +24,7 @@ import {
   findImporters,
   findStories,
   globToRegExp,
+  parseNameStatus,
   prPrepass,
   renderFacts,
   ripgrep,
@@ -364,7 +372,39 @@ describe('pr prepass — pure helpers', () => {
       layers: LAYERS,
     });
     assert.match(noRg, /ripgrep \(`rg`\) is not installed/);
+    assert.match(noRg, /## Moved files\n\n- \(none\)/);
     assert.doesNotMatch(noRg, /## Stories/);
+  });
+});
+
+describe('pr prepass — name status', () => {
+  it('keeps a moved file apart from a deleted one', () => {
+    const stdout = [
+      'R087',
+      'src/api/users.ts',
+      'src/legacy/users.ts',
+      'C100',
+      'src/a.ts',
+      'src/b.ts',
+      'D',
+      'src/gone.ts',
+      'M',
+      'src/ui/Pré.tsx',
+      'A',
+      'src/new.ts',
+      '',
+    ].join('\0');
+
+    assert.deepEqual(parseNameStatus(stdout), {
+      changed: [
+        'src/legacy/users.ts',
+        'src/b.ts',
+        'src/ui/Pré.tsx',
+        'src/new.ts',
+      ],
+      deleted: ['src/gone.ts'],
+      moved: [{ from: 'src/api/users.ts', to: 'src/legacy/users.ts' }],
+    });
   });
 });
 
@@ -528,6 +568,66 @@ describe('pr prepass — against a real branch', () => {
     );
   });
 
+  it(
+    'counts a moved file at its old path, and reads non-ASCII paths unquoted',
+    { skip: !hasRg && 'ripgrep is not installed' },
+    async () => {
+      const root = branchRepo();
+      git(root, 'checkout', '-q', '-b', 'feature/move');
+      git(root, 'config', 'diff.renames', 'false');
+      mkdirSync(join(root, 'src/legacy'));
+      git(root, 'mv', 'src/api/users.ts', 'src/legacy/users.ts');
+      write(root, 'src/ui/Préférences.tsx', 'export const P = 1;\n');
+      write(root, 'src/ui/Use.tsx', "import { P } from './Préférences';\n");
+      git(root, 'add', '-A');
+      git(root, 'commit', '-qm', 'move');
+
+      const args = await prPrepass(root, CONFIG, {
+        scratch: 's',
+        baseBranch: 'feature/badge',
+      });
+
+      assert.equal(args.layers.api, true);
+      assert.deepEqual(args.sections, { backend: true, frontend: true });
+      const facts = readFileSync(args.factsPath, 'utf8');
+      assert.match(
+        facts,
+        /### API \(backend section\)\n\n- `src\/api\/users\.ts` — moved to `src\/legacy\/users\.ts`/,
+      );
+      assert.match(facts, /## Deleted files\n\n- \(none\)/);
+      assert.match(
+        facts,
+        /## Moved files\n\n- `src\/api\/users\.ts` → `src\/legacy\/users\.ts`/,
+      );
+      assert.match(facts, /- `src\/ui\/Préférences\.tsx`\n/);
+      assert.match(
+        facts,
+        /- `src\/ui\/Préférences\.tsx` ← `src\/ui\/Use\.tsx`/,
+      );
+      assert.doesNotMatch(facts, /\\303/);
+    },
+  );
+
+  it('writes a plain unified diff whatever the git config says', async () => {
+    const root = branchRepo();
+    git(root, 'config', 'color.ui', 'always');
+    git(root, 'config', 'diff.noprefix', 'true');
+    git(root, 'config', 'diff.external', 'echo EXTERNAL');
+
+    const args = await prPrepass(root, CONFIG, {
+      scratch: 's',
+      baseBranch: 'main',
+      rg: () => '',
+    });
+
+    const diff = readFileSync(args.diffPath, 'utf8');
+    assert.match(diff, /^diff --git a\/\S+ b\//);
+    assert.match(diff, /\+export const Badge = 2;/);
+    assert.doesNotMatch(diff, /EXTERNAL|\u001b/);
+    assert.match(args.diffStat, /src\/ui\/Badge\.tsx/);
+    assert.doesNotMatch(args.diffStat, /\u001b/);
+  });
+
   it('refuses a detached HEAD', async () => {
     const root = branchRepo();
     git(root, 'checkout', '-q', '--detach');
@@ -566,6 +666,30 @@ describe('pr prepass — edges', () => {
         '',
       );
       assert.throws(() => ripgrep(['-e', '(unclosed', '.'], root));
+    },
+  );
+
+  it(
+    'keeps the matches ripgrep found when some paths are unreadable',
+    {
+      skip:
+        (!hasRg && 'ripgrep is not installed') ||
+        (process.getuid?.() === 0 && 'root reads every file'),
+    },
+    () => {
+      const root = makeRepo();
+      write(root, 'a.ts', 'hello\n');
+      write(root, 'b.ts', 'hello\n');
+      chmodSync(join(root, 'b.ts'), 0o000);
+
+      try {
+        const args = ['--no-messages', '-e'];
+        assert.match(ripgrep([...args, 'hello', '.'], root), /a\.ts/);
+        assert.equal(ripgrep([...args, 'absent', '.'], root), '');
+        assert.throws(() => ripgrep([...args, '(unclosed', '.'], root));
+      } finally {
+        chmodSync(join(root, 'b.ts'), 0o644);
+      }
     },
   );
 });

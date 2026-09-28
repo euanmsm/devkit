@@ -101,9 +101,10 @@ export function fakeCode(base) {
  * @param cwd - Directory to run in
  * @param args - Arguments after `wt`
  * @param extraPath - Folders searched before the system ones
+ * @param extraEnv - Variables set after the offset variable is cleared
  * @returns The exit status and everything printed
  */
-export function wt(cwd, args, extraPath = []) {
+export function wt(cwd, args, extraPath = [], extraEnv = {}) {
   const PATH = [
     ...extraPath,
     dirname(process.execPath),
@@ -114,6 +115,7 @@ export function wt(cwd, args, extraPath = []) {
   ].join(':');
   const env = { ...process.env, PATH };
   delete env.WORKTREE_PORT_OFFSET;
+  Object.assign(env, extraEnv);
 
   const result = spawnSync(process.execPath, [BIN, ...args], {
     cwd,

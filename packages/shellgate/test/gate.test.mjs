@@ -60,6 +60,144 @@ describe('findShellEdit blocks', () => {
       'a read-modify-write script after cd into the repo',
       "cd /repo/src; python3 - <<'EOF'\np='a.ts'; s=open(p).read()\nopen(p,'w').write(s)\nEOF",
     ],
+    ['a write after a quoted <<', 'echo "use <<EOF"\necho x > src/a.ts'],
+    [
+      'a write after a commit message naming <<',
+      'git commit -m "docs: explain <<EOF usage"\necho x > src/a.ts',
+    ],
+    ['a write after a shift', 'echo $((1<<4))\nsed -i "s/a/b/" src/a.ts'],
+    ['a write after a commented <<', '# cat <<EOF\necho x > src/a.ts'],
+    ['a heredoc that never closes', "cat <<'EOF'\nx > a.ts"],
+    [
+      'a redirect after a cd in a subshell',
+      '(cd /tmp && ls) && echo x > src/a.ts',
+    ],
+    [
+      'a redirect after a cd in a command substitution',
+      'd=$(cd /tmp && pwd); echo x > src/a.ts',
+    ],
+    ['tee after a cd in a subshell', '(cd /tmp) && echo x | tee src/a.ts'],
+    [
+      'a redirect after a cd in a quoted command substitution',
+      'd="$(cd /tmp && pwd)"; echo x > src/a.ts',
+    ],
+    [
+      'tee after a cd in a quoted command substitution',
+      'd="$(cd /tmp && pwd)"; echo x | tee src/a.ts',
+    ],
+    [
+      'a redirect after the script directory idiom',
+      'dir="$(cd "$(dirname "$0")" && pwd)"; echo x > src/a.ts',
+    ],
+    [
+      'a redirect after a quoted string naming a cd',
+      'echo "(cd /tmp" ; echo x > src/a.ts',
+    ],
+    [
+      'a script through an absolute launcher path',
+      "/usr/bin/time python3 -c \"open('src/a.ts', 'w').write('x')\"",
+    ],
+    [
+      'a script through sudo -u',
+      "sudo -u www python3 -c \"open('src/a.ts', 'w').write('x')\"",
+    ],
+    [
+      'a script through xargs -I',
+      "echo a | xargs -I {} python3 -c \"open('src/a.ts', 'w').write('x')\"",
+    ],
+    [
+      'a script through nice -n',
+      "nice -n 5 python3 -c \"open('src/a.ts', 'w').write('x')\"",
+    ],
+    [
+      'a script through timeout',
+      "timeout -s KILL 5 node -e \"require('fs').writeFileSync('a.ts', 'x')\"",
+    ],
+    [
+      'a script through command',
+      "command node -e \"require('fs').writeFileSync('a.ts', 'x')\"",
+    ],
+    ['a Bun write', "bun -e \"await Bun.write('src/a.ts', 'x')\""],
+    ['a Deno write', "deno eval \"await Deno.writeTextFile('src/a.ts', 'x')\""],
+    [
+      'a Node openSync for writing',
+      "node -e \"require('fs').openSync('a.ts', 'w')\"",
+    ],
+    [
+      'a script behind a variable assignment',
+      "PYTHONPATH=. python3 -c \"open('src/a.ts', 'w').write('x')\"",
+    ],
+    [
+      'a script through uv run',
+      "uv run python -c \"open('a.ts', 'w').write('x')\"",
+    ],
+    [
+      'a script through a venv',
+      ".venv/bin/python -c \"open('a.ts', 'w').write('x')\"",
+    ],
+    [
+      'a script through an absolute interpreter path',
+      "/usr/bin/python3 -c \"open('a.ts', 'w').write('x')\"",
+    ],
+    [
+      'a script through time',
+      "time node -e \"require('fs').writeFileSync('a.ts', 'x')\"",
+    ],
+    [
+      'a script through env',
+      "env node -e \"require('fs').writeFileSync('a.ts', 'x')\"",
+    ],
+    [
+      'a script through npx tsx',
+      "npx tsx -e \"require('fs').writeFileSync('a.ts', 'x')\"",
+    ],
+    [
+      'a rewrite script with a regex literal',
+      "node -e \"const fs=require('fs'); fs.writeFileSync('a.ts', fs.readFileSync('a.ts', 'utf8').replace(/oldName/g, 'newName'))\"",
+    ],
+    [
+      'a rewrite script with a URL path',
+      "python3 - <<'EOF'\np='a.ts'\ns=open(p).read().replace('/api/v1/users', '/api/v2/users')\nopen(p,'w').write(s)\nEOF",
+    ],
+    ['a >& redirect into the repo', 'echo x >& src/a.ts'],
+    ['a >& redirect with no space', 'echo x >&src/a.ts'],
+    ['a redirect to a name starting with two dots', 'echo x > ..env'],
+    ['BSD sed -I', "sed -I '' 's/a/b/' src/a.ts"],
+    ['ruby -pi', 'ruby -pi -e \'gsub(/a/,"b")\' src/a.ts'],
+    ['perl -i after a digit flag', "perl -0777pi -e 's/a/b/' src/a.ts"],
+    ['perl -i with a ~ suffix', "perl -i~ -pe 's/a/b/' src/a.ts"],
+    ['gawk --include=inplace', "gawk --include=inplace '{print}' src/a.ts"],
+    ['git apply after git -C', 'git -C . apply fix.patch'],
+    ['git apply --stat --apply', 'git apply --stat --apply fix.patch'],
+    [
+      'a Python write to a path built by a call',
+      "python3 -c \"import os; open(os.path.join('src','a.ts'),'w').write('x')\"",
+    ],
+    [
+      'tee inside a quoted command substitution',
+      'x="$(echo a | tee src/a.ts)"',
+    ],
+    [
+      'a redirect between quoted parentheses',
+      'echo "((" > src/a.ts; echo "))"',
+    ],
+    [
+      'a Python r+ write',
+      "python3 -c \"f=open('src/a.ts','r+'); f.write('x')\"",
+    ],
+    [
+      'a redirect in a substitution inside a [[ test',
+      '[[ -z $(echo x > src/a.ts) ]]',
+    ],
+    [
+      'a redirect in backticks inside a [[ test',
+      '[[ -z `echo x > src/a.ts` ]]',
+    ],
+    [
+      'a redirect between bare [[ and ]]',
+      'echo [[ ; echo x > src/a.ts ; echo ]]',
+    ],
+    ['perl -pie', "perl -pie 's/a/b/' src/a.ts"],
   ];
 
   for (const [name, command] of blocked) {
@@ -104,6 +242,43 @@ describe('findShellEdit allows', () => {
       'a script writing to a scratch directory',
       "S=/private/tmp/scratchpad; python3 - \"$S\" <<'EOF'\nimport sys\nopen(sys.argv[1]+'/body.md','w').write('x')\nEOF",
     ],
+    ['two heredocs on one line', 'cat <<A <<B\n> x\nA\n> y\nB'],
+    ['a redirect inside a subshell after cd', '(cd /tmp && echo x > a.ts)'],
+    ['a quoted redirect target outside the repo', "echo x > '/tmp/a b.txt'"],
+    [
+      'a lookup with command -v before a search for a write call',
+      'command -v python3 >/dev/null && grep -rn "writeFileSync" src',
+    ],
+    [
+      'a lookup with command -V before a commit naming a write call',
+      'command -V node && git commit -m "use writeFileSync"',
+    ],
+    [
+      'a redirect inside a quoted command substitution after cd',
+      'd="$(cd /tmp && echo x > a.ts)"',
+    ],
+    [
+      'a heredoc with a hyphenated delimiter',
+      "cat > /tmp/x <<'END-DOC'\na > b\nEND-DOC",
+    ],
+    [
+      'a heredoc with a backslashed delimiter',
+      'cat > /tmp/x <<\\EOF\na > b\nEOF',
+    ],
+    ['a commit message naming tee', 'git commit -m "pipe through tee instead"'],
+    ['git apply --numstat', 'git apply --numstat fix.patch'],
+    ['git apply --summary', 'git apply --summary fix.patch'],
+    ['a comparison in arithmetic', '(( n > 5 )) && echo big'],
+    ['a comparison in a [[ test', '[[ $a > $b ]] && echo big'],
+    ['stdout closed with >&-', 'echo x >&-'],
+    ['git -c with an apply.* setting', 'git -c apply.whitespace=fix diff'],
+    ['git -C into a directory named apply', 'git -C apply status'],
+    [
+      'a perl script given a flag starting with i',
+      'perl script.pl -input a.txt',
+    ],
+    ['a perl script given -lib', 'perl tools/gen.pl -lib foo'],
+    ['a ruby script given -in', 'ruby bin/run.rb -in x'],
   ];
 
   for (const [name, command] of allowed) {
@@ -111,6 +286,65 @@ describe('findShellEdit allows', () => {
       assert.equal(check(command), null);
     });
   }
+});
+
+describe('findShellEdit on long commands', () => {
+  test('finishes quickly on launcher words that repeat', () => {
+    const started = Date.now();
+    check('env ' + '-x env '.repeat(30) + '!');
+    assert.ok(Date.now() - started < 500);
+  });
+
+  test('finishes quickly on many redirects', () => {
+    const started = Date.now();
+    check('echo x > /tmp/a; '.repeat(5000));
+    assert.ok(Date.now() - started < 500);
+  });
+});
+
+describe('findShellEdit with a repository path containing spaces or accents', () => {
+  const spaced = '/Users/x/My Projects/repo';
+  const accented = '/Users/josé/repo';
+
+  test('blocks a redirect to a quoted absolute path', () => {
+    const command = `echo x > "${spaced}/a.txt"`;
+    assert.notEqual(findShellEdit(command, '/tmp', spaced), null);
+  });
+
+  test('blocks a redirect to an escaped absolute path', () => {
+    const command = 'echo x > /Users/x/My\\ Projects/repo/a.txt';
+    assert.notEqual(findShellEdit(command, '/tmp', spaced), null);
+  });
+
+  test('blocks tee to a quoted absolute path', () => {
+    const command = `printf x | tee "${spaced}/a.txt"`;
+    assert.notEqual(findShellEdit(command, '/tmp', spaced), null);
+  });
+
+  test('blocks a redirect after a quoted cd into the repository', () => {
+    const command = `cd "${spaced}" && echo x > a.txt`;
+    assert.notEqual(findShellEdit(command, '/tmp', spaced), null);
+  });
+
+  test('allows a redirect after a quoted cd out of the repository', () => {
+    const command = 'cd "/Users/x/My Projects/other" && echo x > a.txt';
+    assert.equal(findShellEdit(command, spaced, spaced), null);
+  });
+
+  for (const root of [spaced, accented]) {
+    test(`blocks a script writing by absolute path under ${root}`, () => {
+      const command = `python3 -c "open('${root}/a.txt', 'w').write('x')"`;
+      assert.equal(
+        findShellEdit(command, '/tmp', root),
+        'an inline script that writes a file',
+      );
+    });
+  }
+
+  test('allows a script writing beside the repository', () => {
+    const command = `python3 -c "open('/Users/josé/scratch/a.txt', 'w').write('x')"`;
+    assert.equal(findShellEdit(command, accented, accented), null);
+  });
 });
 
 /**

@@ -88,6 +88,22 @@ export function mainRoot(cwd) {
 }
 
 /**
+ * Finds the checkout holding the local config for a checkout.
+ *
+ * @param root - A checkout's root
+ * @returns The main checkout for a linked worktree, otherwise the root itself
+ */
+export function configMain(root) {
+  const dirs = tryGit(
+    ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'],
+    root,
+  )?.split('\n');
+  if (dirs?.length !== 2 || real(dirs[0]) === real(dirs[1])) return root;
+
+  return real(dirname(dirs[1]));
+}
+
+/**
  * Finds a linked worktree's private git directory from its `.git` file.
  *
  * @param root - A checkout's root
@@ -108,7 +124,7 @@ export function adminDir(root) {
  * Lists every checkout of the repository, main first.
  *
  * @param cwd - Directory inside any checkout of the repository
- * @returns One entry per checkout, with its path, branch and head
+ * @returns One entry per checkout, with its path, branch, head and whether it is locked
  */
 export function worktrees(cwd) {
   const out = [];
@@ -118,12 +134,19 @@ export function worktrees(cwd) {
     '\n',
   )) {
     if (line.startsWith('worktree ')) {
-      current = { path: line.slice(9), branch: null, head: null };
+      current = {
+        path: line.slice(9),
+        branch: null,
+        head: null,
+        locked: false,
+      };
       out.push(current);
     } else if (current && line.startsWith('HEAD ')) {
       current.head = line.slice(5);
     } else if (current && line.startsWith('branch ')) {
       current.branch = line.slice(7).replace(/^refs\/heads\//, '');
+    } else if (current && /^locked( |$)/.test(line)) {
+      current.locked = true;
     }
   }
 

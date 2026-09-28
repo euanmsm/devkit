@@ -66,6 +66,26 @@ describe('config', () => {
     assert.match(problems, /"hooks.postCreate"/);
   });
 
+  test('reports null services beside an appService without throwing', () => {
+    const raw = { ports: { services: null }, supabase: { appService: 'app' } };
+
+    const problems = validate(merge(raw, {}), raw).join('\n');
+
+    assert.match(problems, /"ports.services" must be/);
+  });
+
+  test('refuses a supabase link that is not one name', () => {
+    for (const entry of ['.', '..', '', '../src', 'functions/x']) {
+      const raw = { supabase: { link: [entry] } };
+
+      assert.match(
+        validate(merge(raw, {}), raw).join('\n'),
+        /"supabase.link"/,
+        entry,
+      );
+    }
+  });
+
   test('puts the repo folder name into the worktrees folder', () => {
     assert.equal(
       worktreesDir({ dir: '../{repo}-wt' }, '/code/app'),

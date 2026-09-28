@@ -202,7 +202,7 @@ const titleFor = (key) =>
   LENSES[key]?.title ??
   key
     .split('-')
-    .map((word) => word[0].toUpperCase() + word.slice(1))
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 
 // =============================================================================
@@ -875,8 +875,12 @@ function correctionOf(verdict) {
     Object.entries(verdict.corrected).filter(([key, value]) =>
       key === 'severity'
         ? Object.hasOwn(SEVERITY_RANK, value)
-        : Object.hasOwn(FINDING_FIELDS, key) &&
-          (typeof value === 'string' || (key === 'convention' && value === null)),
+        : key === 'lens'
+          ? Object.hasOwn(LENSES, value)
+          : Object.hasOwn(FINDING_FIELDS, key) &&
+            ((typeof value === 'string' &&
+              (value !== '' || key === 'convention')) ||
+              (key === 'convention' && value === null)),
     ),
   );
 }
@@ -1311,11 +1315,11 @@ const reviewed = await pipeline(
           parent: active.parent ?? active.key,
           // A skipped or dead agent resolves to null rather than throwing.
           died: result == null,
-          findings: (result?.findings ?? []).map((finding) => ({
+          findings: (result?.findings ?? []).map((finding, index) => ({
             ...finding,
             bundle: active.key,
-            // Namespaced, since two bundles can both raise `bugs-1`.
-            uid: `${active.key}::${finding.id}`,
+            // Namespaced and indexed, since two bundles or one reviewer can repeat `bugs-1`.
+            uid: `${active.key}::${index}::${finding.id}`,
             lens:
               finding.lens && LENSES[finding.lens]
                 ? finding.lens

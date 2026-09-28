@@ -7,7 +7,15 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -28,6 +36,7 @@ import { plan, renderEngine, sync } from '../src/sync.mjs';
 import curricular from './fixtures/review/curricular.mjs';
 import sales from './fixtures/review/sales.mjs';
 import { makeRepo, write } from './repo.mjs';
+import { runShell, SHELLS, staleBaseRepo } from './stale-base.mjs';
 import { reply, runWorkflow } from './workflow.mjs';
 
 const ENGINE = readFileSync(
@@ -137,6 +146,24 @@ describe('resolveReviewConfig', () => {
     assert.equal(review.lenses.events.bundle, undefined);
   });
 
+  test('a bundle field can name a default bundle whose built-ins were all removed', () => {
+    const review = resolve({
+      lenses: {
+        ci: false,
+        'gh-actions': {
+          judges: 'Actions.',
+          route: { always: 'code' },
+          bundle: 'ci',
+        },
+      },
+    });
+
+    assert.deepEqual(
+      review.bundles.find((bundle) => bundle.key === 'ci').lenses,
+      ['gh-actions'],
+    );
+  });
+
   test('keeps the repository’s lens order ahead of the built-ins', () => {
     const review = resolve({
       lenses: {
@@ -189,6 +216,11 @@ describe('resolveReviewConfig', () => {
         ],
       },
       /unknown lens "nope"/,
+    ],
+    [
+      'two bundles with one key',
+      { bundles: [bundleOf(['bugs']), bundleOf(['ci'])] },
+      /two bundles use the key "b"/,
     ],
     [
       'a split naming a lens outside its bundle',
@@ -462,7 +494,7 @@ describe('resolveReviewConfig', () => {
     write(
       root,
       'pnpm-workspace.yaml',
-      "packages:\n  - 'apps/*'\n  - \"tools/lint\"\n  - '!apps/skip'\ncatalog:\n  - nope\n",
+      "packages:\n  - 'apps/*' # apps\n  - \"tools/lint\"\n  - '!apps/skip'\ncatalog:\n  - nope\n",
     );
     write(
       root,
@@ -652,6 +684,28 @@ describe('the generated workflow', () => {
     const reviewer = calls.find((call) => call.label.startsWith('review:'));
 
     assert.match(reviewer.prompt, /boundary \(handler -> job -> store\)/);
+  });
+
+  test('titles a lens whose key ends in a dash', async () => {
+    const source = renderEngine(
+      ENGINE,
+      resolve({
+        lenses: {
+          'e2e-': {
+            judges: 'E.',
+            route: { always: 'code' },
+            bundle: 'correctness',
+          },
+        },
+      }),
+    );
+    const { result, calls } = await runWorkflow(source, {
+      ...DIFF_ARGS,
+      changedFiles: ['src/a.ts'],
+    });
+
+    assert.deepEqual(result.bundlesDied, []);
+    assert.ok(calls.some((call) => /Pass \d+ — E2e /.test(call.prompt)));
   });
 
   test('lists each configured tool report for the reviewers', async () => {
@@ -942,6 +996,60 @@ describe('merging findings', () => {
     assert.equal(corrected.additionalProperties, false);
   });
 
+  test('keeps each file’s verdict when a reviewer reuses an id across files', async () => {
+    const { result } = await reviewWith((label, _prompt, canned) => {
+      if (label === 'review:correctness-1') {
+        return {
+          ...canned,
+          findings: [
+            finding('bugs-1', 'bugs', '42', 'critical', 'Null deref'),
+            {
+              ...finding('bugs-1', 'bugs', '10', 'low', 'Naming nit'),
+              file: 'src/b.ts',
+            },
+          ],
+        };
+      }
+      if (label === 'verify:b.ts') {
+        return {
+          verdicts: canned.verdicts.map((one) => ({
+            ...one,
+            verdict: 'refuted',
+            reasoning: 'no',
+          })),
+        };
+      }
+      return undefined;
+    });
+
+    assert.match(result.markdown, /## \d+ — Null deref/);
+    assert.match(result.markdown, /## Refuted and dropped\n\n- \*\*Naming nit/);
+  });
+
+  test('ignores blank fields and an unknown lens in a correction', async () => {
+    const blank = Object.fromEntries(
+      ['id', 'file', 'line', 'issue', 'detail', 'whyItMatters', 'evidence'].map(
+        (key) => [key, ''],
+      ),
+    );
+    const { result } = await reviewWith((label, _prompt, canned) =>
+      label.startsWith('verify:')
+        ? {
+            verdicts: canned.verdicts.map((one, i) => ({
+              ...one,
+              verdict: 'amended',
+              reasoning: 'r',
+              corrected: { ...blank, lens: i === 0 ? '' : 'nope' },
+            })),
+          }
+        : undefined,
+    );
+
+    assert.ok(result.stats.findings > 0);
+    assert.doesNotMatch(result.markdown, /## \d+ — \n/);
+    assert.doesNotMatch(result.markdown, /# Nope\n/);
+  });
+
   test('escapes pipes and newlines in a summary table cell', async () => {
     const { result } = await review({
       'correctness-1': [
@@ -1085,6 +1193,12 @@ describe('sync with code-review', () => {
     await assert.doesNotReject(() => plan(root));
   });
 
+  test('refuses a config module with no default export', async () => {
+    const root = reviewRepo({}, 'export const review = {};');
+
+    await assert.rejects(() => plan(root), /must export an object/);
+  });
+
   test('check flags the workflow once the review config changes', async () => {
     const root = reviewRepo({}, 'export default {};');
     await sync(root);
@@ -1101,30 +1215,71 @@ describe('sync with code-review', () => {
     );
   });
 
-  test('the prepass command passes --base in diff mode and leaves it out in target mode', async () => {
+  test('the diff is taken from whichever copy of the base the branch left later', async () => {
+    const skill = (await plan(reviewRepo({ githubReview: true }))).find(
+      (file) => file.path.endsWith('SKILL.md'),
+    ).content;
+    const lines = skill.split('\n');
+    const start = lines.findIndex((line) => line.startsWith('TARGET='));
+    const block = lines.slice(start, lines.indexOf('```', start)).join('\n');
+
+    const expected = {
+      local: 'origin/main',
+      origin: 'main',
+      none: 'main',
+      gone: 'origin/main',
+    };
+    for (const [behind, ref] of Object.entries(expected)) {
+      const { repo, fork } = staleBaseRepo({ behind });
+      for (const shell of SHELLS) {
+        assert.equal(
+          runShell(
+            shell,
+            `BRANCH=feat\n${block}\necho "$BASE_REF $BASE"`,
+            repo,
+          ),
+          `${ref} ${fork}`,
+          `${behind} copy behind, in ${shell}`,
+        );
+      }
+    }
+  });
+
+  test('the prepass commands get their folders from the current one, and --base as its own argument', async () => {
     const skill = (await plan(reviewRepo())).find((file) =>
       file.path.endsWith('SKILL.md'),
     ).content;
-    const line = skill
-      .split('\n')
-      .find((one) => one.startsWith('npx --no-install skills prepass tools'));
+    const line = (start) =>
+      skill.split('\n').find((one) => one.startsWith(start));
+    const tools = line('npx --no-install skills prepass tools');
+    const split = line('npx --no-install skills prepass split');
+    const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'skills-cwd-')));
 
     // A stand-in npx prints the arguments the skill's line hands it.
-    const run = (base) =>
+    const run = (shell, vars, command) =>
       execFileSync(
-        'bash',
-        ['-c', `npx() { printf '[%s]' "$@"; }\n${base}\n${line}`],
-        { encoding: 'utf8' },
+        shell,
+        ['-c', `npx() { printf '[%s]' "$@"; }\n${vars}\n${command}`],
+        { cwd, encoding: 'utf8' },
       );
 
-    assert.equal(
-      run('SCRATCH_DIR=t'),
-      '[--no-install][skills][prepass][tools][--scratch][t][--files-from][t/_files.tmp.txt]',
-    );
-    assert.equal(
-      run('SCRATCH_DIR=t BASE=abc123'),
-      '[--no-install][skills][prepass][tools][--scratch][t][--files-from][t/_files.tmp.txt][--base][abc123]',
-    );
+    for (const shell of SHELLS) {
+      assert.equal(
+        run(shell, 'SCRATCH_DIR=t', tools),
+        `[--no-install][skills][prepass][tools][--scratch][${cwd}/t][--files-from][${cwd}/t/_files.tmp.txt][--base][]`,
+        shell,
+      );
+      assert.equal(
+        run(shell, 'SCRATCH_DIR=t; BASE=abc123', tools),
+        `[--no-install][skills][prepass][tools][--scratch][${cwd}/t][--files-from][${cwd}/t/_files.tmp.txt][--base][abc123]`,
+        shell,
+      );
+      assert.equal(
+        run(shell, 'BASE=abc123; TARGET=feat; PATCH_DIR=t/_patch/x', split),
+        `[--no-install][skills][prepass][split][--base][abc123][--target][feat][--out][${cwd}/t/_patch/x]`,
+        shell,
+      );
+    }
   });
 
   test('the dead-code lens loads the shipped dead-code skill when both are enabled', async () => {
@@ -1670,6 +1825,50 @@ describe('prepass', () => {
     assert.ok(existsSync(join(root, 'tmp/_prepass.done.json')));
   });
 
+  test('prepass tools matches a ./ or absolute listed path against the paths a tool reports', async () => {
+    const report = JSON.stringify({
+      issues: [{ file: 'src/a.ts' }, { file: 'src/b.ts' }, { file: 'x.ts' }],
+    });
+    const root = makeRepo({
+      'skills.json': { skills: { 'code-review': {} } },
+      'code-review.mjs': `export default ${JSON.stringify({
+        prepass: {
+          tools: [
+            {
+              key: 'unused',
+              label: 'Unused',
+              command: `printf '%s' '${report}'`,
+              json: true,
+              onlyFilesUnderReview: true,
+            },
+          ],
+        },
+      })};`,
+    });
+    write(root, 'src/a.ts', 'x\n');
+    write(root, 'src/b.ts', 'x\n');
+    write(root, 'tmp/list.txt', `./src/a.ts\n${join(root, 'src/b.ts')}\n`);
+
+    const log = console.log;
+    console.log = () => {};
+    try {
+      await prepass(
+        ['tools', '--scratch', 'tmp', '--files-from', 'tmp/list.txt'],
+        root,
+      );
+    } finally {
+      console.log = log;
+    }
+
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(root, 'tmp/_unused.tmp.json'), 'utf8')),
+      {
+        issues: [{ file: 'src/a.ts' }, { file: 'src/b.ts' }],
+        filesOutsideReview: 1,
+      },
+    );
+  });
+
   /**
    * Runs one JSON tool through the prepass and reads back what it landed.
    *
@@ -1692,6 +1891,57 @@ describe('prepass', () => {
       report: readFileSync(join(root, 'tmp/_js.tmp.json'), 'utf8'),
     };
   }
+
+  /**
+   * Runs an appending tool and a plain one over one long-named file listed many times.
+   *
+   * @param count - How many times the file is listed
+   * @returns The sentinel's contents and the appending tool's report
+   */
+  async function runMany(count) {
+    const root = makeRepo();
+    const file = `${'f'.repeat(200)}.ts`;
+    write(root, file, 'x\n');
+    const config = resolve({
+      prepass: {
+        tools: [
+          {
+            key: 'each',
+            label: 'Each',
+            command: "printf '%s\\n'",
+            appendFiles: true,
+          },
+          { key: 'plain', label: 'Plain', command: 'echo plain' },
+        ],
+      },
+    });
+    const status = await runTools(root, config, {
+      scratch: 'tmp',
+      files: Array(count).fill(file),
+    });
+
+    return {
+      status,
+      report: readFileSync(join(root, 'tmp/_each.tmp.txt'), 'utf8'),
+    };
+  }
+
+  test('an appending tool gets every file when together they pass one argument’s limit', async () => {
+    // About 200 KB of paths, over Linux's 128 KiB limit on any one argument.
+    const { status, report } = await runMany(1000);
+
+    assert.equal(status.each.status, 'ok');
+    assert.equal(report.split('\n').filter(Boolean).length, 1000);
+  });
+
+  test('a file list past the system’s argument limit fails that tool alone, and the sentinel lands', async () => {
+    // About 8 MB of paths, over the whole-command limit on macOS and Linux.
+    const { status, report } = await runMany(40000);
+
+    assert.equal(status.each.status, 'failed');
+    assert.match(report, /E2BIG/);
+    assert.equal(status.plain.status, 'ok');
+  });
 
   test('a JSON tool’s report is its stdout, with stderr kept in the sentinel', async () => {
     const { entry, report } = await runJson(
@@ -1784,4 +2034,38 @@ describe('prepass', () => {
     );
     assert.match(graph, /- `lonelyThing` — src\/a\.ts:2/);
   });
+
+  test(
+    'graph finds callers of a name holding a $',
+    { skip: !hasRipgrep },
+    async () => {
+      const root = makeRepo();
+      write(root, 'src/a.ts', 'export const $store = 1;\n');
+      write(root, 'src/b.ts', "import { $store } from './a';\nx.$store;\n");
+
+      const graph = await buildImportGraph(root, resolve({}), ['src/a.ts']);
+
+      assert.match(
+        graph,
+        /### `\$store` — defined at src\/a\.ts:1\n\n- src\/b\.ts:1,2/,
+      );
+    },
+  );
+
+  test(
+    'graph keeps the matches when ripgrep cannot read one file',
+    { skip: !hasRipgrep || process.getuid?.() === 0 },
+    async () => {
+      const root = makeRepo();
+      write(root, 'src/a.ts', 'export function usedThing() {}\n');
+      write(root, 'src/b.ts', 'usedThing();\n');
+      write(root, 'src/c.ts', 'usedThing();\n');
+      chmodSync(join(root, 'src/c.ts'), 0o000);
+
+      const graph = await buildImportGraph(root, resolve({}), ['src/a.ts']);
+
+      assert.match(graph, /- src\/b\.ts:1/);
+      assert.doesNotMatch(graph, /unavailable/);
+    },
+  );
 });

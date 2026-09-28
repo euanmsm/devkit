@@ -24,14 +24,22 @@ Block scripts in `.npmrc`:
 ignore-scripts=true
 ```
 
-Then run the allowlist after each install:
+Then run the allowlist after each install, as its own step:
 
 ```json
-{ "scripts": { "postinstall": "vouch" } }
+{ "scripts": { "setup": "npm install && vouch" } }
 ```
 
-A root `postinstall` in your own `package.json` still runs — `ignore-scripts`
-governs your dependencies, not you.
+```sh
+npm run setup           # locally
+npm ci && npx vouch     # in CI and Docker builds
+```
+
+Do not hook it to your own `postinstall`. `ignore-scripts` also skips your root
+package's lifecycle scripts (`preinstall`, `postinstall`, `prepare`, and the
+`pre`/`post` hooks of any script), so `npm install` would finish without running
+vouch and without saying so. A script you name directly, like `npm run setup`,
+still runs.
 
 ## Configuring
 
@@ -56,6 +64,13 @@ cp node_modules/@euanmsm/vouch/vouch.example.json \
 explain is a hole nobody can review. Add `"timeout"` in milliseconds to override
 the five-minute default for a slow native build.
 
+The config is read from the git root, or, when there is no `.git` as in a Docker
+build, from the nearest directory above the cwd that has one. Each package is
+looked for in `node_modules` from the cwd up to the git root, as Node resolves
+modules, so an app below the git root or a workspace member with hoisted
+dependencies finds its packages. Its script runs from the directory where it was
+found.
+
 With no config file it runs nothing and says so. An allowlisted package that is
-not installed is skipped silently; one whose script fails is reported, and the
-command exits non-zero.
+not installed is skipped with a line saying where it looked; one whose script
+fails is reported, and the command exits non-zero.

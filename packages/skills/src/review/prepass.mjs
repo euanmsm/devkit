@@ -305,10 +305,12 @@ function runTool(root, tool, { files, base }, scratchDir, timeoutMs) {
     return Promise.resolve({ status: 'ok', exitCode: null });
   }
 
+  // Files go in as shell arguments; one long command string passes Linux's per-argument limit.
+  const appendFiles = !againstBase && tool.appendFiles;
   const command = againstBase
     ? `${tool.baseCommand} ${shellQuote(base)}`
-    : tool.appendFiles
-      ? `${tool.command} ${files.map(shellQuote).join(' ')}`
+    : appendFiles
+      ? `${tool.command} "$@"`
       : tool.command;
 
   const transform = tool.onlyFilesUnderReview
@@ -316,6 +318,7 @@ function runTool(root, tool, { files, base }, scratchDir, timeoutMs) {
     : null;
 
   return runCommand(root, command, finalPath, {
+    args: appendFiles ? files : [],
     json: tool.json || tool.onlyFilesUnderReview,
     transform,
     errorExitCodes: tool.errorExitCodes ?? [],
@@ -383,14 +386,14 @@ export function keepFilesUnderReview(text, files) {
  * @param root - The repository root, used as the working directory
  * @param command - The shell command line
  * @param finalPath - The report file's path
- * @param options - `json` when the tool prints a JSON report; `transform` rewriting that JSON before it lands, or null; the tool's `errorExitCodes`; and `timeoutMs` before it is stopped
+ * @param options - `args` the command line reads as `"$@"`; `json` when the tool prints a JSON report; `transform` rewriting that JSON before it lands, or null; the tool's `errorExitCodes`; and `timeoutMs` before it is stopped
  * @returns The tool's `{ status, exitCode }`, with `stderr` for a JSON report, once its report has landed
  */
 function runCommand(
   root,
   command,
   finalPath,
-  { json, transform, errorExitCodes, timeoutMs },
+  { args = [], json, transform, errorExitCodes, timeoutMs },
 ) {
   return new Promise((resolve) => {
     const chunks = [];
@@ -406,15 +409,25 @@ function runCommand(
       resolve(result);
     };
 
-    const child = spawn(command, {
-      cwd: root,
-      shell: true,
-      // Its own process group, so a timeout stops everything it started.
-      detached: true,
-      // Nothing may wait on input the prepass will never give.
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
-    });
+    let child;
+    try {
+      child = spawn('/bin/sh', ['-c', command, 'sh', ...args], {
+        cwd: root,
+        // Its own process group, so a timeout stops everything it started.
+        detached: true,
+        // Nothing may wait on input the prepass will never give.
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+      });
+    } catch (err) {
+      // A list past the system's argument limit makes spawn throw E2BIG, not emit `error`.
+      landAtomically(
+        finalPath,
+        `prepass could not run: ${command}\n${err.message}\n`,
+      );
+      resolve({ status: 'failed', exitCode: null });
+      return;
+    }
 
     const text = (list) => Buffer.concat(list).toString('utf8');
 
@@ -649,6 +662,8 @@ async function findCallSites(root, names, globs) {
   } catch (err) {
     // rg exits 1 when nothing matched at all, which is an answer.
     if (err.code === 1) return '';
+    // rg exits 2 on any error, such as one unreadable file, after printing every other match.
+    if (err.code === 2 && err.stdout) return err.stdout;
     throw err;
   }
 }
@@ -663,7 +678,11 @@ async function findCallSites(root, names, globs) {
  */
 function groupCallSites(stdout, searched, symbols) {
   const matchers = new Map(
-    searched.map((name) => [name, new RegExp(`\\b${name}\\b`)]),
+    // `\b` never matches beside a `$`, so a `$` name needs lookarounds, and escaping.
+    searched.map((name) => [
+      name,
+      new RegExp(`(?<!\\w)${name.replace(/\$/g, '\\$')}(?!\\w)`),
+    ]),
   );
   const sitesByName = new Map(searched.map((name) => [name, []]));
   const definitionKeys = new Set(

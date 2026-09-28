@@ -64,7 +64,9 @@ export async function loadReviewConfig(root, options, shared) {
   if (existsSync(path)) {
     // The query string defeats the module cache when the file has changed.
     const url = `${pathToFileURL(path).href}?v=${statSync(path).mtimeMs}`;
-    raw = (await import(url)).default ?? {};
+    const { default: config } = await import(url);
+    // A null export means the defaults; undefined is left for the object check.
+    raw = config === null ? {} : config;
   }
 
   const skills = new Set(Object.keys(shared.skills ?? {}));
@@ -188,11 +190,12 @@ function workspacePatterns(root, manifest) {
     return patterns;
   }
 
-  // Only the `packages:` list, one quoted or bare item per line.
+  // Only the `packages:` list, one quoted or bare item per line, less any trailing comment.
   let inPackages = false;
   for (const line of yaml.split(/\r?\n/)) {
     if (/^\S/.test(line)) inPackages = /^packages\s*:/.test(line);
-    const item = inPackages && line.match(/^\s+-\s*(['"]?)(.+?)\1\s*$/);
+    const item =
+      inPackages && line.match(/^\s+-\s*(['"]?)(.+?)\1\s*(?:\s#.*)?$/);
     if (item) patterns.push(item[2]);
   }
 
@@ -499,8 +502,11 @@ function resolveBundles(raw, rawLenses = {}, lenses, fail) {
   let bundles = structuredClone(raw ?? DEFAULT_BUNDLES);
   if (!Array.isArray(bundles)) fail('bundles must be a list');
 
-  // The defaults may name a built-in the repository removed.
+  // The defaults may name a built-in the repository removed; a bundle a lens names stays.
   if (!raw) {
+    const named = new Set(
+      Object.values(rawLenses).map((entry) => entry?.bundle),
+    );
     bundles = bundles
       .map((bundle) => ({
         ...bundle,
@@ -512,12 +518,17 @@ function resolveBundles(raw, rawLenses = {}, lenses, fail) {
           }))
           .filter((part) => part.lenses.length > 0),
       }))
-      .filter((bundle) => bundle.lenses.length > 0);
+      .filter((bundle) => bundle.lenses.length > 0 || named.has(bundle.key));
   }
+
+  const keys = new Set();
 
   for (const bundle of bundles) {
     unknownKeys(bundle, BUNDLE_KEYS, `bundle "${bundle.key}"`, fail);
     if (typeof bundle.key !== 'string') fail('every bundle needs a key');
+    // The workflow finds a bundle by its key, so a second one would hide the first's lenses.
+    if (keys.has(bundle.key)) fail(`two bundles use the key "${bundle.key}"`);
+    keys.add(bundle.key);
     if (bundle.scope !== 'target' && bundle.scope !== 'slice') {
       fail(`bundle "${bundle.key}" scope must be "target" or "slice"`);
     }

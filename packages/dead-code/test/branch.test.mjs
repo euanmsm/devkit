@@ -11,6 +11,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   renameSync,
   symlinkSync,
@@ -272,6 +273,34 @@ describe('dead-code branch in a monorepo', () => {
     );
   });
 
+  test('a workspace folder that held no package.json at the fork point is left out', () => {
+    const root = onBranch({ 'apps/web/README.md': '# web\n' });
+    write(join(root, 'package.json'), {
+      name: 'root',
+      private: true,
+      type: 'module',
+      workspaces: ['apps/*'],
+    });
+    write(join(root, 'apps/web/package.json'), {
+      name: 'web',
+      private: true,
+      type: 'module',
+      main: 'src/index.ts',
+    });
+    write(join(root, 'apps/web/src/index.ts'), 'export const w = 1;\n');
+    write(join(root, 'apps/web/src/stray.ts'), 'export const s = 1;\n');
+    write(join(root, '.devkit/dead-code.json'), { workspaces: ['apps/web'] });
+    commit(root);
+
+    const { status, json } = report(root, ['branch', 'main']);
+
+    assert.equal(status, 1);
+    assert.deepEqual(
+      json.findings.map((f) => f.file),
+      ['apps/web/src/stray.ts'],
+    );
+  });
+
   test('a project the branch created has no fork-point findings', () => {
     const root = makeRepo({ ...BARE, 'README.md': '# empty\n' });
     git(root, 'switch', '-q', '-c', 'feat');
@@ -387,6 +416,196 @@ describe('dead-code branch and renames', () => {
     const { status, json } = report(root, ['branch', 'main']);
 
     assert.equal(status, 0, JSON.stringify(json.findings));
+  });
+  test('a revived file is not new debt when the include leaves out files', () => {
+    const root = onBranch({
+      'src/orphan.ts':
+        'export const orphan = 1;\nexport const spare = 2;\nexport const spare2 = 3;\n',
+    });
+    write(
+      join(root, 'src/index.ts'),
+      "import { orphan } from './orphan';\nimport { alsoUsed, used } from './lib';\nimport { helper } from './util/helper';\n\nconsole.log(orphan, used(), alsoUsed(), helper());\n",
+    );
+    commit(root);
+
+    const { status, json } = report(root, [
+      'branch',
+      'main',
+      '--include',
+      'exports,types',
+    ]);
+
+    assert.equal(status, 0, JSON.stringify(json.findings));
+    assert.deepEqual(json.findings, []);
+  });
+
+  test('a renamed project folder carries its old debt', () => {
+    const app = Object.fromEntries(
+      Object.entries(PROJECT).map(([rel, contents]) => [
+        `app/${rel}`,
+        contents,
+      ]),
+    );
+    const root = onBranch({
+      ...BARE,
+      ...app,
+      '.devkit/dead-code.json': { directory: 'app' },
+    });
+    git(root, 'mv', 'app', 'web');
+    write(join(root, '.devkit/dead-code.json'), { directory: 'web' });
+    commit(root);
+
+    const { status, json } = report(root, ['branch', 'main']);
+
+    assert.equal(status, 0, JSON.stringify(json.findings));
+    assert.deepEqual(json.findings, []);
+  });
+
+  test('a renamed workspace folder carries its old debt', () => {
+    const pkg = Object.fromEntries(
+      Object.entries(PROJECT)
+        .filter(([rel]) => rel.startsWith('src/'))
+        .map(([rel, contents]) => [`packages/a/${rel}`, contents]),
+    );
+    const root = onBranch({
+      ...BARE,
+      '.gitignore': 'node_modules/\n',
+      'package.json': {
+        name: 'root',
+        private: true,
+        type: 'module',
+        workspaces: ['packages/*'],
+      },
+      'packages/a/package.json': {
+        name: 'a',
+        private: true,
+        type: 'module',
+        main: 'src/index.ts',
+      },
+      ...pkg,
+      '.devkit/dead-code.json': { workspaces: ['packages/a'] },
+    });
+    git(root, 'mv', 'packages/a', 'packages/b');
+    write(join(root, '.devkit/dead-code.json'), { workspaces: ['packages/b'] });
+    commit(root);
+
+    const { status, json } = report(root, ['branch', 'main']);
+    const now = report(root, []).json;
+
+    assert.ok(now.findings.length > 0, JSON.stringify(now));
+    assert.equal(status, 0, JSON.stringify(json.findings));
+    assert.deepEqual(json.findings, []);
+  });
+
+  test('a deleted project folder and a new one are not a move', () => {
+    const legacy = Object.fromEntries(
+      Object.entries(PROJECT).map(([rel, contents]) => [
+        `legacy/${rel}`,
+        contents,
+      ]),
+    );
+    const root = onBranch({
+      ...BARE,
+      ...legacy,
+      'legacy/package.json': { name: 'legacy', private: true, type: 'module' },
+      // Broken where it was, so treating the new folder as a move fails the run.
+      'legacy/knip.json': '{ broken',
+      '.devkit/dead-code.json': { directory: 'web' },
+    });
+    git(root, 'rm', '-rq', 'legacy');
+    write(join(root, 'web/package.json'), {
+      name: 'web',
+      private: true,
+      type: 'module',
+    });
+    write(join(root, 'web/knip.json'), {
+      entry: ['main.ts'],
+      project: ['**/*.ts'],
+    });
+    write(
+      join(root, 'web/main.ts'),
+      "import { used } from './lib/api';\nconsole.log(used());\n",
+    );
+    write(
+      join(root, 'web/lib/api.ts'),
+      'export function used() {\n  return 1;\n}\n\nexport function unused() {\n  return 2;\n}\n',
+    );
+    commit(root);
+    assert.match(
+      git(root, 'diff', '-M20%', '--name-status', 'main'),
+      /^R\d+\tlegacy\/package\.json\tweb\/package\.json$/m,
+    );
+
+    const { status, json } = report(root, ['branch', 'main']);
+
+    assert.equal(status, 1, JSON.stringify(json));
+    assert.deepEqual(
+      json.findings.map((f) => `${f.type}:${f.file}:${f.name}`),
+      ['export:web/lib/api.ts:unused'],
+    );
+  });
+
+  test('a deleted workspace and a new one are not a move', () => {
+    const legacy = Object.fromEntries(
+      Object.entries(PROJECT)
+        .filter(([rel]) => rel.startsWith('src/'))
+        .map(([rel, contents]) => [`packages/legacy/${rel}`, contents]),
+    );
+    const root = onBranch({
+      ...BARE,
+      '.gitignore': 'node_modules/\n',
+      'package.json': {
+        name: 'root',
+        private: true,
+        type: 'module',
+        workspaces: ['packages/*'],
+      },
+      'packages/legacy/package.json': {
+        name: 'legacy',
+        private: true,
+        type: 'module',
+        main: 'src/index.ts',
+      },
+      ...legacy,
+      'packages/keep/package.json': {
+        name: 'keep',
+        private: true,
+        type: 'module',
+        main: 'index.ts',
+      },
+      'packages/keep/index.ts': 'export const k = 1;\n',
+    });
+    git(root, 'rm', '-rq', 'packages/legacy');
+    write(join(root, 'packages/fresh/package.json'), {
+      name: 'fresh',
+      private: true,
+      type: 'module',
+      main: 'main.ts',
+    });
+    write(
+      join(root, 'packages/fresh/main.ts'),
+      "import { used } from './api';\nconsole.log(used());\n",
+    );
+    write(
+      join(root, 'packages/fresh/api.ts'),
+      'export function used() {\n  return 1;\n}\n\nexport function unused() {\n  return 2;\n}\n',
+    );
+    write(join(root, '.devkit/dead-code.json'), {
+      workspaces: ['packages/fresh'],
+    });
+    commit(root);
+    assert.match(
+      git(root, 'diff', '-M20%', '--name-status', 'main'),
+      /^R\d+\tpackages\/legacy\/package\.json\tpackages\/fresh\/package\.json$/m,
+    );
+
+    const { status, json } = report(root, ['branch', 'main']);
+
+    assert.equal(status, 1, JSON.stringify(json));
+    assert.deepEqual(
+      json.findings.map((f) => `${f.type}:${f.file}:${f.name}`),
+      ['export:packages/fresh/api.ts:unused'],
+    );
   });
 });
 
@@ -581,5 +800,76 @@ describe('dead-code branch and the checkout', () => {
     assert.equal(worktrees(root), 1);
     assert.equal(existsSync(tree), false);
     assert.ok(!readdirSync(tmpdir()).some((d) => d === tmp.split('/').pop()));
+  });
+});
+
+describe('dead-code branch inside a pre-commit hook', () => {
+  /**
+   * Installs a pre-commit hook that runs branch mode and records its exit.
+   *
+   * @param root - The repo's root
+   * @returns The file the hook writes dead-code's exit status to
+   */
+  function hook(root) {
+    const status = join(tempDir(), 'status');
+    const path = join(root, '.git/hooks/pre-commit');
+    writeFileSync(
+      path,
+      `#!/bin/sh\n'${process.execPath}' '${BIN}' branch main >/dev/null 2>&1\necho $? > '${status}'\nexit 0\n`,
+    );
+    chmodSync(path, 0o755);
+    return status;
+  }
+
+  test('leaves the staged files of a plain commit alone', (t) => {
+    if (process.platform === 'win32') return t.skip('hooks need a shell');
+    const root = onBranch();
+    const status = hook(root);
+    write(join(root, 'src/added.ts'), 'export const added = 1;\n');
+    git(root, 'add', 'src/added.ts');
+
+    git(root, 'commit', '-q', '-m', 'add');
+
+    assert.equal(readFileSync(status, 'utf8').trim(), '1');
+    assert.match(
+      git(root, 'ls-tree', '-r', '--name-only', 'HEAD'),
+      /src\/added\.ts/,
+    );
+    assert.equal(git(root, 'status', '--porcelain'), '');
+  });
+
+  test('leaves the index of commit -a alone', (t) => {
+    if (process.platform === 'win32') return t.skip('hooks need a shell');
+    const root = onBranch();
+    const status = hook(root);
+    write(join(root, 'src/index.ts'), WITHOUT_ALSO_USED);
+
+    git(root, 'commit', '-a', '-q', '-m', 'edit');
+
+    assert.equal(readFileSync(status, 'utf8').trim(), '1');
+    assert.equal(
+      git(root, 'show', 'HEAD:src/index.ts'),
+      WITHOUT_ALSO_USED.trim(),
+    );
+    assert.equal(git(root, 'status', '--porcelain'), '');
+  });
+
+  test('leaves the staged files alone in a linked worktree', (t) => {
+    if (process.platform === 'win32') return t.skip('hooks need a shell');
+    const root = makeRepo();
+    const status = hook(root);
+    const linked = join(tempDir(), 'linked');
+    git(root, 'worktree', 'add', '-q', '-b', 'feat', linked);
+    write(join(linked, 'src/added.ts'), 'export const added = 1;\n');
+    git(linked, 'add', 'src/added.ts');
+
+    git(linked, 'commit', '-q', '-m', 'add');
+
+    assert.equal(readFileSync(status, 'utf8').trim(), '1');
+    assert.match(
+      git(linked, 'ls-tree', '-r', '--name-only', 'HEAD'),
+      /src\/added\.ts/,
+    );
+    assert.equal(git(linked, 'status', '--porcelain'), '');
   });
 });

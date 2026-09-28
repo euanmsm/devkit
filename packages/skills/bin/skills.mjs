@@ -59,6 +59,8 @@ try {
     process.exitCode = await prepass(rest, root);
   } else if (command === 'pr') {
     process.exitCode = await prCommand(rest, root);
+  } else if (['help', '--help', '-h'].includes(command)) {
+    console.log(USAGE);
   } else {
     console.error(USAGE);
     process.exit(command ? 1 : 0);

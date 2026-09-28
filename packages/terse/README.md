@@ -9,7 +9,9 @@ fails a pull request on the same grounds.
 
 Both only ever judge **newly added lines**. Existing comments in a file you
 happen to touch are left alone, so adopting this in an old codebase does not
-mean fixing a thousand comments before you can merge anything.
+mean fixing a thousand comments before you can merge anything. A capped block —
+the file header, a JSDoc block, a run of `//` lines — counts as new when an
+added line pushes it over its cap, wherever in the block that line lands.
 
 ## Installing
 
@@ -80,7 +82,10 @@ in review.
 
 It reports each violation **once per session**, keeping the set it has already
 mentioned in `.git/terse/`. Without that it would repeat every outstanding
-violation after every command, which is noise an agent learns to skip.
+violation after every command, which is noise an agent learns to skip. A
+violation is told apart by its rule and the text of its line, so a second one
+with the same message is still reported, and one that is fixed and later written
+back is reported again.
 
 Two audiences, two messages. The agent gets the full list in its context, so it
 can act. You get one line in the terminal:
@@ -252,7 +257,7 @@ like any other.
 | `bannerMinCode`           | 150                                   | File size below which banners are noise     |
 | `sectionBanners`          | `large-files`                         | `always` welcomes banners, `off` bans them  |
 | `todoPrefix`              | any 2+ capitals                       | Issue prefix a `TODO()` must carry          |
-| `allowedTags`             | `@param @returns @throws @deprecated` | JSDoc tags that pass                        |
+| `allowedTags`             | `@param @returns @throws @deprecated` | JSDoc tags that pass, beside tool pragmas   |
 | `jsdocScope`              | `all`                                 | `all` covers functions, `exported` does not |
 | `jsdocScopeExclude`       | `.test.`, `.spec.`                    | Paths where only exports need JSDoc         |
 | `bans`                    | five phrase sets                      | Phrases the content rules reject            |

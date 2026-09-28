@@ -240,6 +240,7 @@ const EXPORTED =
 const FN_KEYWORD = /^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\b/;
 const FN_ASSIGNED =
   /^(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*(?::(?:[^=]|=>)*)?=\s*(?:async\s+)?(?:function\b|\(|[A-Za-z_$][\w$]*\s*=>)/;
+const FN_ASSIGNED_FUNCTION = /=\s*(?:async\s+)?function\b/;
 const FN_BINDS =
   /^(?:async\s+)?function\s+[A-Za-z_$]|^(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*(?::(?:[^=]|=>)*)?=\s*(?:async\s+)?(?:function\b|\(|[A-Za-z_$][\w$]*\s*=>)/;
 const SHORT_ARROW =
@@ -248,10 +249,30 @@ const VOIDISH = /^(?:void|never|Promise<\s*(?:void|never)\s*>)$/;
 const SIGNATURE_MAX_LINES = 40;
 
 const ALLOWED_TAGS = new Set(config.allowedTags);
+// Build and test tools read these from a doc-comment, so the tag rule leaves them alone.
+const PRAGMA_TAGS = new Set([
+  '@jsx',
+  '@jsxImportSource',
+  '@jsxFrag',
+  '@jsxRuntime',
+  '@vitest-environment',
+  '@vitest-environment-options',
+  '@jest-environment',
+  '@jest-environment-options',
+  '@flow',
+  '@noflow',
+  '@format',
+  '@license',
+  '@preserve',
+]);
 const CODE_SHAPE =
   /^(import |export |const |let |var |return |await |if \(|for \(|\w+\.\w+\(|\}|\{)/;
 const DECLARATION = /^(export\s+)?(interface\s+\w+|type\s+\w+(<[^>]*>)?\s*=)/;
 const PROPERTY = /^(readonly\s+)?[\w"'`]+\??\s*:/;
+const FN_NAME =
+  /^(?:export\s+(?:default\s+)?)?(?:declare\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/;
+const DIRECTIVE =
+  /^\/\/\s*(?:eslint-|@ts-|prettier-ignore|biome-ignore|oxlint-|tslint:|deno-lint-|(?:c8|istanbul|v8)\s+ignore)/;
 
 // ============================================================================
 // Helpers
@@ -318,6 +339,42 @@ const REGEX_OPENS_AFTER = new Set([
   '>',
 ]);
 
+// Keywords after which a value, and so a regex, may start.
+const REGEX_OPENS_AFTER_WORD = new Set([
+  'return',
+  'typeof',
+  'instanceof',
+  'case',
+  'throw',
+  'in',
+  'of',
+  'void',
+  'delete',
+  'yield',
+  'await',
+  'new',
+  'else',
+  'do',
+]);
+
+/**
+ * True when the `/` at an index opens a regex literal, not a division.
+ *
+ * @param line - One raw source line
+ * @param i - Index of the `/`
+ * @param prev - Last non-space character before it
+ * @returns Whether a regex opens there
+ */
+function opensRegexAt(line, i, prev) {
+  // `/>` closes a JSX element; a regex matching `>` alone is not worth the miss.
+  if (line[i] !== '/' || line[i + 1] === '>') return false;
+  if (REGEX_OPENS_AFTER.has(prev)) return true;
+  if (!/[\w$]/.test(prev)) return false;
+
+  const word = /(?:^|[^\w$.])([A-Za-z]+)\s*$/.exec(line.slice(0, i));
+  return Boolean(word) && REGEX_OPENS_AFTER_WORD.has(word[1]);
+}
+
 /**
  * Counts a line's braces, ignoring any inside a string, template or regex.
  *
@@ -342,9 +399,7 @@ function braceCounts(line) {
       continue;
     }
 
-    // `/>` closes a JSX element; a regex matching `>` alone is not worth the miss.
-    const opensRegex =
-      c === '/' && line[i + 1] !== '>' && REGEX_OPENS_AFTER.has(prev);
+    const opensRegex = opensRegexAt(line, i, prev);
 
     if (c === '"' || c === "'" || c === '`' || opensRegex) {
       i = closingDelimiter(line, i, c);
@@ -377,6 +432,97 @@ function closingDelimiter(line, start, delimiter) {
   return line.length;
 }
 
+/**
+ * Tracks the template literals a line leaves open.
+ *
+ * @param line - One raw source line
+ * @param open - What the lines before it left open, innermost last
+ * @returns The same after the line: a backtick for template text, a depth for a `${}`, `*` for a block comment
+ */
+function templatesAfter(line, open) {
+  const stack = [...open];
+  let prev = '';
+
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    const top = stack.at(-1);
+
+    // A comment's text is never code, so a backtick in it opens nothing.
+    if (top === '*') {
+      const close = line.indexOf('*/', i);
+      if (close === -1) break;
+      stack.pop();
+      i = close + 1;
+      continue;
+    }
+
+    if (top === '`') {
+      prev = c;
+      if (c === '\\') i++;
+      else if (c === '`') stack.pop();
+      else if (c === '$' && line[i + 1] === '{') {
+        stack.push(0);
+        prev = '{';
+        i++;
+      }
+      continue;
+    }
+
+    if (c === '/' && line[i + 1] === '/') break;
+
+    if (c === '/' && line[i + 1] === '*') {
+      stack.push('*');
+      i++;
+      continue;
+    }
+
+    if (c === '`') {
+      stack.push('`');
+      prev = c;
+      continue;
+    }
+
+    const opensRegex = opensRegexAt(line, i, prev);
+
+    if (c === '"' || c === "'" || opensRegex) {
+      i = opensRegex ? regexEnd(line, i) : closingDelimiter(line, i, c);
+      prev = c;
+      continue;
+    }
+
+    if (typeof top === 'number' && c === '{') stack[stack.length - 1]++;
+    else if (typeof top === 'number' && c === '}') {
+      if (top === 0) stack.pop();
+      else stack[stack.length - 1]--;
+    }
+
+    if (c.trim()) prev = c;
+  }
+
+  return stack;
+}
+
+/**
+ * Finds where a regex literal closes, reading past a `/` inside a character class.
+ *
+ * @param line - One raw source line
+ * @param start - Index of the opening `/`
+ * @returns Index of the closing `/`, or the line's end when unterminated
+ */
+function regexEnd(line, start) {
+  let inClass = false;
+
+  for (let i = start + 1; i < line.length; i++) {
+    const c = line[i];
+    if (c === '\\') i++;
+    else if (c === '[') inClass = true;
+    else if (c === ']') inClass = false;
+    else if (c === '/' && !inClass) return i;
+  }
+
+  return line.length;
+}
+
 // ======== Signatures ========================================================
 
 /**
@@ -402,8 +548,7 @@ function stripLiterals(line) {
       continue;
     }
 
-    const opensRegex =
-      c === '/' && line[i + 1] !== '>' && REGEX_OPENS_AFTER.has(prev);
+    const opensRegex = opensRegexAt(line, i, prev);
 
     if (c === '"' || c === "'" || c === '`' || opensRegex) {
       const end = closingDelimiter(line, i, c);
@@ -525,9 +670,10 @@ function readSignature(lines, n) {
  *
  * @param lines - Every line of the file
  * @param sig - What `readSignature` returned
+ * @param arrow - Whether only a return type may sit between the `)` and the `=>`
  * @returns `{ returnType, body, expression }`, or null when no body follows
  */
-function readTail(lines, sig) {
+function readTail(lines, sig, arrow) {
   let depth = 0;
   let pre = '';
 
@@ -543,6 +689,10 @@ function readTail(lines, sig) {
       else if (ch === ')' || ch === ']') depth--;
       else if (ch === '<' && /[\w$>\]]$/.test(pre.trimEnd())) depth++;
       else if (ch === '>' && line[c - 1] !== '=' && depth > 0) depth--;
+
+      // Without semicolons, the next statement's code would otherwise pass as a body.
+      if (arrow && depth === 0 && pre.trim() && !pre.trim().startsWith(':'))
+        return null;
 
       if (depth === 0 && ch === '{')
         return {
@@ -619,7 +769,10 @@ function bodyFacts(lines, start) {
     const line = stripLiterals(lines[i]);
     const text = i === start.line ? line.slice(start.col + 1) : line;
 
-    if (nested === null && i > start.line) {
+    if (
+      nested === null &&
+      (i > start.line || !/(?:^|[^\w.$])function\b|=>/.test(text))
+    ) {
       if (/(?:^|[^\w.$])return\s+[^\s;]/.test(text)) returns = true;
       if (/(?:^|[^\w.$])throw\s/.test(text)) throws = true;
     }
@@ -667,7 +820,7 @@ function functionInfo(lines, n) {
   const body = short ? firstBrace(lines, n, arrow + 2, n + 8) : null;
   const tail = short
     ? { returnType: undefined, body, expression: !body }
-    : readTail(lines, sig);
+    : readTail(lines, sig, !keyword && !FN_ASSIGNED_FUNCTION.test(trimmed));
   if (!tail) return null;
   if (tail.returnType === null) return null;
 
@@ -692,10 +845,13 @@ function functionInfo(lines, n) {
  * @param rule - The rule's name, as `RULES` keys it
  * @param line - Line the finding anchors to, 1-based
  * @param message - What a reader must change
+ * @param block - Lines of the whole comment a length cap measures, 1-based
  * @returns The finding
  */
-function finding(rule, line, message) {
-  return { rule, number: RULES[rule]?.number, line, message };
+function finding(rule, line, message, block) {
+  const out = { rule, number: RULES[rule]?.number, line, message };
+  if (block) Object.assign(out, block);
+  return out;
 }
 
 // ============================================================================
@@ -726,13 +882,13 @@ function checkHeader(lines) {
   const header = lines.slice(top, end + 1);
   const findings = [];
 
-  // Anchoring past the cap keeps the finding inside the span that grew the header.
   if (header.length > HEADER_MAX)
     findings.push(
       finding(
         'header-cap',
         top + HEADER_MAX + 1,
         `File header is ${header.length} lines, cap is ${HEADER_MAX}.`,
+        { from: top + 1, to: end + 1 },
       ),
     );
 
@@ -768,7 +924,7 @@ function checkHeader(lines) {
 function checkContent(text, lineNo, options = {}) {
   if (!text) return [];
 
-  const { prose = true } = options;
+  const { prose = true, sentences = prose } = options;
   const out = [];
 
   if (/\b(TODO|FIXME|XXX|HACK)\b/.test(text)) {
@@ -788,7 +944,7 @@ function checkContent(text, lineNo, options = {}) {
       ),
     );
 
-  if (prose && /\.\s+\S/.test(text))
+  if (sentences && /\.\s+\S/.test(text))
     out.push(
       finding(
         'comment-length',
@@ -822,11 +978,11 @@ function checkJsdoc(lines, start, end) {
 
   for (let n = start; n <= end; n++) {
     const text = body(lines[n]);
-    const tag = /^(@\w+)/.exec(text);
+    const tag = /^(@[\w-]+)/.exec(text);
 
     if (tag) {
       openTag = tag[1];
-      if (!ALLOWED_TAGS.has(openTag))
+      if (!ALLOWED_TAGS.has(openTag) && !PRAGMA_TAGS.has(openTag))
         out.push(
           finding('jsdoc-tags', n + 1, `\`${openTag}\` is not an allowed tag.`),
         );
@@ -848,17 +1004,37 @@ function checkJsdoc(lines, start, end) {
     out.push(...checkContent(text, n + 1));
   }
 
-  // Anchoring past the cap keeps the finding inside the span that grew the block.
   if (prose > JSDOC_PROSE_MAX)
     out.push(
       finding(
         'jsdoc-cap',
         capLine,
         `JSDoc has ${prose} prose lines, cap is ${JSDOC_PROSE_MAX}.`,
+        { from: start + 1, to: end + 1 },
       ),
     );
 
   return out;
+}
+
+/**
+ * Checks rules 9 to 14, 16 and 17 on a JSDoc block that opens and closes on one line.
+ *
+ * @param line - The block's line
+ * @param n - Line it sits on, 0-based
+ * @returns Findings the block breaks
+ */
+function checkDocLine(line, n) {
+  const text = body(line.slice(0, line.indexOf('*/') + 2));
+  const tag = /^(@[\w-]+)/.exec(text);
+
+  if (tag)
+    return ALLOWED_TAGS.has(tag[1]) || PRAGMA_TAGS.has(tag[1])
+      ? []
+      : [finding('jsdoc-tags', n + 1, `\`${tag[1]}\` is not an allowed tag.`)];
+
+  // A second sentence is left to rule 3, which reads the block as a property doc.
+  return checkContent(text, n + 1, { sentences: false });
 }
 
 // ======== Declarations ======================================================
@@ -868,24 +1044,65 @@ function checkJsdoc(lines, start, end) {
  *
  * @param lines - Every line of the file
  * @param n - Line the declaration starts on, 0-based
- * @returns `{ start, end, isDoc }`, or null when the declaration carries none
+ * @returns `{ start, end, isDoc, shared }`, or null when the declaration carries none
  */
 function docAbove(lines, n) {
   let end = -1;
+  let shared = false;
+  const name = FN_NAME.exec(lines[n].trim())?.[1];
 
+  // A decorator, a tool's directive or an overload may sit between a declaration and its JSDoc.
   for (let i = n - 1; i >= 0; i--) {
-    if (!lines[i].trim()) continue;
-    if (lines[i].trim().endsWith('*/')) end = i;
-    break;
+    const trimmed = lines[i].trim();
+    if (!trimmed || DIRECTIVE.test(trimmed)) continue;
+    if (name && trimmed.endsWith(';') && FN_NAME.exec(trimmed)?.[1] === name) {
+      shared = true;
+      continue;
+    }
+    if (trimmed.endsWith('*/')) {
+      end = i;
+      break;
+    }
+
+    const top = decoratorStart(lines, i);
+    if (top === -1) break;
+    i = top;
   }
 
   if (end === -1) return null;
 
   for (let i = end; i >= 0; i--)
     if (lines[i].trim().startsWith('/*'))
-      return { start: i, end, isDoc: lines[i].trim().startsWith('/**') };
+      return {
+        start: i,
+        end,
+        isDoc: lines[i].trim().startsWith('/**'),
+        shared,
+      };
 
   return null;
+}
+
+/**
+ * Finds the line a decorator opens on, given the line it ends on.
+ *
+ * @param lines - Every line of the file
+ * @param end - Line the decorator ends on, 0-based
+ * @returns The line its `@` sits on, or -1 when the line ends no decorator
+ */
+function decoratorStart(lines, end) {
+  let depth = 0;
+
+  for (let i = end; i >= 0 && i > end - SIGNATURE_MAX_LINES; i--) {
+    const line = stripLiterals(lines[i]);
+    depth += (line.match(/\)/g) ?? []).length;
+    depth -= (line.match(/\(/g) ?? []).length;
+    if (depth > 0) continue;
+
+    return /^@[A-Za-z_$]/.test(line.trim()) ? i : -1;
+  }
+
+  return -1;
 }
 
 /**
@@ -1003,7 +1220,8 @@ function checkDeclaration(lines, n, scope, exported) {
       ),
     ];
 
-  if (!fn || !doc.isDoc) return [];
+  // An overload's JSDoc describes the overload, not the implementation's parameters.
+  if (!fn || !doc.isDoc || doc.shared) return [];
 
   return checkTagCoverage(lines, n, doc, fn);
 }
@@ -1071,12 +1289,16 @@ export function scan(source, path = '') {
   let runStart = 0;
   let depth = 0;
   let declDepth = null;
+  let templates = [];
 
   for (let n = start; n < lines.length; n++) {
     const raw = lines[n];
     const trimmed = raw.trim();
+    // A line starting inside a template literal is string text, not code or comment.
+    const quoted = templates.at(-1) === '`';
+    templates = templatesAfter(raw, templates);
 
-    if (!inBlock && trimmed.startsWith('/*')) {
+    if (!inBlock && !quoted && trimmed.startsWith('/*')) {
       inBlock = true;
       blockStart = n;
       isDoc = trimmed.startsWith('/**');
@@ -1084,20 +1306,20 @@ export function scan(source, path = '') {
     if (inBlock) {
       if (trimmed.includes('*/')) {
         inBlock = false;
-        // A single-line block is a property doc, checked by rule 3 instead.
         if (isDoc && n > blockStart)
           out.push(...checkJsdoc(lines, blockStart, n));
+        else if (isDoc) out.push(...checkDocLine(trimmed, n));
       }
       continue;
     }
 
-    if (isBannerRule(raw)) {
+    if (!quoted && isBannerRule(raw)) {
       const message = n > start ? bannerFinding(code) : null;
       if (message) out.push(finding('section-banner', n + 1, message));
       continue;
     }
 
-    if (trimmed.startsWith('//')) {
+    if (!quoted && trimmed.startsWith('//')) {
       const text = body(raw);
       if (CODE_SHAPE.test(text))
         out.push(finding('no-commented-code', n + 1, 'Commented-out code.'));
@@ -1114,12 +1336,14 @@ export function scan(source, path = '') {
           'logic-comment-length',
           runStart + 1,
           `Logic comment runs ${run} lines, cap is 1.`,
+          { from: runStart + 1, to: runStart + run },
         ),
       );
     run = 0;
 
-    const isExport = EXPORTED.test(trimmed);
+    const isExport = !quoted && EXPORTED.test(trimmed);
     if (
+      !quoted &&
       depth === 0 &&
       (isExport || (scope === 'all' && FN_BINDS.test(trimmed)))
     )
@@ -1132,6 +1356,7 @@ export function scan(source, path = '') {
     else if (declDepth !== null && depth + open - close <= declDepth)
       declDepth = null;
     else if (
+      !quoted &&
       declDepth !== null &&
       depth === declDepth + 1 &&
       PROPERTY.test(trimmed)
@@ -1141,6 +1366,16 @@ export function scan(source, path = '') {
     // Clamping stops one miscounted line disabling exported-jsdoc for the rest of the file.
     depth = Math.max(0, depth + open - close);
   }
+
+  if (run > 1)
+    out.push(
+      finding(
+        'logic-comment-length',
+        runStart + 1,
+        `Logic comment runs ${run} lines, cap is 1.`,
+        { from: runStart + 1, to: runStart + run },
+      ),
+    );
 
   // Filtering here, rather than at each check, keeps one place a rule can be off.
   return out.filter((f) => enabled(f.rule)).sort((a, b) => a.line - b.line);
@@ -1175,8 +1410,10 @@ export function newFindings(before, after, span, path = '') {
   for (const f of before ? scan(before, path) : [])
     counts.set(key(f), (counts.get(key(f)) ?? 0) + 1);
 
+  // A capped block grown anywhere along its length counts as written by the change.
   const inSpan = (f) =>
-    !span || span.some((r) => f.line >= r.from && f.line <= r.to);
+    !span ||
+    span.some((r) => (f.to ?? f.line) >= r.from && (f.from ?? f.line) <= r.to);
   const found = scan(after, path);
 
   // Untouched findings match first, leaving the newly written one exposed.

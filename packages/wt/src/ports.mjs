@@ -11,7 +11,21 @@ import { join } from 'node:path';
 import { repoRoot } from '@euanmsm/devkit-core';
 
 import { loadWtConfig } from './config.mjs';
+import { configMain } from './git.mjs';
 import { slotOf } from './slots.mjs';
+
+/**
+ * Finds the current checkout, or the current folder outside one, such as a Docker build.
+ *
+ * @returns The root to read the config from
+ */
+function here() {
+  try {
+    return repoRoot();
+  } catch {
+    return process.cwd();
+  }
+}
 
 /**
  * Works out how far this checkout's ports shift from the base ones.
@@ -19,8 +33,8 @@ import { slotOf } from './slots.mjs';
  * @param options - `root` of the checkout and an already loaded `config`
  * @returns The offset added to every base port
  */
-export function offset({ root = repoRoot(), config } = {}) {
-  const cfg = config ?? loadWtConfig(root);
+export function offset({ root = here(), config } = {}) {
+  const cfg = config ?? loadWtConfig(root, configMain(root));
   const set = offsetFromEnv(root, cfg.ports.offsetEnv);
 
   return set ?? slotOf(root) * cfg.ports.step;
@@ -63,8 +77,8 @@ function offsetFromEnv(root, offsetEnv) {
  * @param options - `root` of the checkout and an already loaded `config`
  * @returns Each service name mapped to its port
  */
-export function ports({ root = repoRoot(), config } = {}) {
-  const cfg = config ?? loadWtConfig(root);
+export function ports({ root = here(), config } = {}) {
+  const cfg = config ?? loadWtConfig(root, configMain(root));
   const shift = offset({ root, config: cfg });
 
   return Object.fromEntries(

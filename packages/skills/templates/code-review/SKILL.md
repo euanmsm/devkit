@@ -66,6 +66,14 @@ SCRATCH_DIR="tmp/code-reviews"
 mkdir -p "$SCRATCH_DIR"
 ```
 
+`SCRATCH_DIR` is relative to the current folder, which is where you and the
+reviewers read it. The prepass works from the repository root, so every folder
+handed to it below is prefixed with `$PWD` to land in the same place.
+
+Shell variables do not carry over from one Bash call to the next. Run each
+block below in the same call as the lines that set what it uses, or write
+those values out literally.
+
 ### Diff mode
 {{#githubReview}}
 **`pr` first reads the PR**, so the review is of its head against its own base:
@@ -84,20 +92,24 @@ one branch and post to another PR. Then use `PR_BASE` as the base below, so a
 stacked PR is diffed against the branch it merges into.
 {{/githubReview}}
 `TARGET` is the current branch, or `HEAD` when detached. The base is
-`{{baseBranch}}`{{#githubReview}} (`PR_BASE` in `pr` mode){{/githubReview}}, or its
-`origin/` copy when the local branch does not exist:
+`{{baseBranch}}`{{#githubReview}} (`PR_BASE` in `pr` mode){{/githubReview}}: the local branch or its
+`origin/` copy, whichever `TARGET` left later. A local copy that was never
+pulled would otherwise add every commit that landed upstream since to the diff:
 
 ```bash
 TARGET="${BRANCH:-HEAD}"
 BASE_BRANCH="{{baseBranch}}"{{#githubReview}}              # "$PR_BASE" in pr mode{{/githubReview}}
-if git rev-parse --verify --quiet "refs/heads/$BASE_BRANCH" >/dev/null; then
-  BASE_REF="$BASE_BRANCH"
-elif git rev-parse --verify --quiet "refs/remotes/origin/$BASE_BRANCH" >/dev/null; then
-  BASE_REF="origin/$BASE_BRANCH"
-else
-  BASE_REF=""
-fi
-BASE="$(git merge-base "$TARGET" "${BASE_REF:-$BASE_BRANCH}" 2>/dev/null)"
+BASE_REF=""
+BASE=""
+for REF in "refs/heads/$BASE_BRANCH" "refs/remotes/origin/$BASE_BRANCH"; do
+  git rev-parse --verify --quiet "$REF" >/dev/null || continue
+  FORK="$(git merge-base "$TARGET" "$REF" 2>/dev/null)"
+  if [ -z "$BASE" ] || { [ -n "$FORK" ] && git merge-base --is-ancestor "$BASE" "$FORK"; }; then
+    BASE_REF="${REF#refs/heads/}"
+    BASE_REF="${BASE_REF#refs/remotes/}"
+    BASE="$FORK"
+  fi
+done
 ```
 
 Abort with a one-line reason if:
@@ -112,7 +124,7 @@ the patch, the file reads and the tool output disagree:
 
 ```bash
 TREE_STATE="commit $(git rev-parse --short "$TARGET")"
-DIRTY="$(git status --porcelain --untracked-files=all -- . ":(exclude)$SCRATCH_DIR" | wc -l | tr -d ' ')"
+DIRTY="$(git status --porcelain --untracked-files=all -- ":/" ":(exclude)$SCRATCH_DIR" | wc -l | tr -d ' ')"
 if [ "$DIRTY" -gt 0 ]; then
   TREE_STATE="$TREE_STATE; $DIRTY uncommitted file(s) left out"
 fi
@@ -127,6 +139,11 @@ report run against the base reads the working tree, so it does count them. Pass
 
 Parse the arguments into `TARGETS`. A directory expands to every source file
 under it ({{targetGlobs}} where relevant) and sets `MODULE_TARGET`.
+
+Write every target as a path from the repository root, the way `git diff` names
+files in diff mode, since the prepass reads the list from there. A path typed
+in a subfolder takes the prefix `git rev-parse --show-prefix` prints, which is
+empty at the root.
 
 Abort if: a path does not exist (name it); `TARGETS` is empty after expansion;
 `TARGETS` is over 40 files — list what was found and ask the user to narrow.
@@ -151,7 +168,7 @@ The prepass does it with one `git diff` rather than one per file:
 
 ```bash
 PATCH_DIR="$SCRATCH_DIR/_patch/$BRANCH_LEAF"
-npx --no-install skills prepass split --base "$BASE" --target "$TARGET" --out "$PATCH_DIR"
+npx --no-install skills prepass split --base "$BASE" --target "$TARGET" --out "$PWD/$PATCH_DIR"
 ```
 
 It prints one line of JSON:
@@ -177,14 +194,15 @@ this run's. Then write the file list, launch, and **do not wait**:
 rm -f "$SCRATCH_DIR/_prepass.done.json"
 find "$SCRATCH_DIR" -maxdepth 1 -name '_*.tmp.*' -delete
 
-# CHANGED_FILES in diff mode, TARGETS in target mode
-printf '%s\n' "${FILES[@]}" > "$SCRATCH_DIR/_files.tmp.txt"
+cat > "$SCRATCH_DIR/_files.tmp.txt" <<'EOF'
+<CHANGED_FILES in diff mode, TARGETS in target mode, written out one per line>
+EOF
 
-npx --no-install skills prepass tools --scratch "$SCRATCH_DIR" --files-from "$SCRATCH_DIR/_files.tmp.txt" ${BASE:+--base "$BASE"}
+npx --no-install skills prepass tools --scratch "$PWD/$SCRATCH_DIR" --files-from "$PWD/$SCRATCH_DIR/_files.tmp.txt" --base "$BASE"
 ```
 
-Run that line as it is in both modes: `--base` goes in only when `BASE` is
-set, which it never is in target mode. In diff mode it lets a dead-code check
+Run that line as it is in both modes. `BASE` is never set in target mode, and
+an empty `--base` counts as none. In diff mode it lets a dead-code check
 report what the branch newly left dead anywhere in the repository, not only in
 the files it touched. A file the diff deleted is dropped from the list before
 any tool sees it.
@@ -373,7 +391,7 @@ files out.
 In PR mode add the review URL and `Pending — not submitted.` When the user
 later says to submit, ask which event — see `{{rulesDir}}/pr-reviews.md`.
 {{/githubReview}}
-If `result.stats.findings === 0`, lead with
+If `result.stats.findings === 0` and `result.stats.coverage === 0`, lead with
 `Clean — every finding was refuted under verification.` and say what was
 checked.
 

@@ -95,6 +95,20 @@ describe('the expected stack', () => {
     assert.equal(target.expectedUrl, 'http://127.0.0.1:56321');
     assert.equal(target.projectId, 'demoproject-wt2');
   });
+
+  test('reads the api port under a header with a comment or inner spaces', () => {
+    for (const header of ['[api] # REST API', '[ api ]']) {
+      const root = makeTree({ slot: 1 });
+      write(
+        join(root, '.wt-supabase', 'supabase', 'config.toml'),
+        `project_id = "demoproject-wt1"\n\n${header}\nport = 55321\n`,
+      );
+
+      const target = resolveSupabaseTarget({ root });
+
+      assert.equal(target.expectedUrl, 'http://127.0.0.1:55321', header);
+    }
+  });
 });
 
 describe('resolving the url and key', () => {
@@ -131,6 +145,22 @@ describe('resolving the url and key', () => {
 
     assert.equal(target.url, 'http://127.0.0.1:56321');
     assert.match(target.urlSource, /apps\/main\/\.env\.local/);
+  });
+
+  test('reads an env file the way dotenv does', () => {
+    for (const envLocal of [
+      'NEXT_PUBLIC_SUPABASE_URL = http://127.0.0.1:54321\n',
+      'export NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321\n',
+      'NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:56321\nNEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321\n',
+      'NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 # this tree\n',
+      'NEXT_PUBLIC_SUPABASE_URL="http://127.0.0.1:54321" # "old"\n',
+      "NEXT_PUBLIC_SUPABASE_URL='http://127.0.0.1:54321' # it's\n",
+    ]) {
+      const root = makeTree({ slot: 2, envLocal });
+      const target = resolveSupabaseTarget({ root });
+
+      assert.equal(target.url, 'http://127.0.0.1:54321', envLocal);
+    }
   });
 
   test('reads a caller-supplied env file first', () => {

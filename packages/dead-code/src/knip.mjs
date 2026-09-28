@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { childEnv } from './git.mjs';
 import { withPrefix } from './project.mjs';
 
 const HINTS_REPORTER = join(
@@ -83,7 +84,10 @@ export function runKnip(cwd, args) {
   return new Promise((resolve) => {
     const out = [];
     const err = [];
-    const child = spawn(process.execPath, [knipBin(), ...args], { cwd });
+    const child = spawn(process.execPath, [knipBin(), ...args], {
+      cwd,
+      env: childEnv(),
+    });
     children.add(child);
 
     child.stdout.on('data', (chunk) => out.push(chunk));

@@ -6,11 +6,12 @@
 // working tree and compares it against a real commit.
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   changedSinceCommit,
@@ -18,6 +19,13 @@ import {
   summarise,
   unreported,
 } from '../src/watch.mjs';
+
+const BIN = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'bin',
+  'terse-watch.mjs',
+);
 
 const CLEAN = [
   '// ============================================================================',
@@ -87,6 +95,15 @@ describe('changedSinceCommit', () => {
     assert.deepEqual(changedSinceCommit(root).sort(), ['b.ts']);
   });
 
+  test('sees a file whose name holds a non-ASCII character', () => {
+    const root = fixture();
+    writeFileSync(join(root, 'naïve.ts'), 'export const b = 1;\n');
+    writeFileSync(join(root, 'a.ts'), `${CLEAN}\n// A change.\n`);
+    git(root, 'mv', 'a.ts', 'café.ts');
+
+    assert.deepEqual(changedSinceCommit(root).sort(), ['café.ts', 'naïve.ts']);
+  });
+
   test('ignores a file the contract does not govern', () => {
     const root = fixture();
     writeFileSync(join(root, 'notes.md'), '# notes\n');
@@ -104,6 +121,14 @@ describe('unreported', () => {
 
     assert.equal(found.length, 3);
     assert.match(found[0], /^a\.ts:\d+ {2}\[no-/);
+  });
+
+  test('reports a violation when the user forces git to colour its output', () => {
+    const root = fixture();
+    git(root, 'config', 'color.ui', 'always');
+    append(root, '// We previously did this so that it worked.');
+
+    assert.equal(unreported(root, 'session-a').length, 3);
   });
 
   test('reports each violation once, not on every command', () => {
@@ -126,12 +151,56 @@ describe('unreported', () => {
     assert.match(second[0], /todo-form/);
   });
 
+  test("reports a later violation sharing the first one's message", () => {
+    const root = fixture();
+    append(root, 'function a() {}');
+
+    const first = unreported(root, 'session-a');
+    append(root, 'function a() {}\nfunction b() {}');
+    const second = unreported(root, 'session-a');
+
+    assert.equal(first.length, 1);
+    assert.equal(second.length, 1);
+    assert.match(second[0], /^a\.ts:18 {2}\[exported-jsdoc\]/);
+  });
+
+  test('reports two identical violations written at once', () => {
+    const root = fixture();
+    append(root, '// We do this.\nconst x = 1;\n// We do this.');
+
+    const found = unreported(root, 'session-a');
+
+    assert.equal(found.filter((l) => l.includes('no-person')).length, 2);
+  });
+
+  test('reports a violation again once it is fixed and written back', () => {
+    const root = fixture();
+    append(root, '// We previously did this.');
+    assert.equal(unreported(root, 'session-a').length, 2);
+
+    writeFileSync(join(root, 'a.ts'), CLEAN);
+    assert.deepEqual(unreported(root, 'session-a'), []);
+
+    append(root, '// We previously did this.');
+    assert.equal(unreported(root, 'session-a').length, 2);
+  });
+
   test('keeps one session from silencing another', () => {
     const root = fixture();
     append(root, '// We previously did this.');
 
     assert.equal(unreported(root, 'session-a').length, 2);
     assert.equal(unreported(root, 'session-b').length, 2);
+  });
+
+  test('reports from a linked worktree, where .git is a file', () => {
+    const main = fixture();
+    const linked = `${main}-linked`;
+    git(main, 'worktree', 'add', '-q', '-b', 'side', linked);
+    append(linked, '// We previously did this so that it worked.');
+
+    assert.equal(unreported(linked, 'session-a').length, 3);
+    assert.deepEqual(unreported(linked, 'session-a'), []);
   });
 
   test('says nothing about a clean tree', () => {
@@ -148,6 +217,21 @@ describe('unreported', () => {
       found.some((l) => l.includes('b.ts') && l.includes('file-header')),
       true,
     );
+  });
+});
+
+describe('terse-watch', () => {
+  test('exits cleanly when the config is malformed', () => {
+    const root = fixture();
+    writeFileSync(join(root, '.devkit', 'terse.json'), '{bad');
+
+    const { status } = spawnSync(process.execPath, [BIN], {
+      cwd: root,
+      input: '{}',
+      encoding: 'utf8',
+    });
+
+    assert.equal(status, 0);
   });
 });
 

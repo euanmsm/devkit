@@ -146,7 +146,10 @@ export function generatedOnDisk(root, config = readConfig(root)) {
     if (/\.ya?ml$/.test(entry)) candidates.push(join(WORKFLOWS_DIR, entry));
   }
 
-  return candidates.filter((path) => isGenerated(join(root, path)));
+  // agentsDir and rulesDir may name the same folder.
+  return [...new Set(candidates)].filter((path) =>
+    isGenerated(join(root, path)),
+  );
 }
 
 /**
@@ -167,13 +170,25 @@ export function isGenerated(path) {
 }
 
 /**
+ * Tells whether a file on disk holds the given text, whatever its line endings.
+ *
+ * @param path - The file
+ * @param content - The text it should hold
+ * @returns True when they match once CRLF is read as LF
+ */
+export function holds(path, content) {
+  return readFileSync(path, 'utf8').replace(/\r\n/g, '\n') === content;
+}
+
+/**
  * Finds the line sync puts its marker on: the first, or the first after markdown frontmatter.
  *
  * @param content - The file's text
  * @returns That line, empty when there is none
  */
 function markerLine(content) {
-  const lines = content.split('\n');
+  // A checkout with core.autocrlf turns every line ending into CRLF.
+  const lines = content.split(/\r?\n/);
   if (lines[0] !== '---') return lines[0];
 
   const close = lines.indexOf('---', 1);
@@ -225,10 +240,7 @@ export async function sync(root, { force = false } = {}) {
   for (const { path, content, seed } of files) {
     const target = join(root, path);
 
-    if (
-      existsSync(target) &&
-      (seed || readFileSync(target, 'utf8') === content)
-    ) {
+    if (existsSync(target) && (seed || holds(target, content))) {
       result.unchanged.push(path);
       continue;
     }
