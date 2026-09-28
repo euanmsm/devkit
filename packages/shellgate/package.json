@@ -1,6 +1,6 @@
 {
   "name": "@euanmsm/shellgate",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Claude Code PreToolUse hook that blocks Bash commands which edit repository files, leaving Edit and Write as the only way in",
   "type": "module",
   "license": "MIT",
@@ -23,6 +23,6 @@
     "node": ">=22.11"
   },
   "dependencies": {
-    "@euanmsm/devkit-core": "0.1.0"
+    "@euanmsm/devkit-core": "0.1.1"
   }
 }
