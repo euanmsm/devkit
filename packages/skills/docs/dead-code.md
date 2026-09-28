@@ -130,7 +130,11 @@ before refuting one as pre-existing. See
 
 ## Options
 
-None. The skill uses the shared `skillsDir` and `baseBranch` settings.
+| Option      | Default | What it is                                                                                     |
+| ----------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `typecheck` | none    | The command run after a deletion. Without it, the skill says to run the repository's typecheck |
+
+The skill also uses the shared `skillsDir` and `baseBranch` settings.
 
 ## Files it writes
 

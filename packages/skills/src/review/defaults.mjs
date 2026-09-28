@@ -253,6 +253,11 @@ export const DEFAULT_PROMPTS = {
     'the corresponding test files at their conventional locations',
   coverageExamples:
     '"no test for the error branch of createInvoice", "parseDate has no test for an empty string"',
+  coverageArtifacts: 'tests',
+  coverageSubject: 'symbol',
+  coverageFile: 'production file',
+  coverageDetail:
+    'whether the file is absent or incomplete, and which convention requires it',
   coverageSeverity:
     'an untested error path on a write is high, a missing test for a formatting helper is low',
   whyItMatters:

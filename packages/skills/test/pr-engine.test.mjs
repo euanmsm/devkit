@@ -23,7 +23,7 @@ const unitNames = (call) => promptUnits(call.prompt).map((unit) => unit.name);
 
 describe('pr workflow — what runs', () => {
   it('writes only a summary when no section is touched', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { result, calls } = await runWorkflow(source, prArgs({}), {
       reply: prReplies(),
     });
@@ -39,7 +39,7 @@ describe('pr workflow — what runs', () => {
   });
 
   it('runs every stage for a branch touching the backend and frontend', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(
       source,
       prArgs({ backend: true, frontend: true }),
@@ -72,7 +72,7 @@ describe('pr workflow — what runs', () => {
   });
 
   it('accepts args handed over as a JSON string', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { result } = await runWorkflow(
       source,
       JSON.stringify(prArgs({ backend: true })),
@@ -83,7 +83,7 @@ describe('pr workflow — what runs', () => {
   });
 
   it('uses Opus for judgement and Sonnet for the narrow checks', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(
       source,
       prArgs({ backend: true, frontend: true }, { storyCount: 1 }),
@@ -109,7 +109,7 @@ describe('pr workflow — what runs', () => {
   });
 
   it('skips the human inventory and draft when the pack finds nothing a person could notice', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { result, calls } = await runWorkflow(
       source,
       prArgs({ backend: true, frontend: true }),
@@ -120,12 +120,12 @@ describe('pr workflow — what runs', () => {
     assert.ok(!labels(calls).includes('draft:frontend'));
     assert.match(
       result.checklist,
-      /## Human Frontend Checks\n\n_Nothing a signed-in user could notice changed on this branch._/,
+      /## Human Browser Checks\n\n_Nothing a signed-in member could notice changed on this branch._/,
     );
   });
 
   it('drops the cross-cutting inventory under its experiment', async () => {
-    const source = await prWorkflow('curricular', {
+    const source = await prWorkflow('webapp', {
       experiments: { dropCrossCutting: true },
     });
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
@@ -137,9 +137,9 @@ describe('pr workflow — what runs', () => {
   });
 
   it('runs Storybook only when the config has it and the branch has stories', async () => {
-    const curricular = await prWorkflow('curricular');
+    const webapp = await prWorkflow('webapp');
     const withStories = await runWorkflow(
-      curricular,
+      webapp,
       prArgs({ frontend: true }, { storyCount: 2 }),
       { reply: prReplies({ stories: 2 }) },
     );
@@ -149,13 +149,9 @@ describe('pr workflow — what runs', () => {
     );
     assert.equal(withStories.result.stats.storybookItems, 2);
 
-    const noStories = await runWorkflow(
-      curricular,
-      prArgs({ frontend: true }),
-      {
-        reply: prReplies(),
-      },
-    );
+    const noStories = await runWorkflow(webapp, prArgs({ frontend: true }), {
+      reply: prReplies(),
+    });
     assert.ok(!labels(noStories.calls).includes('draft:storybook'));
 
     const sales = await prWorkflow('sales');
@@ -170,7 +166,7 @@ describe('pr workflow — what runs', () => {
 
 describe('pr workflow — the backend drafters', () => {
   it('splits backend entries across drafters, each entry exactly once', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls, result } = await runWorkflow(
       source,
       prArgs({ backend: true }),
@@ -199,7 +195,7 @@ describe('pr workflow — the backend drafters', () => {
   });
 
   it('keeps one drafter, with no split note, for a small backend', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({ backend: 3 }),
     });
@@ -210,7 +206,7 @@ describe('pr workflow — the backend drafters', () => {
   });
 
   it('keeps a file’s entries with the same drafter where it can', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({ backend: 12, files: 2 }),
     });
@@ -228,7 +224,7 @@ describe('pr workflow — the backend drafters', () => {
 
 describe('pr workflow — verification', () => {
   it('turns a failed coverage claim into a verified backend step', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { result, calls } = await runWorkflow(
       source,
       prArgs({ backend: true }),
@@ -250,14 +246,14 @@ describe('pr workflow — verification', () => {
   });
 
   it('starts a conversion while other steps are still being verified', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const slow = 'verify:backend:Check be-2';
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({
         claims: ['be-1'],
         failClaims: ['be-1'],
         verify: (label) =>
-          label.startsWith(slow) && !label.endsWith(':r3')
+          label.startsWith(slow) && !label.endsWith(':r2')
             ? {
                 verdict: 'FAIL',
                 findings: 'wrong port',
@@ -269,8 +265,8 @@ describe('pr workflow — verification', () => {
     });
 
     const convert = find(calls, 'convert:be-1');
-    const lastSlowRound = find(calls, 'verify:backend:r3');
-    assert.ok(lastSlowRound, 'the slow step took three rounds');
+    const lastSlowRound = find(calls, 'verify:backend:r2');
+    assert.ok(lastSlowRound, 'the slow step took two rounds');
     assert.ok(
       convert.started < lastSlowRound.ended,
       'the conversion did not wait for the slow step',
@@ -278,7 +274,7 @@ describe('pr workflow — verification', () => {
   });
 
   it('verifies the human section without waiting for the backend draft', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(
       source,
       prArgs({ backend: true, frontend: true }),
@@ -293,7 +289,7 @@ describe('pr workflow — verification', () => {
   });
 
   it('starts the summary and surfaces before the context pack', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(
       source,
       prArgs({ backend: true, frontend: true }),
@@ -309,7 +305,7 @@ describe('pr workflow — verification', () => {
   });
 
   it('publishes a step with no accurate version as a gap', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { result, logs } = await runWorkflow(
       source,
       prArgs({ backend: true }),
@@ -336,8 +332,8 @@ describe('pr workflow — verification', () => {
     assert.ok(logs.some((line) => line.startsWith('Deleted')));
   });
 
-  it('leaves out a step still failing after four rounds, as a gap', async () => {
-    const source = await prWorkflow('curricular');
+  it('leaves out a step still failing after two rounds, as a gap', async () => {
+    const source = await prWorkflow('webapp');
     const { result, calls, logs } = await runWorkflow(
       source,
       prArgs({ backend: true }),
@@ -356,7 +352,7 @@ describe('pr workflow — verification', () => {
       },
     );
 
-    // Rounds 2 to 4 re-check only the failing step.
+    // Round 2 re-checks only the failing step.
     assert.deepEqual(
       calls
         .filter((c) => c.label.startsWith('verify:backend'))
@@ -364,8 +360,6 @@ describe('pr workflow — verification', () => {
       [
         ['verify:backend', 2],
         ['verify:backend:r2', 1],
-        ['verify:backend:r3', 1],
-        ['verify:backend:r4', 1],
       ],
     );
     assert.deepEqual(result.unresolved, ['backend:Check be-1']);
@@ -374,17 +368,17 @@ describe('pr workflow — verification', () => {
     assert.doesNotMatch(result.checklist, /Backend \d — Check be-1/);
     assert.match(
       result.checklist,
-      /- backend:Check be-1 — failed verification 4 times — still wrong/,
+      /- backend:Check be-1 — failed verification 2 times — still wrong/,
     );
     assert.ok(
       logs.includes(
-        'Left out, still failing after 4 rounds: backend:Check be-1',
+        'Left out, still failing after 2 rounds: backend:Check be-1',
       ),
     );
   });
 
   it('fixes a step’s format with Sonnet before an Opus round sees it', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(source, prArgs({ frontend: true }), {
       reply: prReplies({ badFormat: true }),
     });
@@ -400,7 +394,7 @@ describe('pr workflow — verification', () => {
   });
 
   it('leaves a well-formed step alone', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(
       source,
       prArgs({ backend: true, frontend: true }),
@@ -413,7 +407,7 @@ describe('pr workflow — verification', () => {
   });
 
   it('rechecks rewrites narrowly on Sonnet under its experiment', async () => {
-    const source = await prWorkflow('curricular', {
+    const source = await prWorkflow('webapp', {
       experiments: { narrowRounds: true },
     });
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
@@ -440,7 +434,7 @@ describe('pr workflow — verification', () => {
   });
 
   it('rechecks rewrites narrowly on Opus without the experiment', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({
         backend: 1,
@@ -464,7 +458,7 @@ describe('pr workflow — verification', () => {
 
 describe('pr workflow — batched verification', () => {
   it('verifies a group up to eight units to a checker, logging the count first', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls, logs, result } = await runWorkflow(
       source,
       prArgs({ frontend: true }),
@@ -501,7 +495,7 @@ describe('pr workflow — batched verification', () => {
   });
 
   it('asks each checker for a verdict per unit id, under a sound schema', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({ backend: 3 }),
     });
@@ -521,7 +515,7 @@ describe('pr workflow — batched verification', () => {
   });
 
   it('uses a handful of checkers for a forty-step checklist, not one per step', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls, result } = await runWorkflow(
       source,
       prArgs({ backend: true }),
@@ -538,7 +532,7 @@ describe('pr workflow — batched verification', () => {
   });
 
   it('keeps Storybook items in their own checker on Sonnet, rendering the verified text', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls, result } = await runWorkflow(
       source,
       prArgs({ frontend: true }, { storyCount: 1 }),
@@ -571,7 +565,7 @@ describe('pr workflow — batched verification', () => {
   });
 
   it('takes a step’s priority and title from its verified rewrite', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { result } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({
         backend: 1,
@@ -600,8 +594,8 @@ describe('pr workflow — batched verification', () => {
 });
 
 describe('pr workflow — the assembled checklist', () => {
-  it('lays out the Curricular checklist', async () => {
-    const source = await prWorkflow('curricular');
+  it('lays out the web app checklist', async () => {
+    const source = await prWorkflow('webapp');
     const { result } = await runWorkflow(
       source,
       prArgs({ backend: true, frontend: true }),
@@ -612,8 +606,8 @@ describe('pr workflow — the assembled checklist', () => {
     const order = [
       '```bash\nnpm run dev\n```',
       '## Agent-Runnable Backend Checks',
-      '## Human Frontend Checks',
-      "**When you're finished**, stop the stack: `npm run supabase:stop`",
+      '## Human Browser Checks',
+      "**When you're finished**, stop the stack: `npm run db:stop`",
       '**Not covered by these checks**',
       '### Local CI',
     ].map((part) => text.indexOf(part));
@@ -647,7 +641,7 @@ describe('pr workflow — the assembled checklist', () => {
     );
     assert.match(
       text,
-      /Storybook tests are dispatch-only: `gh workflow run pr-main\.yml --ref feature\/thing`\./,
+      /Storybook tests run on demand: `gh workflow run storybook\.yml --ref feature\/thing`\./,
     );
     assert.equal(result.stats.steps, 6);
   });
@@ -673,7 +667,7 @@ describe('pr workflow — the assembled checklist', () => {
   });
 
   it('puts a visible entry in the backend section when no human section is touched', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const replies = prReplies({ backend: 1 });
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: (label, prompt) =>
@@ -685,7 +679,7 @@ describe('pr workflow — the assembled checklist', () => {
                   behaviour: 'a new banner',
                   where: 'src/ui/banner.tsx:1',
                   reachable: 'load',
-                  actors: 'teacher',
+                  actors: 'member',
                   visible: true,
                   section: 'frontend',
                 },
@@ -742,7 +736,7 @@ describe('pr workflow — config reaches the prompts', () => {
   });
 
   it('leaves backend-only boot variables out when there is no backend section', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(source, prArgs({ frontend: true }), {
       reply: prReplies(),
     });
@@ -750,11 +744,11 @@ describe('pr workflow — config reaches the prompts', () => {
 
     assert.match(boot, /\\\$PORT — the dev server port/);
     assert.doesNotMatch(boot, /TOKEN/);
-    assert.match(boot, /supabase:reset/);
+    assert.match(boot, /db:reset/);
   });
 
   it('tells every drafter and verifier never to run anything', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(
       source,
       prArgs({ backend: true, frontend: true }),
@@ -778,7 +772,7 @@ describe('pr workflow — config reaches the prompts', () => {
 
 describe('pr workflow — edges', () => {
   it('numbers each audit angle’s entries apart, so their ids never collide', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies(),
     });
@@ -791,7 +785,7 @@ describe('pr workflow — edges', () => {
   });
 
   it('drafts a section the pack missed when a visible entry lands in it', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const replies = prReplies({ visible: [] });
     const { calls, result } = await runWorkflow(
       source,
@@ -806,7 +800,7 @@ describe('pr workflow — edges', () => {
                     behaviour: 'a new banner',
                     where: 'src/ui/banner.tsx:1',
                     reachable: 'load',
-                    actors: 'teacher',
+                    actors: 'member',
                     visible: true,
                     section: 'frontend',
                   },
@@ -822,11 +816,11 @@ describe('pr workflow — edges', () => {
       ['aud-hunks-1'],
     );
     assert.match(result.checklist, /Frontend 1 — See aud-hunks-1/);
-    assert.doesNotMatch(result.checklist, /_Nothing a signed-in user/);
+    assert.doesNotMatch(result.checklist, /_Nothing a signed-in member/);
   });
 
   it('lists entries no section drafts as gaps when the backend section is off', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const replies = prReplies();
     const { result, logs } = await runWorkflow(
       source,
@@ -844,7 +838,7 @@ describe('pr workflow — edges', () => {
   });
 
   it('stops when the context pack fails', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const replies = prReplies();
 
     await assert.rejects(
@@ -857,7 +851,7 @@ describe('pr workflow — edges', () => {
   });
 
   it('leaves out a unit its checker gave no verdict for, as a gap', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { result, logs } = await runWorkflow(
       source,
       prArgs({ backend: true }),
@@ -885,7 +879,7 @@ describe('pr workflow — edges', () => {
   });
 
   it('leaves out every unit of a checker that returned nothing', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const replies = prReplies();
     const { result } = await runWorkflow(source, prArgs({ frontend: true }), {
       reply: (label, prompt) =>
@@ -896,7 +890,7 @@ describe('pr workflow — edges', () => {
       'frontend:See frontend-1',
       'frontend:See frontend-2',
     ]);
-    assert.doesNotMatch(result.checklist, /## Human Frontend Checks/);
+    assert.doesNotMatch(result.checklist, /## Human Browser Checks/);
     assert.match(
       result.checklist,
       /- frontend:See frontend-2 — never verified — the checker returned nothing/,
@@ -904,7 +898,7 @@ describe('pr workflow — edges', () => {
   });
 
   it('publishes a changed file no surface could be traced to as a gap', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const replies = prReplies();
     const { result } = await runWorkflow(source, prArgs({ frontend: true }), {
       reply: (label, prompt) =>
@@ -920,7 +914,7 @@ describe('pr workflow — edges', () => {
   });
 
   it('points agents at the per-file patches for a large diff', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(
       source,
       prArgs({ backend: true }, { largeDiff: true }),
@@ -940,7 +934,7 @@ describe('pr workflow — edges', () => {
   });
 
   it('keeps a boot block its checker deletes, under a warning and not as a gap', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { result } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({
         verify: (label) =>
@@ -959,8 +953,8 @@ describe('pr workflow — edges', () => {
     assert.deepEqual(result.unresolved, []);
   });
 
-  it('warns on a boot block still failing after four rounds, keeping the last rewrite', async () => {
-    const source = await prWorkflow('curricular');
+  it('warns on a boot block still failing after two rounds, keeping the last rewrite', async () => {
+    const source = await prWorkflow('webapp');
     const { result, calls } = await runWorkflow(
       source,
       prArgs({ backend: true }),
@@ -978,17 +972,17 @@ describe('pr workflow — edges', () => {
       },
     );
 
-    assert.ok(find(calls, 'verify:boot:r4'));
+    assert.ok(find(calls, 'verify:boot:r2'));
     assert.match(
       result.checklist,
-      /^> \[!WARNING\]\n> \*\*This boot block did not pass verification\*\* — it still failed after 4 rounds: still no port\./,
+      /^> \[!WARNING\]\n> \*\*This boot block did not pass verification\*\* — it still failed after 2 rounds: still no port\./,
     );
     assert.match(result.checklist, /npm run dev -- --port 3000/);
     assert.ok(!result.gaps.some((gap) => gap.gap === 'boot'));
   });
 
   it('uses the verified rewrite of the boot block', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { result } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({
         verify: (label) =>
@@ -996,19 +990,17 @@ describe('pr workflow — edges', () => {
             ? {
                 verdict: 'FAIL',
                 findings: 'reset missing',
-                rewrite: '```bash\nnpm run supabase:reset\n```',
+                rewrite: '```bash\nnpm run db:reset\n```',
               }
             : { verdict: 'PASS', findings: '' },
       }),
     });
 
-    assert.ok(
-      result.checklist.startsWith('```bash\nnpm run supabase:reset\n```'),
-    );
+    assert.ok(result.checklist.startsWith('```bash\nnpm run db:reset\n```'));
   });
 
   it('leaves out a human section that ended with no steps', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { result } = await runWorkflow(source, prArgs({ frontend: true }), {
       reply: prReplies({
         verify: (label) =>
@@ -1022,7 +1014,7 @@ describe('pr workflow — edges', () => {
       }),
     });
 
-    assert.doesNotMatch(result.checklist, /## Human Frontend Checks/);
+    assert.doesNotMatch(result.checklist, /## Human Browser Checks/);
     assert.match(
       result.checklist,
       /frontend:See frontend-1 — no accurate manual version/,
@@ -1030,7 +1022,7 @@ describe('pr workflow — edges', () => {
   });
 
   it('files a visible entry under its own section when several are touched', async () => {
-    const source = await prWorkflow('curricular', {
+    const source = await prWorkflow('webapp', {
       layers: [
         { key: 'api', title: 'API', paths: ['src/api/'], section: 'backend' },
         { key: 'web', title: 'Web', paths: ['src/web/'], section: 'web' },
@@ -1089,7 +1081,7 @@ describe('pr workflow — edges', () => {
   });
 
   it('writes no stop line or note when the config has none', async () => {
-    const source = await prWorkflow('curricular', {
+    const source = await prWorkflow('webapp', {
       boot: {},
       localCiNote: '',
     });
@@ -1100,12 +1092,12 @@ describe('pr workflow — edges', () => {
     assert.doesNotMatch(result.checklist, /When you're finished/);
     assert.match(
       result.checklist,
-      /### Local CI\n\n- \[ \] Review agents \(run locally before merge\)\n- \[ \] Full test suite passes \(unit, integration, API, e2e — run locally\)$/,
+      /### Local CI\n\n- \[ \] Review agents \(run locally before merge\)\n- \[ \] Full test suite passes \(unit, integration, e2e — run locally\)$/,
     );
   });
 
   it('says when steps carry no time estimate', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const replies = prReplies({ backend: 1 });
     const { result } = await runWorkflow(
       source,
@@ -1130,7 +1122,7 @@ describe('pr workflow — edges', () => {
 
 describe('pr workflow — format check and grouping rules', () => {
   it('names every format problem a script can see', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const replies = prReplies({ backend: 1 });
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: (label, prompt) => {
@@ -1158,7 +1150,7 @@ describe('pr workflow — format check and grouping rules', () => {
   });
 
   it('splits one file’s entries when there are more than a drafter takes', async () => {
-    const source = await prWorkflow('curricular');
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({ backend: 10, files: 1 }),
     });

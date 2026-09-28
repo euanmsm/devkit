@@ -25,9 +25,9 @@ just `comments`). Two reasons:
 
 - They hold the rules and the examples the agents match.
 - If the repository runs the [`@euanmsm/preflight`](../../preflight) hook, edits
-  to governed files are blocked until those skills are loaded. The hook's check
-  covers the whole session, so loading them once here lets every agent it spawns
-  later edit freely.
+  to governed files are blocked until those skills are loaded. The hook checks
+  each agent's own calls, so loading them here covers only the edits the skill
+  makes itself on a small change. Each agent it spawns loads its own.
 
 ### 2. Works out which files to clean
 
@@ -82,7 +82,9 @@ the copy, nothing more. The agent already has the comment skills loaded.
 - Runs the scanner again over every file.
 - Diffs every file against the copy made before editing, to confirm every
   changed line is a comment.
-- If `typecheck` is set, runs it — a broken block comment can swallow code.
+- If `typecheck` is set, runs it — a broken block comment can swallow code. With
+  `typecheckPaths`, it runs only when a changed file sits under one of those
+  folders.
 
 ### 6. Reports
 
@@ -94,15 +96,20 @@ suggests a commit message and stops. It never stages or commits.
 
 Installing `clean-comments` also writes an agent,
 `<agentsDir>/comments-specialist.md`. It runs on Sonnet with Bash, Read, Edit,
-Grep and Glob, and has the `preloadSkills` loaded before it starts. Only
+Grep, Glob and Skill. Its frontmatter lists the `preloadSkills`, which puts them
+in its context, but a preflight gate does not count those as loaded. Only
 `/clean-comments` spawns it, and its whole job is one batch of files:
 
+1. Load each of the `preloadSkills` with the Skill tool. When an edit is still
+   blocked, load the skills the block message names — a path rule can ask for
+   more, such as a frontend skill for a `.tsx` file — and retry. It reads them
+   to satisfy the gate but still changes only comments.
 1. Re-run the scanner on its files.
-2. Fix each mechanical finding.
-3. Read every remaining `//` comment and delete the ones that add nothing.
-4. Re-run the scanner, which must report zero, then diff each file against the
+1. Fix each mechanical finding.
+1. Read every remaining `//` comment and delete the ones that add nothing.
+1. Re-run the scanner, which must report zero, then diff each file against the
    copy it was given and confirm only comments changed.
-5. Report back.
+1. Report back.
 
 It is told never to touch files outside its batch, never to change code, and
 never to get round a blocked edit with `sed` or a shell command.
@@ -112,10 +119,11 @@ never to get round a blocked edit with `sed` or a shell command.
 Under `skills["clean-comments"]` in `.devkit/skills.json`. It also uses the
 shared `baseBranch` and `agentsDir` settings.
 
-| Option          | Default        | What it does                                                                                                   |
-| --------------- | -------------- | -------------------------------------------------------------------------------------------------------------- |
-| `preloadSkills` | `["comments"]` | Skills loaded at the start, and preloaded into the agent. List every skill a preflight gate requires for edits |
-| `typecheck`     | none           | A command run after the cleanup to catch a comment that broke the code. Without it, that step is left out      |
+| Option           | Default        | What it does                                                                                                   |
+| ---------------- | -------------- | -------------------------------------------------------------------------------------------------------------- |
+| `preloadSkills`  | `["comments"]` | Skills loaded at the start, and preloaded into the agent. List every skill a preflight gate requires for edits |
+| `typecheck`      | none           | A command run after the cleanup to catch a comment that broke the code. Without it, that step is left out      |
+| `typecheckPaths` | none           | Path prefixes. When given, the typecheck runs only when a changed file sits under one of them                  |
 
 ### Where the comment rules come from
 

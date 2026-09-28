@@ -35,7 +35,7 @@ const DEEP = 'opus';
 const LIGHT = 'sonnet';
 
 /** Rounds of verify-and-rewrite a unit gets before it is reported unresolved. */
-const MAX_VERIFY_ROUNDS = 4;
+const MAX_VERIFY_ROUNDS = 2;
 
 /** Units one checker verifies at once, the same cap code-review gives its verifiers. */
 const PER_VERIFIER_CAP = 8;
@@ -428,8 +428,7 @@ function inventoryFoci(input, surfacesByKey, visibleSections) {
     foci.push({ name: 'backend', prefix: 'be', brief: BACKEND.scope });
   }
 
-  // A section with nothing to notice gets no slice; an audit or cross-cutting
-  // entry can still switch its draft on.
+  // A section with nothing to notice gets no slice, though an audit entry can still draft it.
   for (const key of HUMAN_KEYS.filter(
     (k) => input.sections[k] && visibleSections.has(k),
   )) {
@@ -942,10 +941,7 @@ function batchUnits(units) {
 }
 
 /**
- * Verifies one group of units to a fixed point, several to a checker.
- *
- * Round 1 runs the full checks. Rounds 2 to 4 re-check only the units that
- * failed with a rewrite, in fresh batches, with the narrower recheck prompt.
+ * Verifies one group of units, several to a checker, then re-checks each failed rewrite.
  *
  * @param input - Workflow args plus derived paths
  * @param group - The group's name, used in the log and the checker labels
@@ -1494,8 +1490,7 @@ async function draftAndVerifyHuman(key) {
   return { key, section, verified };
 }
 
-// A section is drafted when the explorer saw a change in it or an entry lands
-// in it, so no visible entry is routed to a section nobody drafts.
+// A section is drafted when the explorer saw a change in it or an entry lands in it.
 const humanKeys = HUMAN_KEYS.filter(
   (key) =>
     input.sections[key] &&

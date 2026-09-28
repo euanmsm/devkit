@@ -96,7 +96,6 @@ export async function prPrepass(
     config.layers,
   );
   const tests = testsBeside(changed, tracked, config.tests);
-  const stories = config.storybook ? findStories(root, changed, tracked) : [];
   const importers = findImporters(
     root,
     changed.filter(
@@ -104,6 +103,12 @@ export async function prPrepass(
     ),
     rg,
   );
+  const stories = config.storybook
+    ? findStories(root, changed, tracked, {
+        importers,
+        match: config.storyMatch,
+      })
+    : [];
   const readFiles = tracked.filter((file) =>
     config.boot.read.some((glob) => globToRegExp(glob).test(file)),
   );
@@ -157,17 +162,29 @@ export async function prPrepass(
  * @param root - The repository root
  * @param branch - The current branch
  * @returns The parent branch, or null when the branch is in no stack or at its bottom
+ * @throws When `gh stack view` fails or answers in a shape it cannot read, since guessing the base would retarget a mid-stack PR
  */
 export function stackParent(run, root, branch) {
+  const override = 'pass --base <branch> to name the base yourself';
   let stack;
 
   try {
     stack = JSON.parse(run('gh', ['stack', 'view', '--json'], root));
-  } catch {
-    return null;
+  } catch (error) {
+    const detail = String(error.stderr ?? '').trim() || error.message;
+    if (/not (in|part of) a stack/i.test(detail)) return null;
+    throw new Error(
+      `Could not read the stack with \`gh stack view --json\` (${detail.split('\n')[0]}); ${override}.`,
+    );
   }
 
-  const list = Array.isArray(stack) ? stack : (stack?.branches ?? []);
+  const list = Array.isArray(stack) ? stack : stack?.branches;
+  if (!Array.isArray(list)) {
+    throw new Error(
+      `\`gh stack view --json\` answered in a shape this package cannot read; ${override}.`,
+    );
+  }
+
   const names = list.map((entry) =>
     typeof entry === 'string' ? entry : (entry?.name ?? entry?.branch),
   );
@@ -350,9 +367,15 @@ function stemOf(file) {
  * @param root - The repository root
  * @param changed - Repo-relative changed paths
  * @param tracked - Every tracked path
+ * @param options - The `importers` from `findImporters`, null when unsearched, and `match`: `stem` for a story beside the file with its name, `imports` for a story importing it, or `both`
  * @returns One `{ storyFile, title, component }` per story
  */
-export function findStories(root, changed, tracked) {
+export function findStories(
+  root,
+  changed,
+  tracked,
+  { importers = null, match = 'both' } = {},
+) {
   const stories = new Map();
   const storyFiles = tracked.filter((file) => STORY_FILE.test(file));
 
@@ -362,11 +385,21 @@ export function findStories(root, changed, tracked) {
       continue;
     }
 
-    const dir = path.posix.dirname(file);
-    const stem = stemOf(file);
-    for (const story of storyFiles) {
-      if (path.posix.dirname(story) === dir && stemOf(story) === stem) {
-        stories.set(story, file);
+    if (match !== 'imports') {
+      const dir = path.posix.dirname(file);
+      const stem = stemOf(file);
+      for (const story of storyFiles) {
+        if (path.posix.dirname(story) === dir && stemOf(story) === stem) {
+          stories.set(story, file);
+        }
+      }
+    }
+
+    if (match !== 'stem') {
+      for (const importer of importers?.[file]?.all ?? []) {
+        if (STORY_FILE.test(importer) && !stories.has(importer)) {
+          stories.set(importer, file);
+        }
       }
     }
   }
@@ -406,7 +439,7 @@ function readStoryTitle(file) {
  * @param root - The repository root
  * @param files - Repo-relative changed code files
  * @param rg - Runs ripgrep with arguments and returns its stdout, or null when it is missing
- * @returns The importers per file, or null when ripgrep is not installed
+ * @returns Per file, the first `importers`, how many `more` there are and `all` of them, or null when ripgrep is not installed
  */
 export function findImporters(root, files, rg) {
   if (files.length === 0) return {};
@@ -459,6 +492,7 @@ export function findImporters(root, files, rg) {
         {
           importers: importers.slice(0, MAX_IMPORTERS),
           more: Math.max(0, importers.length - MAX_IMPORTERS),
+          all: importers,
         },
       ];
     }),

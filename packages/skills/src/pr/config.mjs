@@ -29,7 +29,7 @@ import {
   SUMMARY_MARKER,
 } from './defaults.mjs';
 
-/** The skill's folder and slash command, the same in every repository. */
+/** The skill's folder and slash command when `skills.json` does not name it. */
 export const SKILL_NAME = 'pr';
 
 const TOP_KEYS = [
@@ -42,6 +42,7 @@ const TOP_KEYS = [
   'boot',
   'tests',
   'storybook',
+  'storyMatch',
   'localCi',
   'localCiNote',
   'traps',
@@ -53,6 +54,7 @@ const LAYER_KEYS = ['key', 'title', 'paths', 'section'];
 const BOOT_KEYS = ['start', 'stop', 'variables', 'read'];
 const VARIABLE_KEYS = ['from', 'backendOnly'];
 const BASES = ['branch', 'stack'];
+const STORY_MATCHES = ['stem', 'imports', 'both'];
 
 /** Who acts in the system, when a repository does not say. */
 const DEFAULT_ACTORS = [
@@ -91,6 +93,7 @@ export async function loadPrConfig(root, options, shared) {
   }
 
   const resolved = resolvePrConfig(raw, {
+    name: options.name,
     skillsDir: shared.skillsDir,
     source: options.config,
     installed: installedPackages(root),
@@ -105,13 +108,13 @@ export async function loadPrConfig(root, options, shared) {
  * Lays a raw config over the defaults and validates the result.
  *
  * @param raw - The object the repository's module exports
- * @param context - The `skillsDir`, the config's `source` path for messages, and the `installed` package names
+ * @param context - The skill `name`, the `skillsDir`, the config's `source` path for messages, and the `installed` package names
  * @returns The resolved config
  * @throws When anything in the config is unknown, mistyped or inconsistent
  */
 export function resolvePrConfig(
   raw,
-  { skillsDir, source, installed = new Set() },
+  { name = SKILL_NAME, skillsDir, source, installed = new Set() },
 ) {
   const fail = (message) => {
     throw new Error(`${source}: ${message}`);
@@ -123,6 +126,11 @@ export function resolvePrConfig(
   const base = raw.base ?? 'branch';
   if (!BASES.includes(base)) fail(`base must be one of ${BASES.join(', ')}`);
 
+  const storyMatch = raw.storyMatch ?? 'both';
+  if (!STORY_MATCHES.includes(storyMatch)) {
+    fail(`storyMatch must be one of ${STORY_MATCHES.join(', ')}`);
+  }
+
   const sections = resolveSections(raw.sections, fail);
   const layers = resolveLayers(raw.layers, sections, fail);
 
@@ -133,7 +141,7 @@ export function resolvePrConfig(
   }
 
   return {
-    name: SKILL_NAME,
+    name,
     skillsDir,
     base,
     layers,
@@ -144,11 +152,12 @@ export function resolvePrConfig(
     boot: resolveBoot(raw.boot, fail),
     tests: regexList(raw.tests, 'tests', fail) ?? DEFAULT_TESTS,
     storybook: resolveStorybook(raw.storybook, installed, fail),
+    storyMatch,
     localCi: stringList(raw.localCi, 'localCi', fail) ?? DEFAULT_LOCAL_CI,
     localCiNote: optionalString(raw.localCiNote, 'localCiNote', fail) ?? '',
     traps:
       optionalString(raw.traps, 'traps', fail) ??
-      `${skillsDir}/${SKILL_NAME}/TRAPS.md`,
+      `${skillsDir}/${name}/TRAPS.md`,
     template:
       optionalString(raw.template, 'template', fail) ??
       '.github/pull_request_template.md',

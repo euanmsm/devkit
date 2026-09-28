@@ -2,9 +2,8 @@
 // Manual QA Gate Tests
 // ============================================================================
 //
-// The decisions that block a merge — ported from Curricular's gate tests — plus
-// checklists split across comments and the GitHub API half, run against a
-// fake API.
+// The decisions that block a merge, plus checklists split across comments and
+// the GitHub API half, run against a fake API.
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -12,6 +11,7 @@ import { describe, it } from 'node:test';
 import { qaGate } from '../src/pr/cli.mjs';
 import {
   CHECKLIST_MARKER,
+  canPush,
   computeStatus,
   countBoxes,
   findChecklistComments,
@@ -43,7 +43,7 @@ function checklist({ sha = OLD_SHA, banner = '', extra = '' } = {}) {
     '',
     `## Manual QA — \`${sha.slice(0, 7)}\``,
     '',
-    '- [x] **[blocking]** Sign in as a teacher',
+    '- [x] **[blocking]** Sign in as an admin',
     '    - [X] Nested step, ticked',
     '- [ ] **[if time]** Keyboard pass',
     '',
@@ -76,22 +76,35 @@ function part(part, sha, boxes = ['- [x] More', '- [ ] Even more']) {
   ].join('\n');
 }
 
-/**
- * Marks a comment as written by a repository member, as the REST API does.
- *
- * @param comment - A comment without an `author_association`
- * @returns The comment, from a member unless it names another association
- */
-const member = (comment) => ({ author_association: 'MEMBER', ...comment });
+/** Each fake user's answer from the permission API; a missing login fails the lookup. */
+const ROLES = {
+  dev: { permission: 'write', role_name: 'write' },
+  lead: { permission: 'admin', role_name: 'maintain' },
+  reader: { permission: 'read', role_name: 'triage' },
+};
 
-const main = (comments) => findChecklistComments(comments.map(member)).main;
+/** The logins the gate would trust, from `ROLES`. */
+const TRUSTED = new Set(
+  Object.keys(ROLES).filter((login) => canPush(ROLES[login])),
+);
+
+/**
+ * Marks a comment as written by someone who can push, unless it names another author.
+ *
+ * @param comment - A comment without a `user`
+ * @returns The comment, from `dev` unless it names another user
+ */
+const member = (comment) => ({ user: { login: 'dev' }, ...comment });
+
+const main = (comments) =>
+  findChecklistComments(comments.map(member), TRUSTED).main;
 
 describe('findChecklistComments', () => {
   it('returns nothing when no comment carries the marker', () => {
-    assert.deepEqual(findChecklistComments([{ id: 1, body: 'LGTM' }]), {
-      main: null,
-      parts: [],
-    });
+    assert.deepEqual(
+      findChecklistComments([{ id: 1, body: 'LGTM' }], TRUSTED),
+      { main: null, parts: [] },
+    );
   });
 
   it('picks the marked comment among unmarked ones, and the newest of two', () => {
@@ -115,7 +128,7 @@ describe('findChecklistComments', () => {
   it('survives an empty list and comments with no body', () => {
     assert.equal(main([]), null);
     assert.equal(main([{ id: 1 }]), null);
-    assert.deepEqual(findChecklistComments(undefined), {
+    assert.deepEqual(findChecklistComments(undefined, TRUSTED), {
       main: null,
       parts: [],
     });
@@ -146,15 +159,18 @@ describe('findChecklistComments', () => {
     );
   });
 
-  it('ignores a checklist or part posted by someone outside the repository', () => {
+  it('ignores a checklist or part posted by someone who cannot push', () => {
     const forged = `${CHECKLIST_MARKER}\n<!-- pr-qa:sha=${HEAD_SHA} -->\n\n- [x] done`;
-    const found = findChecklistComments([
-      { id: 1, author_association: 'MEMBER', body: checklist() },
-      { id: 2, author_association: 'OWNER', body: part(2, OLD_SHA) },
-      { id: 3, author_association: 'CONTRIBUTOR', body: forged },
-      { id: 4, author_association: 'NONE', body: part(2, HEAD_SHA) },
-      { id: 5, body: forged },
-    ]);
+    const found = findChecklistComments(
+      [
+        { id: 1, user: { login: 'dev' }, body: checklist() },
+        { id: 2, user: { login: 'lead' }, body: part(2, OLD_SHA) },
+        { id: 3, user: { login: 'reader' }, body: forged },
+        { id: 4, user: { login: 'stranger' }, body: part(2, HEAD_SHA) },
+        { id: 5, body: forged },
+      ],
+      TRUSTED,
+    );
 
     assert.equal(found.main.id, 1);
     assert.deepEqual(
@@ -166,9 +182,18 @@ describe('findChecklistComments', () => {
       'failure',
     );
     assert.equal(
-      main([{ id: 6, author_association: 'COLLABORATOR', body: forged }]).id,
+      main([{ id: 6, user: { login: 'lead' }, body: forged }]).id,
       6,
     );
+  });
+
+  it('trusts write access and above, whatever the association says', () => {
+    assert.ok(canPush({ permission: 'write', role_name: 'write' }));
+    assert.ok(canPush({ permission: 'admin', role_name: 'admin' }));
+    assert.ok(canPush({ permission: 'write', role_name: 'maintain' }));
+    assert.ok(!canPush({ permission: 'read', role_name: 'triage' }));
+    assert.ok(!canPush({ permission: 'none', role_name: 'none' }));
+    assert.ok(!canPush(null));
   });
 
   it('collects continuation parts in order, keeping the newest of each', () => {
@@ -180,6 +205,7 @@ describe('findChecklistComments', () => {
         { id: 4, body: part(2, OLD_SHA) },
         { id: 5, body: `> ${part(2, OLD_SHA)}` },
       ].map(member),
+      TRUSTED,
     );
 
     assert.equal(found.main.id, 1);
@@ -276,7 +302,7 @@ describe('resetBody', () => {
     const result = resetBody(checklist(), { headSha: HEAD_SHA, now: NOW });
 
     assert.deepEqual(countBoxes(result), { total: 5, ticked: 0, unticked: 5 });
-    assert.ok(result.includes('- [ ] **[blocking]** Sign in as a teacher'));
+    assert.ok(result.includes('- [ ] **[blocking]** Sign in as an admin'));
     assert.ok(result.includes('    - [ ] Nested step, ticked'));
   });
 
@@ -610,6 +636,12 @@ function fakeApi(comments, head = HEAD_SHA) {
     });
 
     if (path.startsWith('/repos/o/r/pulls/')) return { head: { sha: head } };
+    const who = /\/collaborators\/([^/]+)\/permission$/.exec(path);
+    if (who) {
+      const answer = ROLES[decodeURIComponent(who[1])];
+      if (!answer) throw new Error('GitHub API GET failed: 404');
+      return answer;
+    }
     if (path.includes('/comments?')) {
       const page = Number(/[?&]page=(\d+)/.exec(path)[1]);
       return store.slice((page - 1) * 100, page * 100);
@@ -731,7 +763,7 @@ describe('runGate', () => {
     assert.ok(!calls.some((call) => call.method === 'PATCH'));
   });
 
-  it('keeps a box-less checklist on its old commit and asks for a new /pr', async () => {
+  it('keeps a box-less checklist on its old commit and asks for a new run of the skill', async () => {
     const body = [
       CHECKLIST_MARKER,
       `<!-- pr-qa:sha=${OLD_SHA} -->`,
@@ -746,13 +778,14 @@ describe('runGate', () => {
       repo: 'o/r',
       prNumber: '5',
       headSha: HEAD_SHA,
+      skill: 'pull-requests',
       now: NOW,
     });
 
     assert.deepEqual(status, {
       headSha: HEAD_SHA,
       state: 'failure',
-      description: 'checklist predates def5678, re-run /pr',
+      description: 'checklist predates def5678, re-run /pull-requests',
     });
     assert.ok(!calls.some((call) => call.method === 'PATCH'));
     assert.equal(readStampedSha(comments[0].body), OLD_SHA);
@@ -780,6 +813,34 @@ describe('runGate', () => {
 
     assert.equal(status.description, 'no QA checklist — run /pr');
     assert.ok(!('target_url' in calls.at(-1).body));
+  });
+
+  it('counts a checklist from a private organisation member who can push, and not one from a reader', async () => {
+    const { api } = fakeApi([
+      {
+        id: 1,
+        author_association: 'CONTRIBUTOR',
+        body: checklist({ sha: HEAD_SHA }),
+      },
+      {
+        id: 2,
+        user: { login: 'reader' },
+        body: checklist({ sha: HEAD_SHA }).replace(/- \[ \]/g, '- [x]'),
+      },
+      {
+        id: 3,
+        user: { login: 'ghost' },
+        body: checklist({ sha: HEAD_SHA }).replace(/- \[ \]/g, '- [x]'),
+      },
+    ]);
+    const status = await runGate('status', {
+      api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+    });
+
+    assert.equal(status.description, '2 of 5 checks outstanding');
   });
 
   it('reads every page of comments', async () => {
@@ -847,7 +908,22 @@ describe('readGateEnv and the qa-gate command', () => {
         PR_NUMBER: ' 5 ',
         HEAD_SHA: HEAD_SHA,
       }),
-      { token: 't', repo: 'o/r', prNumber: '5', headSha: HEAD_SHA },
+      {
+        token: 't',
+        repo: 'o/r',
+        prNumber: '5',
+        headSha: HEAD_SHA,
+        skill: 'pr',
+      },
+    );
+    assert.equal(
+      readGateEnv({
+        GITHUB_TOKEN: 't',
+        GITHUB_REPOSITORY: 'o/r',
+        PR_NUMBER: '5',
+        QA_SKILL: 'pull-requests',
+      }).skill,
+      'pull-requests',
     );
     assert.equal(
       readGateEnv({
@@ -929,7 +1005,9 @@ describe('the gate against the real client', () => {
               html_url: 'u',
             }),
           ])
-        : '';
+        : url.includes('/permission')
+          ? JSON.stringify(ROLES.dev)
+          : '';
       return { ok: true, text: async () => body };
     };
     console.log = (line) => logged.push(line);
@@ -951,6 +1029,7 @@ describe('the gate against the real client', () => {
       requests.map((r) => `${r.method} ${r.url}`),
       [
         'GET https://api.github.com/repos/o/r/issues/5/comments?per_page=100&page=1',
+        'GET https://api.github.com/repos/o/r/collaborators/dev/permission',
         `POST https://api.github.com/repos/o/r/statuses/${HEAD_SHA}`,
       ],
     );

@@ -407,7 +407,7 @@ ${allFiles.join('\n')}`;
 
   const graphPath = input.toolReports?.importGraph;
 
-  // The graph lands in the background, so Recon checks for it rather than waiting.
+  // Recon checks whether the background graph has landed; it does not wait.
   const graphNote = graphPath
     ? `If \`${graphPath}\` exists, **the import graph is already built** — it was
 generated with ripgrep: every exported symbol in the files under review, with
@@ -604,13 +604,13 @@ reviewer that reports only what the pack mentioned has reviewed the pack.`;
 }
 
 const COVERAGE_HALF = `## The coverage half of this brief
-${COVERAGE_LENSES.size === 1 ? 'Your test lens has' : 'Your test lenses have'} a second job: find COVERAGE GAPS. You do not write tests to
+${COVERAGE_LENSES.size === 1 ? 'Your test lens has' : 'Your test lenses have'} a second job: find COVERAGE GAPS. You do not write ${PROMPTS.coverageArtifacts} to
 fill them — the gap list is the whole output.
 
 - **Prefix the id with "coverage-".** That is what separates an absence from a
   defect in the report.
 - **Scope to the diff.** Enumerate only behaviour the branch adds or changes. A
-  symbol the branch left alone is a pre-existing gap, not this branch's.
+  ${PROMPTS.coverageSubject} the branch left alone is a pre-existing gap, not this branch's.
 - **Coverage is the difference between two reads**, so do both:
   1. From the diff, list every unit of behaviour the branch added or changed
      that the conventions require covered — ${PROMPTS.coverageUnits}.
@@ -618,10 +618,9 @@ fill them — the gap list is the whole output.
   3. A gap is anything in (1) that (2) does not reach — file ABSENT, or PRESENT
      but omitting the new case. Report both kinds. Never assume an existing test
      file covers a newly added branch.
-- **Shape:** \`file\` is the uncovered production file, \`line\` the symbol's
+- **Shape:** \`file\` is the uncovered ${PROMPTS.coverageFile}, \`line\` the symbol's
   location, \`issue\` the missing coverage in one line (${PROMPTS.coverageExamples}).
-  \`detail\` says whether the file is absent or incomplete, and which convention
-  requires it. Severity reflects the gap: ${PROMPTS.coverageSeverity}.`;
+  \`detail\` says ${PROMPTS.coverageDetail}. Severity reflects the gap: ${PROMPTS.coverageSeverity}.`;
 
 const OUTPUT_SPEC = `## Output
 Report through the structured-output tool.
@@ -906,10 +905,10 @@ function cell(text) {
 const isCoverage = (id) => typeof id === 'string' && id.startsWith('coverage-');
 
 /**
- * Picks what one merged entry shows, dropping it only when every finding in it was refuted.
+ * Picks what one merged entry shows, or drops it as refuted under `CONFIG.verdicts`.
  *
  * @param members - The entry's findings, each paired with the verdict on its own uid or null
- * @returns The most severe surviving finding, and its verdict marked with `splitWith` when another verifier disagreed
+ * @returns The most severe surviving finding, its verdict marked with `splitWith` when another verifier disagreed, and every lens that raised the entry
  */
 function resolveEntry(members) {
   const effective = ({ finding, verdict }) => ({
@@ -919,10 +918,14 @@ function resolveEntry(members) {
   // An unrecognised severity counts as severe.
   const rank = (member) => SEVERITY_RANK[effective(member).severity] ?? 0;
 
+  const refuted = members.filter(({ verdict }) => verdict?.verdict === 'refuted');
   const survivors = members.filter(
     ({ verdict }) => verdict?.verdict !== 'refuted',
   );
-  const [pick] = [...(survivors.length > 0 ? survivors : members)].sort(
+  const keep =
+    survivors.length > 0 &&
+    !(CONFIG.verdicts === 'any-refutes' && refuted.length > 0);
+  const [pick] = [...(keep ? survivors : refuted)].sort(
     (a, b) => rank(a) - rank(b) || (a.verdict ? 0 : 1) - (b.verdict ? 0 : 1),
   );
 
@@ -935,6 +938,7 @@ function resolveEntry(members) {
     finding: pick.finding,
     verdict:
       pick.verdict && splitWith ? { ...pick.verdict, splitWith } : pick.verdict,
+    lenses: [...new Set([pick, ...members].map(({ finding }) => finding.lens))],
   };
 }
 
@@ -944,9 +948,10 @@ function resolveEntry(members) {
  * @param finding - The reviewer's finding
  * @param verdict - The merged verdict, or null when unverified
  * @param unverifiedWhy - A `UNVERIFIED_NOTES` key saying why there is no verdict
+ * @param lenses - Every lens that raised it, the finding's own first
  * @returns The formatted finding
  */
-function formatFinding(finding, verdict, unverifiedWhy) {
+function formatFinding(finding, verdict, unverifiedWhy, lenses = [finding.lens]) {
   const split = verdict?.splitWith
     ? ` **Split verdict** — another verifier called it ${verdict.splitWith}.`
     : '';
@@ -961,7 +966,6 @@ function formatFinding(finding, verdict, unverifiedWhy) {
 
   const merged = { ...finding, ...correctionOf(verdict) };
   const bucket = verdict == null ? 'unverified' : verdict.verdict;
-  const lenses = [finding.lens];
   const coverage = isCoverage(merged.id);
 
   const verifiedNote =
@@ -1025,18 +1029,23 @@ function parseRange(line) {
 }
 
 // Line slack that still counts two findings as the same spot.
-const OVERLAP_SLACK = 2;
+const OVERLAP_SLACK = CONFIG.dedupe.lines;
 
 /**
- * Tells whether a finding repeats a merged entry's: another bundle, the same lens and file, and overlapping lines.
+ * Tells whether a finding repeats a merged entry, as `CONFIG.dedupe` defines it.
  *
  * @param entry - A merged entry, carrying the `bundles` already in it
  * @param finding - The finding to place
  * @returns True when the lines match or overlap within `OVERLAP_SLACK`
  */
 function sameSpot(entry, finding) {
-  if (entry.bundles.includes(finding.bundle)) return false;
-  if (entry.lens !== finding.lens || entry.file !== finding.file) return false;
+  if (entry.file !== finding.file) return false;
+  if (
+    CONFIG.dedupe.by === 'lens' &&
+    (entry.bundles.includes(finding.bundle) || entry.lens !== finding.lens)
+  ) {
+    return false;
+  }
   if (entry.line === finding.line) return true;
 
   const rangeA = parseRange(entry.line);
@@ -1313,7 +1322,7 @@ const reviewed = await pipeline(
         .then((result) => ({
           bundle: active.key,
           parent: active.parent ?? active.key,
-          // A skipped or dead agent resolves to null rather than throwing.
+          // A skipped or dead agent resolves to null.
           died: result == null,
           findings: (result?.findings ?? []).map((finding, index) => ({
             ...finding,
@@ -1504,14 +1513,20 @@ if (overCapCount > 0) {
   );
 }
 log(
-  `${merged.length} findings after dedup — ${twinCount} cross-bundle twin(s) verified more than once`,
+  `${merged.length} findings after dedup — ${twinCount} ${CONFIG.dedupe.by === 'lens' ? 'cross-bundle' : 'same-spot'} twin(s) verified more than once`,
 );
 
 let splitVerdictCount = 0;
 
+// How a split verdict was settled, as the log and report say it.
+const KEPT_UNLESS =
+  CONFIG.verdicts === 'any-refutes'
+    ? 'dropped if any verifier refuted it'
+    : 'kept unless every verifier refuted it';
+
 const allFormatted = merged.map((entry) => {
   // A finding the cap left out stays unverified, never confirmed.
-  const { finding, verdict } = resolveEntry(
+  const { finding, verdict, lenses } = resolveEntry(
     entry.members.map((member) => ({
       finding: member,
       verdict: verdictByUid.get(member.uid) ?? null,
@@ -1520,7 +1535,12 @@ const allFormatted = merged.map((entry) => {
 
   if (verdict?.splitWith) splitVerdictCount++;
 
-  return formatFinding(finding, verdict, unverifiedWhyByUid.get(finding.uid));
+  return formatFinding(
+    finding,
+    verdict,
+    unverifiedWhyByUid.get(finding.uid),
+    lenses,
+  );
 });
 
 // Counted after merging, so a twin verified twice counts once.
@@ -1530,7 +1550,7 @@ const unverifiedCount = allFormatted.filter(
 
 if (splitVerdictCount > 0) {
   log(
-    `${splitVerdictCount} finding(s) came back with two different verdicts — kept unless every verifier refuted it, and the disagreement is printed`,
+    `${splitVerdictCount} finding(s) came back with two different verdicts — ${KEPT_UNLESS}, and the disagreement is printed`,
   );
 }
 
@@ -1667,11 +1687,13 @@ const verificationSummary = `${sentToVerification} finding(s) sent to verificati
     : ''
 }${
   twinCount
-    ? `. ${twinCount} finding(s) were raised by more than one bundle and verified more than once — the cost of verifying each bundle as it lands rather than waiting for all of them`
+    ? CONFIG.dedupe.by === 'lens'
+      ? `. ${twinCount} finding(s) were raised by more than one bundle and verified more than once — the cost of verifying each bundle as it lands rather than waiting for all of them`
+      : `. ${twinCount} finding(s) repeated another at the same spot and were merged into it, each verified on its own`
     : ''
 }${
   splitVerdictCount
-    ? `. ${splitVerdictCount} came back with two DIFFERENT verdicts; each was kept unless every verifier refuted it, and says so where it appears`
+    ? `. ${splitVerdictCount} came back with two DIFFERENT verdicts; each was ${KEPT_UNLESS}, and says so where it appears`
     : ''
 }.`;
 

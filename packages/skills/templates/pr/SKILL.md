@@ -1,8 +1,8 @@
 ---
-name: pr
+name: {{name}}
 description:
   'MANDATORY: Invoke this skill BEFORE creating ANY pull request. NEVER run gh
-  pr create directly — always use /pr. Runs the pr-qa workflow to write the
+  pr create directly — always use /{{name}}. Runs the pr-qa workflow to write the
   summary and a verified Manual QA checklist ({{sectionNames}}), then opens the
   PR as a draft titled with the branch name. Test-coverage analysis belongs to
   code review, not here.'
@@ -32,7 +32,7 @@ prioritised.
 ## Usage
 
 ```
-/pr
+/{{name}}
 ```
 
 The skill has no flags. The PR title is always the branch name, and new PRs
@@ -55,6 +55,11 @@ scratch folder, sorts the changed files into layers, and prints the workflow's
 args as JSON, including the `headSha` it diffed. When it prints `"ahead": 0`,
 the branch has no commits over its base: tell the user there is nothing to open
 a PR for, and stop.
+
+To use a different base, pass `--base <branch>`; it wins over everything
+else.{{#stackBase}} If `gh stack view` fails or answers in a shape the prepass cannot
+read, it stops rather than guess, and says to pass `--base`. Ask the user which
+branch sits below this one, then re-run the prepass with it.{{/stackBase}}
 
 The layers it sorts files into:
 
@@ -92,12 +97,21 @@ The completion notification names an `<output-file>`; it holds the result.
 npx --no-install skills pr publish --result <output-file> --base <base from the prepass> --head <headSha from the prepass>
 ```
 
+Before publishing, read the summary in the output file. It must stay under
+about 25 lines, lead paragraph and bullet sections together. If it has grown
+diagrams, a module map or a file-by-file tour, rewrite it in the output file
+first. The checklist has no length cap: trimming it deletes coverage.
+
 It fills `{{template}}` with the summary, creates the PR as a draft or edits the
-open one (setting its base), and writes the checklist into the Manual QA
+open one, and writes the checklist into the Manual QA
 comment — editing the existing one, so its place in the timeline and everyone's
 notifications stay put. A checklist longer than one GitHub comment is split
 across numbered comments. It prints the PR's `url`, whether it was `created`,
 how many comment `parts` it wrote, and the `unresolved` units.
+
+It never moves an open PR onto another base on its own. When the open PR's base
+differs from the prepass's, it prints that base as `baseMismatch`. Tell the user,
+and only if they want the PR moved, run publish again with `--set-base`.
 
 It refuses, changing nothing on the PR, when the PR's head commit on GitHub is
 not `headSha`: the checklist would describe code GitHub does not have. It also
@@ -109,7 +123,7 @@ Give the PR URL, and say:
 
 - **The checklist arrives unticked**, and that is correct: its steps have
   never been run against this commit.
-- **Each unresolved unit**, by name. It failed verification four times, or its
+- **Each unresolved unit**, by name. It failed verification twice, or its
   checker gave no verdict for it, so it was left out of the steps and listed
   under "Not covered by these checks"; shipping a step that never passed is
   not an option.
@@ -117,12 +131,15 @@ Give the PR URL, and say:
   warning. Every step relies on it, so it is published with the warning rather
   than dropped.
 {{#qaGate}}- **The gate:** `.github/workflows/pr-manual-qa.yml` un-ticks every box on each
-  push, and the `Manual QA` status stays red until they are ticked again.
+  push, and the `Manual QA` status stays red until they are ticked again. It
+  only counts a checklist posted by someone who can push to the repository.
 {{/qaGate}}{{^qaGate}}- **There is no reset gate** in this repository, so the tester has to notice a
   stale commit stamp on the checklist themselves.
 {{/qaGate}}
 ## Edge cases
 
+- **Merge conflicts with the base**: warn the user, but carry on. The PR can
+  still be opened.
 - **Branch not pushed**, or publish says to push first: tell the user to run
   `git push -u origin HEAD`, then run only the publish command again — the
   workflow's result is still in its output file.
@@ -133,7 +150,7 @@ Give the PR URL, and say:
   checklist of the line `_No manual checks needed — no runtime surface
   touched._` plus the Local CI boxes. Publish both as normal.
 - **Commits land while the workflow runs**: publish refuses with "commits
-  landed on GitHub since then, so re-run /pr". Run the skill again once the
+  landed on GitHub since then, so re-run /{{name}}". Run the skill again once the
   branch is settled.
 - **Publish says the summary is empty**: the summary agent returned nothing.
   Run the skill again.

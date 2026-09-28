@@ -164,7 +164,7 @@ describe('pr config — defaults', () => {
   });
 
   it('resolves both fixtures', async () => {
-    for (const name of ['curricular', 'sales']) {
+    for (const name of ['webapp', 'sales']) {
       const raw = (await import(join(FIXTURES, `${name}.mjs`))).default;
       const resolved = resolvePrConfig(raw, context);
       assert.ok(resolved.layers.length >= 5, name);
@@ -395,7 +395,7 @@ describe('pr config — loading', () => {
 
 describe('pr skill — sync and check', () => {
   it('writes the skill, the workflow and the traps file', async () => {
-    const root = prRepo('curricular');
+    const root = prRepo('webapp');
     const { written } = await sync(root);
 
     assert.deepEqual(written, [
@@ -417,12 +417,12 @@ describe('pr skill — sync and check', () => {
     );
     assert.match(
       skill,
-      /summary and a verified Manual QA checklist \(Agent-Runnable Backend Checks, Human Frontend Checks, Storybook Review Checks\)/,
+      /summary and a verified Manual QA checklist \(Agent-Runnable Backend Checks, Human Browser Checks, Storybook Review Checks\)/,
     );
     assert.match(skill, /on a branch in a `gh stack`/);
     assert.match(
       skill,
-      /\| Data Model \| Agent-Runnable Backend Checks \| `\(\^\\\|\/\)supabase\/migrations\/` \|/,
+      /\| Data Model \| Agent-Runnable Backend Checks \| `\(\^\\\|\/\)db\/migrations\/` \|/,
     );
     assert.match(skill, /\[`\.claude\/skills\/pr\/TRAPS\.md`\]\(TRAPS\.md\)/);
     assert.match(skill, /There is no reset gate/);
@@ -470,7 +470,7 @@ describe('pr skill — sync and check', () => {
   });
 
   it('inlines the resolved config into a workflow that parses', async () => {
-    const root = prRepo('curricular');
+    const root = prRepo('webapp');
     await sync(root);
     const script = readFileSync(
       join(root, '.claude/skills/pr/pr-qa.workflow.js'),
@@ -491,7 +491,7 @@ describe('pr skill — sync and check', () => {
   });
 
   it('never overwrites the traps file once the repository has it', async () => {
-    const root = prRepo('curricular');
+    const root = prRepo('webapp');
     await sync(root);
     const traps = join(root, '.claude/skills/pr/TRAPS.md');
     writeFileSync(traps, '# Our traps\n\n## Auth\n');
@@ -503,7 +503,7 @@ describe('pr skill — sync and check', () => {
   });
 
   it('keeps a hand-written traps file that was there first', async () => {
-    const root = prRepo('curricular');
+    const root = prRepo('webapp');
     write(root, '.claude/skills/pr/TRAPS.md', '# Earned traps\n');
 
     await sync(root);
@@ -514,7 +514,7 @@ describe('pr skill — sync and check', () => {
   });
 
   it('reports a deleted traps file as missing', async () => {
-    const root = prRepo('curricular');
+    const root = prRepo('webapp');
     await sync(root);
     rmSync(join(root, '.claude/skills/pr/TRAPS.md'));
 
@@ -524,7 +524,7 @@ describe('pr skill — sync and check', () => {
   });
 
   it('never removes the traps file when the skill is switched off', async () => {
-    const root = prRepo('curricular', { options: { qaGate: true } });
+    const root = prRepo('webapp', { options: { qaGate: true } });
     await sync(root);
     write(root, '.devkit/skills.json', JSON.stringify({ skills: {} }));
 
@@ -538,7 +538,7 @@ describe('pr skill — sync and check', () => {
   });
 
   it('writes the gate workflow with qaGate, pinned to this package version', async () => {
-    const root = prRepo('curricular', { options: { qaGate: true } });
+    const root = prRepo('webapp', { options: { qaGate: true } });
     const { written } = await sync(root);
     const version = JSON.parse(
       readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -570,7 +570,7 @@ describe('pr skill — sync and check', () => {
   });
 
   it('removes the gate workflow when qaGate is switched off', async () => {
-    const root = prRepo('curricular', { options: { qaGate: true } });
+    const root = prRepo('webapp', { options: { qaGate: true } });
     await sync(root);
     write(root, '.devkit/skills.json', JSON.stringify({ skills: { pr: {} } }));
 
@@ -579,7 +579,7 @@ describe('pr skill — sync and check', () => {
   });
 
   it('flags a hand-edited gate workflow and leaves other workflows alone', async () => {
-    const root = prRepo('curricular', { options: { qaGate: true } });
+    const root = prRepo('webapp', { options: { qaGate: true } });
     write(root, '.github/workflows/ci.yml', 'name: CI\n');
     await sync(root);
 
@@ -599,7 +599,7 @@ describe('pr skill — sync and check', () => {
   });
 
   it('refuses to replace a hand-written gate workflow without --force', async () => {
-    const root = prRepo('curricular', { options: { qaGate: true } });
+    const root = prRepo('webapp', { options: { qaGate: true } });
     write(root, '.github/workflows/pr-manual-qa.yml', 'name: ours\n');
 
     await assert.rejects(sync(root), /were not written by skills sync/);
@@ -611,12 +611,12 @@ describe('pr skill — sync and check', () => {
   });
 
   it('flags a stale workflow after the config changes', async () => {
-    const root = prRepo('curricular');
+    const root = prRepo('webapp');
     await sync(root);
     write(
       root,
       '.devkit/pr.mjs',
-      `import base from ${JSON.stringify(join(FIXTURES, 'curricular.mjs'))};\nexport default { ...base, actors: ['teacher'] };\n`,
+      `import base from ${JSON.stringify(join(FIXTURES, 'webapp.mjs'))};\nexport default { ...base, actors: ['member'] };\n`,
     );
 
     const problems = await check(root);
@@ -630,9 +630,9 @@ describe('pr skill — sync and check', () => {
 
   it('refuses an unknown skill option', async () => {
     const root = makeRepo({
-      'skills.json': { skills: { pr: { name: 'pull-requests' } } },
+      'skills.json': { skills: { pr: { title: 'x' } } },
     });
-    await assert.rejects(sync(root), /Unknown option "name" for skill "pr"/);
+    await assert.rejects(sync(root), /Unknown option "title" for skill "pr"/);
   });
 });
 
@@ -656,7 +656,7 @@ describe('pr example config', () => {
 
 describe('pr skill — check against hand-written files', () => {
   it('reports a hand-written file where the skill belongs', async () => {
-    const root = prRepo('curricular');
+    const root = prRepo('webapp');
     await sync(root);
     write(root, '.claude/skills/pr/SKILL.md', '# Our own PR skill\n');
 

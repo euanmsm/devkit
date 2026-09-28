@@ -58,8 +58,11 @@ without re-running `sync`:
 { "scripts": { "check:skills": "skills check" } }
 ```
 
-If the repository runs Prettier, add the generated paths to `.prettierignore`.
-Reformatting a generated file makes `skills check` report it as edited.
+If the repository runs Prettier, set `"format": "prettier"`. `sync` then runs
+the repository's own Prettier over each file before writing it, and `check`
+compares against the formatted text, so generated files match house style and
+are never reported as edited. Without it, add the generated paths to
+`.prettierignore`, since reformatting a generated file makes `check` report it.
 
 ## The skills
 
@@ -82,12 +85,13 @@ option the package does not know, or a value of the wrong type, is an error
 rather than being ignored. To leave a skill out, remove its key; `false` is an
 error.
 
-| Setting      | Default          | What it is                                  |
-| ------------ | ---------------- | ------------------------------------------- |
-| `skillsDir`  | `.claude/skills` | Where skills are written                    |
-| `agentsDir`  | `.claude/agents` | Where agents are written                    |
-| `rulesDir`   | `.claude/rules`  | Where rules are written                     |
-| `baseBranch` | `main`           | The branch the skills compare a branch with |
+| Setting      | Default          | What it is                                                        |
+| ------------ | ---------------- | ----------------------------------------------------------------- |
+| `skillsDir`  | `.claude/skills` | Where skills are written                                          |
+| `agentsDir`  | `.claude/agents` | Where agents are written                                          |
+| `rulesDir`   | `.claude/rules`  | Where rules are written                                           |
+| `baseBranch` | `main`           | The branch the skills compare a branch with                       |
+| `format`     | `none`           | `prettier` formats generated files with the repository's Prettier |
 
 A repository that keeps its skills in `.agents/skills`, with `.claude/skills` as
 a symlink to it, sets `skillsDir` to `.agents/skills`.
@@ -101,10 +105,11 @@ a symlink to it, sets `skillsDir` to `.agents/skills`.
 
 ### `clean-comments`
 
-| Option          | Default        | What it is                                                                            |
-| --------------- | -------------- | ------------------------------------------------------------------------------------- |
-| `preloadSkills` | `["comments"]` | Skills loaded before any edit, so a `@euanmsm/preflight` gate lets the agents through |
-| `typecheck`     | none           | Command run after the cleanup. Without it, the step is left out                       |
+| Option           | Default        | What it is                                                                                             |
+| ---------------- | -------------- | ------------------------------------------------------------------------------------------------------ |
+| `preloadSkills`  | `["comments"]` | Skills the skill and each agent load before any edit, so a `@euanmsm/preflight` gate lets them through |
+| `typecheck`      | none           | Command run after the cleanup. Without it, the step is left out                                        |
+| `typecheckPaths` | none           | Path prefixes; when given, the typecheck runs only when a changed file sits under one                  |
 
 The comment rules come from `rulesDoc` in the repository's `.devkit/terse.json`,
 or `.devkit/comment-rules.md` — where `terse-docs` writes them — when it is
@@ -112,11 +117,11 @@ unset.
 
 ### `code-review`
 
-| Option         | Default                   | What it is                                                                                |
-| -------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
-| `name`         | `code-review`             | The skill's folder and slash command: lowercase letters, digits and dashes                |
-| `config`       | `.devkit/code-review.mjs` | The review config, below                                                                  |
-| `githubReview` | `false`                   | Adds `/code-review pr`, which posts the findings as a pending GitHub review, and its rule |
+| Option         | Default                   | What it is                                                                           |
+| -------------- | ------------------------- | ------------------------------------------------------------------------------------ |
+| `name`         | `review`                  | The skill's folder and slash command: lowercase letters, digits and dashes           |
+| `config`       | `.devkit/code-review.mjs` | The review config, below                                                             |
+| `githubReview` | `false`                   | Adds `/review pr`, which posts the findings as a pending GitHub review, and its rule |
 
 `sync` writes three things: the skill's `SKILL.md`; `review.workflow.js`, the
 script the Workflow tool runs, with the repository's config written into it;
@@ -164,21 +169,23 @@ graph it builds needs [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`).
 
 ### `dead-code`
 
-No options. `sync` writes `<skillsDir>/dead-code/SKILL.md`, which runs every
-command as `npx --no-install dead-code …` and stops at its first step, with the
-install command, when the package is missing. The false positives the repository
-keeps on purpose live in `.devkit/dead-code.json`, each with its reason. A file
-`sync` generates, such as a `.workflow.js`, is loaded by its path, so dead-code
-lists it as known rather than unused, and the skill never deletes one. When the
-skill is enabled, the code review's `dead-code` lens loads it.
-[docs/dead-code.md](docs/dead-code.md) covers the rest.
+One option, `typecheck`: the command to run after deleting code, in place of
+"the repository's typecheck". `sync` writes `<skillsDir>/dead-code/SKILL.md`,
+which runs every command as `npx --no-install dead-code …` and stops at its
+first step, with the install command, when the package is missing. The false
+positives the repository keeps on purpose live in `.devkit/dead-code.json`, each
+with its reason. A file `sync` generates, such as a `.workflow.js`, is loaded by
+its path, so dead-code lists it as known rather than unused, and the skill never
+deletes one. When the skill is enabled, the code review's `dead-code` lens loads
+it. [docs/dead-code.md](docs/dead-code.md) covers the rest.
 
 ### `pr`
 
-| Option   | Default          | What it is                                                                |
-| -------- | ---------------- | ------------------------------------------------------------------------- |
-| `config` | `.devkit/pr.mjs` | The PR config, below                                                      |
-| `qaGate` | `false`          | Also writes the GitHub workflow that un-ticks the checklist on every push |
+| Option   | Default          | What it is                                                                                                                                                         |
+| -------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`   | `pr`             | The skill's folder and slash command: lowercase letters, digits and dashes                                                                                         |
+| `config` | `.devkit/pr.mjs` | The PR config, below                                                                                                                                               |
+| `qaGate` | `false`          | Also writes the GitHub workflow that un-ticks the checklist on every push. `true`, or an object setting its Node version and whether it installs from the lockfile |
 
 `sync` writes the skill's `SKILL.md` and `pr-qa.workflow.js`; the traps file,
 once, when the repository has none; and, with `qaGate`,

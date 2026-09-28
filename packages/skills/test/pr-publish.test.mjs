@@ -30,7 +30,16 @@ import { write } from './repo.mjs';
 
 const SHA = 'def5678def5678def5678def5678def5678def56';
 const CHECKLIST = '<!-- pr-qa:manual-checklist';
-const CONFIG = { template: '.github/pull_request_template.md' };
+const CONFIG = { name: 'pr', template: '.github/pull_request_template.md' };
+
+/** Each fake user's answer from the permission API; a missing login fails the lookup. */
+const ROLES = {
+  dev: { permission: 'write', role_name: 'write' },
+  reader: { permission: 'read', role_name: 'read' },
+};
+
+/** The logins the gate would trust. */
+const TRUSTED = new Set(['dev']);
 
 const RESULT = {
   summary: 'Adds the thing.\n',
@@ -44,7 +53,7 @@ const RESULT = {
 /**
  * A fake `gh` for one branch, recording every call and the files it was handed.
  *
- * @param options - The `open` PR, if any, the checklist comment `heads` already on it by id, the PR's `remoteHead` on GitHub, and whether the checked commit `contains` that head
+ * @param options - The `open` PR, if any, the checklist comment `heads` already on it by id (a first line, or `{ head, login }`), the PR's `remoteHead` on GitHub, and whether the checked commit `contains` that head
  * @returns The `gh` function and its recorded `calls`
  */
 function fakeGh({
@@ -72,7 +81,7 @@ function fakeGh({
     if (
       args[0] === 'pr' &&
       args[1] === 'view' &&
-      args.includes('number,state,headRefOid')
+      args.some((arg) => arg.startsWith('number,state,'))
     ) {
       if (!open) throw new Error('no pull requests found');
       return JSON.stringify({ headRefOid: remoteHead, ...open });
@@ -86,10 +95,20 @@ function fakeGh({
     }
     if (args[0] === 'api' && args.includes('--paginate')) {
       return Object.entries(heads)
-        .map(([id, head]) =>
-          JSON.stringify(JSON.stringify({ id: Number(id), head })),
-        )
+        .map(([id, entry]) => {
+          const { head, login } =
+            typeof entry === 'string' ? { head: entry, login: 'dev' } : entry;
+          return JSON.stringify(
+            JSON.stringify({ id: Number(id), login, head }),
+          );
+        })
         .join('\n');
+    }
+    const who = /collaborators\/([^/]+)\/permission$/.exec(args[1] ?? '');
+    if (args[0] === 'api' && who) {
+      const answer = ROLES[decodeURIComponent(who[1])];
+      if (!answer) throw new Error('gh api failed: 404');
+      return JSON.stringify(answer);
     }
     return '';
   };
@@ -179,7 +198,8 @@ describe('pr publish — pieces', () => {
     );
     assert.match(body, /## Manual QA — `def5678`\n\nboot/);
     assert.equal(
-      findChecklistComments([{ author_association: 'OWNER', body }]).main.body,
+      findChecklistComments([{ user: { login: 'dev' }, body }], TRUSTED).main
+        .body,
       body,
     );
   });
@@ -200,7 +220,8 @@ describe('pr publish — pieces', () => {
     assert.ok(!bodies[1].includes('banner'));
 
     const found = findChecklistComments(
-      bodies.map((body, id) => ({ id, author_association: 'OWNER', body })),
+      bodies.map((body, id) => ({ id, user: { login: 'dev' }, body })),
+      TRUSTED,
     );
     assert.equal(found.parts.length, bodies.length - 1);
     const total = bodies.reduce((sum, body) => sum + countBoxes(body).total, 0);
@@ -252,6 +273,7 @@ describe('pr publish — against a fake gh', () => {
       parts: 1,
       unresolved: ['backend:x'],
       gaps: 1,
+      baseMismatch: null,
     });
 
     const create = calls.find(
@@ -293,19 +315,58 @@ describe('pr publish — against a fake gh', () => {
     assert.equal(outcome.created, false);
     assert.ok(!calls.some((c) => c.args[1] === 'create'));
     const edit = calls.find((c) => c.args[1] === 'edit');
-    assert.deepEqual(edit.args.slice(0, 7), [
+    assert.deepEqual(edit.args.slice(0, 6), [
       'pr',
       'edit',
       '12',
       '--title',
       'feature/thing',
-      '--base',
-      'main',
+      '--body-file',
     ]);
 
     const patch = calls.find((c) => c.args.includes('PATCH'));
     assert.equal(patch.args[1], 'repos/{owner}/{repo}/issues/comments/99');
     assert.ok(!calls.some((c) => c.args.includes('POST')));
+  });
+
+  it('leaves an open PR’s base alone and reports the mismatch, unless told to move it', () => {
+    const root = prRepo(null);
+    const open = { number: 12, state: 'OPEN', baseRefName: 'feature/below' };
+
+    const kept = fakeGh({ open });
+    const outcome = publish(root, CONFIG, {
+      result: resultFile(root, RESULT),
+      base: 'main',
+      head: SHA,
+      gh: kept.gh,
+    });
+    assert.equal(outcome.baseMismatch, 'feature/below');
+    assert.ok(
+      !kept.calls.find((c) => c.args[1] === 'edit').args.includes('--base'),
+    );
+
+    const moved = fakeGh({ open });
+    const again = publish(root, CONFIG, {
+      result: resultFile(root, RESULT),
+      base: 'main',
+      head: SHA,
+      setBase: true,
+      gh: moved.gh,
+    });
+    assert.equal(again.baseMismatch, null);
+    const edit = moved.calls.find((c) => c.args[1] === 'edit').args;
+    assert.equal(edit[edit.indexOf('--base') + 1], 'main');
+
+    const same = fakeGh({ open: { ...open, baseRefName: 'main' } });
+    assert.equal(
+      publish(root, CONFIG, {
+        result: resultFile(root, RESULT),
+        base: 'main',
+        head: SHA,
+        gh: same.gh,
+      }).baseMismatch,
+      null,
+    );
   });
 
   it('opens a new PR when the branch’s only PR is closed', () => {
@@ -387,9 +448,16 @@ describe('pr publish — against a fake gh', () => {
     );
   });
 
-  it('only counts checklist comments from an owner, member or collaborator', () => {
+  it('only edits checklist comments whose author can push', () => {
     const root = prRepo(null);
-    const { gh, calls } = fakeGh();
+    const { gh, calls } = fakeGh({
+      open: { number: 12, state: 'OPEN' },
+      heads: {
+        1: { head: '<!-- pr-qa:manual-checklist -->', login: 'reader' },
+        2: { head: '<!-- pr-qa:manual-checklist -->', login: 'ghost' },
+        3: { head: '<!-- pr-qa:manual-checklist -->', login: 'dev' },
+      },
+    });
     publish(root, CONFIG, {
       result: resultFile(root, RESULT),
       base: 'main',
@@ -397,28 +465,47 @@ describe('pr publish — against a fake gh', () => {
       gh,
     });
 
+    const patches = calls
+      .filter((c) => c.args.includes('PATCH'))
+      .map((c) => c.args[1]);
+    assert.deepEqual(patches, ['repos/{owner}/{repo}/issues/comments/3']);
+
     const list = calls.find((c) => c.args.includes('--paginate'));
     const jq = list.args[list.args.indexOf('--jq') + 1];
-    const comments = [
-      { id: 1, author_association: 'MEMBER', body: CHECKLIST },
-      { id: 2, author_association: 'NONE', body: CHECKLIST },
-      { id: 3, author_association: 'CONTRIBUTOR', body: CHECKLIST },
-      {
-        id: 4,
-        author_association: 'COLLABORATOR',
-        body: `${CHECKLIST}:part=2 -->`,
-      },
-      { id: 5, author_association: 'OWNER', body: 'LGTM' },
-    ];
     const kept = execFileSync('jq', ['-r', jq], {
-      input: JSON.stringify(comments),
+      input: JSON.stringify([
+        { id: 1, user: { login: 'dev' }, body: CHECKLIST },
+        { id: 2, user: { login: 'x' }, body: 'LGTM' },
+      ]),
       encoding: 'utf8',
     })
       .split('\n')
       .filter(Boolean)
-      .map((line) => JSON.parse(line).id);
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(kept, [
+      { id: 1, login: 'dev', head: '<!-- pr-qa:manual-checklist' },
+    ]);
+  });
 
-    assert.deepEqual(kept, [1, 4]);
+  it('names the configured skill when it refuses', () => {
+    const root = prRepo(null);
+    const NEW = '1234567123456712345671234567123456712345';
+    const { gh } = fakeGh({ remoteHead: NEW });
+
+    assert.throws(
+      () =>
+        publish(
+          root,
+          { ...CONFIG, name: 'pull-requests' },
+          {
+            result: resultFile(root, RESULT),
+            base: 'main',
+            head: SHA,
+            gh,
+          },
+        ),
+      /but \/pull-requests checked def5678.*re-run \/pull-requests\./,
+    );
   });
 
   it('refuses when the PR on GitHub is behind the commit /pr checked', () => {

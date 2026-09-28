@@ -28,7 +28,11 @@ const TOP_KEYS = [
   'splitOrder',
   'prompts',
   'rosterNotes',
+  'dedupe',
+  'verdicts',
 ];
+const DEDUPE_BY = ['lens', 'location'];
+const VERDICT_RULES = ['all-refute', 'any-refutes'];
 const LENS_KEYS = ['skill', 'title', 'route', 'judges', 'diffOnly', 'bundle'];
 const ROUTE_KEYS = ['always', 'paths', 'coverage', 'judgment'];
 const BUNDLE_KEYS = ['key', 'title', 'scope', 'model', 'lenses', 'split'];
@@ -108,6 +112,11 @@ export function resolveReviewConfig(
   const bundles = resolveBundles(raw.bundles, raw.lenses, lenses, fail);
   const splitOrder = resolveSplitOrder(raw.splitOrder, bundles, fail);
   const prompts = resolvePrompts(raw.prompts, fail);
+  const dedupe = resolveDedupe(raw.dedupe, fail);
+  const verdicts = raw.verdicts ?? 'all-refute';
+  if (!VERDICT_RULES.includes(verdicts)) {
+    fail(`verdicts must be one of ${VERDICT_RULES.join(', ')}`);
+  }
 
   if (raw.rosterNotes !== undefined && typeof raw.rosterNotes !== 'string') {
     fail('rosterNotes must be a string');
@@ -127,7 +136,30 @@ export function resolveReviewConfig(
     ),
     prompts,
     rosterNotes: raw.rosterNotes ?? '',
+    dedupe,
+    verdicts,
   };
+}
+
+/**
+ * Fills in how findings at the same spot are merged.
+ *
+ * @param raw - The repository's `dedupe`, or undefined
+ * @param fail - Throws with the config's path prefixed
+ * @returns `by`, `lens` or `location`, and `lines`, the slack that still counts as the same spot
+ */
+function resolveDedupe(raw = {}, fail) {
+  unknownKeys(raw, ['by', 'lines'], 'dedupe', fail);
+
+  const dedupe = { by: 'lens', lines: 2, ...raw };
+  if (!DEDUPE_BY.includes(dedupe.by)) {
+    fail(`dedupe.by must be one of ${DEDUPE_BY.join(', ')}`);
+  }
+  if (!Number.isInteger(dedupe.lines) || dedupe.lines < 0) {
+    fail('dedupe.lines must be a whole number, 0 or more');
+  }
+
+  return dedupe;
 }
 
 /**
