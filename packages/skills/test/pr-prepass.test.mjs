@@ -213,16 +213,36 @@ describe('pr prepass — pure helpers', () => {
     assert.equal(
       stackParent(
         () => {
-          throw new Error('not in a stack');
+          throw Object.assign(new Error('Command failed'), {
+            stderr: '✗ current branch "a" is not part of a stack\n',
+          });
         },
         '/',
         'a',
       ),
       null,
     );
-    assert.equal(
-      stackParent(() => 'not json', '/', 'a'),
-      null,
+  });
+
+  it('stops rather than guess the base when the stack cannot be read', () => {
+    assert.throws(
+      () =>
+        stackParent(
+          () => {
+            throw new Error('gh: unknown command "stack"');
+          },
+          '/',
+          'a',
+        ),
+      /Could not read the stack .*unknown command.*pass --base <branch>/,
+    );
+    assert.throws(
+      () => stackParent(() => 'not json', '/', 'a'),
+      /Could not read the stack/,
+    );
+    assert.throws(
+      () => stackParent(() => '{"stack":[]}', '/', 'a'),
+      /shape this package cannot read.*pass --base <branch>/,
     );
   });
 
@@ -253,6 +273,56 @@ describe('pr prepass — pure helpers', () => {
         title: null,
       },
     ]);
+  });
+
+  it('finds a story that imports a changed file, wherever it sits', () => {
+    const root = makeRepo();
+    write(
+      root,
+      'app/login/login.stories.tsx',
+      "export default { title: 'Routes/Login' };\n",
+    );
+    write(root, 'src/_stories/Card.stories.tsx', 'export default {};\n');
+    write(root, 'src/Card.stories.tsx', 'export default {};\n');
+    const tracked = [
+      'app/login/login.stories.tsx',
+      'src/_stories/Card.stories.tsx',
+      'src/Card.stories.tsx',
+    ];
+    // The first importer is past the listed ones, so the full list is what counts.
+    const importers = {
+      'app/login/page.tsx': {
+        importers: [],
+        more: 1,
+        all: ['app/login/login.stories.tsx', 'app/login/layout.tsx'],
+      },
+      'src/Card.tsx': {
+        importers: ['src/_stories/Card.stories.tsx'],
+        more: 0,
+        all: ['src/_stories/Card.stories.tsx'],
+      },
+    };
+    const changed = ['app/login/page.tsx', 'src/Card.tsx'];
+    const files = (match) =>
+      findStories(root, changed, tracked, { importers, match }).map(
+        (story) => `${story.storyFile} ← ${story.component}`,
+      );
+
+    assert.deepEqual(files('both'), [
+      'app/login/login.stories.tsx ← app/login/page.tsx',
+      'src/Card.stories.tsx ← src/Card.tsx',
+      'src/_stories/Card.stories.tsx ← src/Card.tsx',
+    ]);
+    assert.deepEqual(files('stem'), ['src/Card.stories.tsx ← src/Card.tsx']);
+    assert.deepEqual(files('imports'), [
+      'app/login/login.stories.tsx ← app/login/page.tsx',
+      'src/_stories/Card.stories.tsx ← src/Card.tsx',
+    ]);
+    assert.deepEqual(
+      findStories(root, changed, tracked, { importers: null }).length,
+      1,
+      'without ripgrep only the name match is left',
+    );
   });
 
   it('finds every importer in one ripgrep pass, capped, and says when ripgrep is missing', () => {
@@ -287,7 +357,9 @@ describe('pr prepass — pure helpers', () => {
     assert.deepEqual(result['src/ui/util.ts'], {
       importers: ['src/ui/Page.tsx'],
       more: 0,
+      all: ['src/ui/Page.tsx'],
     });
+    assert.equal(result['src/ui/Badge.tsx'].all.length, 36);
 
     assert.equal(
       findImporters('/', ['src/a.ts'], () => null),

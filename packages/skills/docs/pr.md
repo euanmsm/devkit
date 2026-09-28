@@ -25,7 +25,8 @@ This page explains exactly how a run works, then every setting that changes it.
 
 It takes no arguments. The PR's title is always the branch name, new PRs are
 always opened as drafts, and an open PR is edited rather than duplicated. The
-skill is called `pr` in every repository.
+skill is called `pr` unless the `name` option says otherwise; this page writes
+`/pr` for whatever it is called.
 
 ## The words this page uses
 
@@ -55,13 +56,16 @@ The skill does three things, and the model only thinks in the middle one.
 
 A script, not an agent. It:
 
-1. Finds the base branch: the shared `baseBranch`, or, with `base: 'stack'`, the
-   branch directly below this one in a `gh stack`. It runs
-   `git fetch origin <base>` (a failure, such as being offline, is ignored),
-   then diffs against `origin/<base>`, which is what GitHub diffs against. The
-   local branch is used only when there is no `origin/<base>`, since a local
-   base is often weeks behind and would pull every upstream commit into the
-   checklist.
+1. Finds the base branch: `--base <branch>` when given, otherwise the shared
+   `baseBranch`, or, with `base: 'stack'`, the branch directly below this one in
+   a `gh stack`. When `gh stack view` fails for any reason other than the branch
+   being in no stack, or answers in a shape it cannot read, it stops and says to
+   pass `--base`, rather than guess `baseBranch` and open a mid-stack PR against
+   it. It runs `git fetch origin <base>` (a failure, such as being offline, is
+   ignored), then diffs against `origin/<base>`, which is what GitHub diffs
+   against. The local branch is used only when there is no `origin/<base>`,
+   since a local base is often weeks behind and would pull every upstream commit
+   into the checklist.
 2. Stops with `"ahead": 0` when the branch has no commits over its base.
 3. Writes the diff, one patch file per changed file, and a **facts file** to the
    scratch folder. The facts file lists:
@@ -75,7 +79,10 @@ A script, not an agent. It:
      leads to the file: a relative import must resolve to it, and an aliased or
      package import (`@/lib/utils`) must end in its folder and name, so one
      `utils` module does not collect every other module's importers
-   - the stories for changed components and their `title:`, when Storybook is on
+   - the stories for changed components and their `title:`, when Storybook is
+     on. A story counts when it imports a changed file, wherever it sits, or
+     when it sits beside the file with the same name stem; `storyMatch` picks
+     one or both. Without ripgrep only the name match is left
    - the seed, fixture and env files matching `boot.read`
 4. Prints the workflow's arguments as JSON: which layers and sections the branch
    touches, the paths above, the `headSha` it diffed, and how many agents may
@@ -157,7 +164,7 @@ section, Storybook items, how to stop the stack, the gaps, and the Local CI
 boxes. Each section opens with a timing line built from the drafters' minute
 estimates.
 
-### 3. Publishing — `npx --no-install skills pr publish --result <file> --base <branch> --head <sha>`
+### 3. Publishing — `npx --no-install skills pr publish --result <file> --base <branch> --head <sha> [--set-base]`
 
 A script again. `<file>` is the workflow's output file from its completion
 notice; the bare result works too. `<sha>` is the `headSha` the prepass printed.
@@ -165,21 +172,24 @@ It:
 
 1. Refuses a result whose summary is blank.
 2. Puts the summary into the PR template where `<!-- pr-qa:summary -->` is.
-3. Creates the PR as a draft against the base, or edits the open one, setting
-   its base too, so a stacked PR whose parent merged is retargeted.
+3. Creates the PR as a draft against the base, or edits the open one. It leaves
+   an open PR's base alone unless given `--set-base`, since one wrong base
+   lookup would otherwise move a mid-stack PR. When the open PR's base differs
+   from `--base`, it says so as `baseMismatch`, and the skill asks the user
+   before moving it.
 4. Reads the head commit from GitHub — not local git, because the gate checks
    the commit GitHub has — and refuses when it is not `<sha>`: with "push first"
    when the branch has commits GitHub lacks, or "commits landed on GitHub since
    then, so re-run /pr" otherwise. On an open PR this happens before the edit,
    so nothing changes.
 5. Writes the checklist comment, editing the existing one so it keeps its place
-   in the timeline. Only a comment written by an owner, member or collaborator
+   in the timeline. Only a comment whose author can push to the repository
    counts as the existing one. A checklist over 60,000 characters is split
    between sections into numbered comments (GitHub's limit is 65,536); parts no
    longer needed are deleted.
 
 It prints the PR's URL, whether it was created, how many comment parts it wrote,
-and the unresolved units.
+the unresolved units, and `baseMismatch`.
 
 ### The comment
 
@@ -201,7 +211,7 @@ opens with `<!-- pr-qa:manual-checklist:part=2 -->` instead.
 ## Why it is faster than the hand-written copies
 
 Across the recorded runs, the hand-written copies took a median of 23 minutes in
-Curricular and up to 54 in Sales harness. Almost all of it was agents waiting on
+one repository and up to 54 in another. Almost all of it was agents waiting on
 agents they did not need:
 
 - Failed claims were converted one at a time, and only after every step had
@@ -211,45 +221,46 @@ agents they did not need:
 - Every agent ran on Opus, and every agent rediscovered the test files and
   importers itself.
 
-Replaying the 54-minute Sales run's recorded agent times through both scripts,
-under the same 12-agent cap, gives 51 minutes for the old ordering and 23 for
-this one — with the same 33 steps, 6 conversions and 1 unresolved unit. That
-replay counts no saving from the Sonnet agents or the facts file, and predates
-batched verification.
+Replaying the 54-minute run's recorded agent times through both scripts, under
+the same 12-agent cap, gives 51 minutes for the old ordering and 23 for this one
+— with the same 33 steps, 6 conversions and 1 unresolved unit. That replay
+counts no saving from the Sonnet agents or the facts file, and predates batched
+verification.
 
 ### What verification costs
 
 Verification used to start one Opus agent per unit per round, so a 40-step
-checklist meant 40 checkers in round 1 and up to 160 over four rounds (the limit then), each
-re-reading the traps file, the diff and the pack. With up to 8 units a checker,
-the same 40 steps take one checker per drafter group, 6 in the test fixture,
-plus one for the boot block. Later rounds cost one checker per 8 failing units,
-not one per unit. The count for each group is logged before it starts, and the
-total is in `stats.checkerAgents`.
+checklist meant 40 checkers in round 1 and up to 160 over four rounds (the limit
+then), each re-reading the traps file, the diff and the pack. With up to 8 units
+a checker, the same 40 steps take one checker per drafter group, 6 in the test
+fixture, plus one for the boot block. Later rounds cost one checker per 8
+failing units, not one per unit. The count for each group is logged before it
+starts, and the total is in `stats.checkerAgents`.
 
 ## Configuring it
 
 In `.devkit/skills.json`:
 
 ```json
-{ "skills": { "pr": { "qaGate": true } } }
+{ "skills": { "pr": { "name": "pull-requests", "qaGate": true } } }
 ```
 
-| Option   | Default          | What it does                                                                      |
-| -------- | ---------------- | --------------------------------------------------------------------------------- |
-| `config` | `.devkit/pr.mjs` | Where the PR config lives                                                         |
-| `qaGate` | `false`          | Also writes `.github/workflows/pr-manual-qa.yml`; see [The QA gate](#the-qa-gate) |
+| Option   | Default          | What it does                                                                                                        |
+| -------- | ---------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `name`   | `pr`             | The skill's folder and slash command: lowercase letters, digits and dashes                                          |
+| `config` | `.devkit/pr.mjs` | Where the PR config lives                                                                                           |
+| `qaGate` | `false`          | `true`, or an object of settings, also writes `.github/workflows/pr-manual-qa.yml`; see [The QA gate](#the-qa-gate) |
 
 It also uses the shared `skillsDir` and `baseBranch` settings.
 
 `sync` writes:
 
-| File                                                  | When                                                 |
-| ----------------------------------------------------- | ---------------------------------------------------- |
-| `<skillsDir>/pr/SKILL.md`                             | always                                               |
-| `<skillsDir>/pr/pr-qa.workflow.js`                    | always                                               |
-| the traps file (`<skillsDir>/pr/TRAPS.md` by default) | only when it does not exist — it then belongs to you |
-| `.github/workflows/pr-manual-qa.yml`                  | with `qaGate`                                        |
+| File                                                      | When                                                 |
+| --------------------------------------------------------- | ---------------------------------------------------- |
+| `<skillsDir>/<name>/SKILL.md`                             | always                                               |
+| `<skillsDir>/<name>/pr-qa.workflow.js`                    | always                                               |
+| the traps file (`<skillsDir>/<name>/TRAPS.md` by default) | only when it does not exist — it then belongs to you |
+| `.github/workflows/pr-manual-qa.yml`                      | with `qaGate`                                        |
 
 The traps file is the one file `sync` never overwrites, never deletes and never
 reports as edited: its value is the traps your testers have hit, which only the
@@ -261,9 +272,8 @@ with a `<!-- pr-qa:summary -->` line where the summary goes.
 ## The PR config, key by key
 
 `.devkit/pr.mjs` is a JavaScript module, so path patterns stay real regexes.
-Only `layers` is required. Start from [`pr.example.mjs`](../pr.example.mjs); the
-configs that reproduce Curricular's and Sales harness's current skills are in
-[`test/fixtures/pr/`](../test/fixtures/pr/).
+Only `layers` is required. Start from [`pr.example.mjs`](../pr.example.mjs);
+fuller configs are in [`test/fixtures/pr/`](../test/fixtures/pr/).
 
 ### `layers` (required)
 
@@ -305,7 +315,8 @@ of reach).
 
 `'branch'` (the default) targets the shared `baseBranch`. `'stack'` targets the
 branch directly below this one in a `gh stack`, falling back to `baseBranch` on
-a branch in no stack.
+a branch in no stack. A stack lookup that fails stops the prepass instead; pass
+`--base <branch>` to name the base yourself.
 
 ### `actors`
 
@@ -359,6 +370,12 @@ under `__tests__/`.
 `'auto'` (the default) turns the Storybook section on when `storybook` or any
 `@storybook/*` package is installed. `true` or `false` forces it.
 
+### `storyMatch`
+
+Which stories count for a changed file: `'imports'`, a story that imports it
+wherever the story sits; `'stem'`, a story beside it with the same name stem; or
+`'both'` (the default).
+
 ### `localCi` and `localCiNote`
 
 The Local CI boxes closing the checklist, and an optional line under them where
@@ -366,8 +383,8 @@ The Local CI boxes closing the checklist, and an optional line under them where
 
 ### `traps` and `template`
 
-The traps file (default `<skillsDir>/pr/TRAPS.md`) and the PR template (default
-`.github/pull_request_template.md`).
+The traps file (default `<skillsDir>/<name>/TRAPS.md`) and the PR template
+(default `.github/pull_request_template.md`).
 
 ### `prompts`
 
@@ -387,8 +404,8 @@ See [Experiments](#experiments).
 
 ## The QA gate
 
-With `qaGate: true`, `sync` writes `.github/workflows/pr-manual-qa.yml`. It
-keeps the checklist honest about which commit was tested:
+With `qaGate` on, `sync` writes `.github/workflows/pr-manual-qa.yml`. It keeps
+the checklist honest about which commit was tested:
 
 - **On every push** it un-ticks every box outside a code block, restamps the
   comment with the new head commit, and writes a banner saying how many boxes
@@ -402,22 +419,45 @@ keeps the checklist honest about which commit was tested:
   against it.
 - **By hand**, `workflow_dispatch` with a PR number re-evaluates a stuck check.
 
-Only a checklist comment from an owner, member or collaborator counts (the REST
-API's `author_association`). Anyone else who can comment could otherwise post a
-marked, pre-ticked checklist and turn the gate green. The gate reads that field
-with the workflow's `GITHUB_TOKEN`, which cannot see private organisation
-membership, so a member whose membership is private and who has write access
-only through the organisation or a team can show as `CONTRIBUTOR` there, while
-`/pr` still sees them as a member. Their checklist then never counts. Make the
-membership public, or add them to the repository as a collaborator.
+Only a checklist comment whose author can push to the repository counts: the
+gate asks GitHub for each author's permission and trusts `write`, `maintain` and
+`admin`. Anyone else who can comment could otherwise post a marked, pre-ticked
+checklist and turn the gate green. It does not use the comment's
+`author_association`, because with the workflow's `GITHUB_TOKEN` a private
+organisation member shows there as `CONTRIBUTOR`.
 
 Make `Manual QA` a required status check in the branch ruleset for it to block
 merges. Drafts are not skipped, since `/pr` opens drafts. A fork's PR gets a
 read-only token, so its reset is skipped and its check stays pending.
 
-The jobs run `npx --yes @euanmsm/skills@<version> qa-gate reset|status`, with
-the version pinned to the one that wrote the file. They need no checkout and no
-install, and upgrading the package then re-running `sync` moves the pin.
+By default the jobs run
+`npx --yes @euanmsm/skills@<version> qa-gate reset|status` on Node 22, with the
+version pinned to the one that wrote the file. They need no checkout and no
+install, and upgrading the package then re-running `sync` moves the pin. The
+status messages name the skill by its `name`.
+
+`qaGate` also takes an object, for a repository with its own Node setup or one
+that does not run packages in CI from outside its lockfile:
+
+```json
+"pr": { "qaGate": { "nodeVersionFile": ".nvmrc", "install": "lockfile" } }
+```
+
+| Setting           | Default | What it does                                                                                                                                       |
+| ----------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nodeVersion`     | `22`    | The Node version to set up                                                                                                                         |
+| `nodeVersionFile` | none    | A file to read the version from instead, such as `.nvmrc`. Not with `nodeVersion`                                                                  |
+| `install`         | `npx`   | `lockfile` checks out the default branch, runs `npm ci --ignore-scripts`, and runs the installed `skills` binary. The package must be a dependency |
+
+Either setting that needs the repository's files checks out its default branch,
+so a pull request cannot change what the gate runs.
+
+#### Upgrading from a hand-written gate
+
+A stale checklist with no boxes at all now fails with
+`checklist predates <sha>, re-run /pr` instead of being restamped and passed.
+This only shows up on old "no manual checks needed" comments from before the
+switch: re-run the skill on those PRs.
 
 ## Experiments
 
@@ -430,7 +470,7 @@ experiments: { narrowRounds: true, dropCrossCutting: true },
 
 - **`narrowRounds`** — runs verify rounds after the first on Sonnet instead of
   Opus. Those rounds always use the narrower re-check prompt; this only changes
-  the model. The four-round cap stays.
+  the model. The two-round cap stays.
 - **`dropCrossCutting`** — removes the cross-cutting inventory agent. The
   dimensions audit asks the same questions straight afterwards, and can only add
   entries.

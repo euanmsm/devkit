@@ -16,8 +16,9 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { CONFIG_NAME, readConfig } from './config.mjs';
 import { render } from './render.mjs';
@@ -66,6 +67,7 @@ const WORKFLOWS_DIR = '.github/workflows';
 export async function plan(root, config = readConfig(root)) {
   const files = [];
   const owners = new Map();
+  const format = config.format === 'prettier' ? await prettierFor(root) : null;
 
   for (const [name, options] of Object.entries(config.skills)) {
     const skill = SKILLS[name];
@@ -91,17 +93,48 @@ export async function plan(root, config = readConfig(root)) {
       owners.set(path, name);
 
       const template = readFileSync(join(TEMPLATES, file.template), 'utf8');
+      const content = file.engine
+        ? renderEngine(template, values[file.engine], text)
+        : render(template, values);
       files.push({
         path,
-        content: file.engine
-          ? renderEngine(template, values[file.engine], text)
-          : render(template, values),
+        content: format ? await format(path, content) : content,
         seed: Boolean(file.seed),
       });
     }
   }
 
   return files;
+}
+
+/**
+ * Loads the repository's own Prettier, to format files the way its commits will.
+ *
+ * @param root - The repository root
+ * @returns A function formatting one file's text by its repo-relative path, leaving a file Prettier ignores or has no parser for as it is
+ * @throws When the repository does not depend on Prettier
+ */
+async function prettierFor(root) {
+  let entry;
+  try {
+    entry = createRequire(join(root, 'package.json')).resolve('prettier');
+  } catch {
+    throw new Error(
+      `"format": "prettier" in .devkit/${CONFIG_NAME} needs Prettier installed in this repository: npm i -D prettier`,
+    );
+  }
+  const loaded = await import(pathToFileURL(entry).href);
+  const prettier = loaded.default ?? loaded;
+  const ignorePath = join(root, '.prettierignore');
+
+  return async (path, content) => {
+    const filepath = join(root, path);
+    const info = await prettier.getFileInfo(filepath, { ignorePath });
+    if (info.ignored || !info.inferredParser) return content;
+
+    const options = await prettier.resolveConfig(filepath);
+    return prettier.format(content, { ...options, filepath });
+  };
 }
 
 /**

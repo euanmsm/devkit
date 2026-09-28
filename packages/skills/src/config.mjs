@@ -22,7 +22,11 @@ const SHARED_DEFAULTS = {
   agentsDir: '.claude/agents',
   rulesDir: '.claude/rules',
   baseBranch: 'main',
+  format: 'none',
 };
+
+/** Shared settings limited to a fixed set of values. */
+const SHARED_CHOICES = { format: ['none', 'prettier'] };
 
 /** The shared settings that name a folder, compared as paths during cleanup. */
 const DIR_SETTINGS = ['skillsDir', 'agentsDir', 'rulesDir'];
@@ -55,6 +59,11 @@ export function readConfig(root) {
     if (typeof value !== 'string' || value.trim() === '') {
       throw new Error(
         `Setting "${key}" in ${WHERE} must be a non-empty string`,
+      );
+    }
+    if (SHARED_CHOICES[key] && !SHARED_CHOICES[key].includes(value)) {
+      throw new Error(
+        `Setting "${key}" in ${WHERE} must be one of ${SHARED_CHOICES[key].map((c) => `"${c}"`).join(', ')}`,
       );
     }
   }
@@ -92,11 +101,9 @@ export function readConfig(root) {
           `Unknown option "${key}" for skill "${name}" in ${WHERE}`,
         );
       }
-      const problem = optionProblem(
-        value,
-        skill.defaults[key],
-        skill.patterns?.[key],
-      );
+      const problem = skill.validate?.[key]
+        ? skill.validate[key](value)
+        : optionProblem(value, skill.defaults[key], skill.patterns?.[key]);
       if (problem) {
         throw new Error(
           `Option "${key}" for skill "${name}" in ${WHERE} must be ${problem}`,

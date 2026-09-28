@@ -45,12 +45,13 @@ to switch it off.
 
 These sit at the top level and apply to every skill.
 
-| Setting      | Default          | What it is                                                            |
-| ------------ | ---------------- | --------------------------------------------------------------------- |
-| `skillsDir`  | `.claude/skills` | The folder skills are written into, one subfolder each                |
-| `agentsDir`  | `.claude/agents` | The folder agents are written into (only `clean-comments` writes one) |
-| `rulesDir`   | `.claude/rules`  | The folder rules are written into (only `code-review` writes one)     |
-| `baseBranch` | `main`           | The branch a skill compares the current branch with, and rebases onto |
+| Setting      | Default          | What it is                                                                                                                    |
+| ------------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `skillsDir`  | `.claude/skills` | The folder skills are written into, one subfolder each                                                                        |
+| `agentsDir`  | `.claude/agents` | The folder agents are written into (only `clean-comments` writes one)                                                         |
+| `rulesDir`   | `.claude/rules`  | The folder rules are written into (only `code-review` writes one)                                                             |
+| `baseBranch` | `main`           | The branch a skill compares the current branch with, and rebases onto                                                         |
+| `format`     | `none`           | `prettier` runs the repository's own Prettier over each generated file before `sync` writes it and before `check` compares it |
 
 Each is a non-empty string. A trailing slash on a folder is dropped, so
 `.claude/skills/` and `.claude/skills` mean the same.
@@ -66,14 +67,17 @@ Each of these stops `sync` and `check` with a message naming
 `.devkit/skills.json` and the key:
 
 - a skill name the package does not know, an option a skill does not have, or a
-  top-level setting outside the four above
+  top-level setting outside the five above
 - `skills` that is not an object, or a skill whose value is not an object —
   including `false`
 - an option whose type differs from its default's: a list of strings, a string,
   or `true`/`false`
-- a shared setting that is not a non-empty string
-- a `code-review` `name` that is not lowercase letters, digits and dashes, since
-  it becomes a folder name
+- a shared setting that is not a non-empty string, or a `format` other than
+  `none` or `prettier`
+- `"format": "prettier"` in a repository where Prettier is not installed
+- a `code-review` or `pr` `name` that is not lowercase letters, digits and
+  dashes, since it becomes a folder name
+- a `pr` `qaGate` that is not `true`, `false` or an object of its settings
 - two skills that would write the same file, such as a `code-review` named
   `clean-comments`
 
@@ -157,8 +161,8 @@ config without running `sync`, and a package upgrade whose templates changed.
 
 - **Prettier.** If the repository formats markdown or JavaScript with Prettier,
   it will reformat the generated files and `check` will report them as edited.
-  Add the generated paths to `.prettierignore`, for example
-  `.claude/skills/code-review/`.
+  Set `"format": "prettier"` so `sync` writes them already formatted, or add the
+  generated paths to `.prettierignore`, for example `.claude/skills/review/`.
 - **Upgrading the package.** New templates mean new output. After upgrading, run
   `sync` and commit the result.
 - **Editing a config the skill reads outside `skills.json`.** `clean-comments`

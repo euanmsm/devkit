@@ -15,7 +15,7 @@ import { publish } from './publish.mjs';
 
 const PR_USAGE = `Usage:
   skills pr prepass --scratch <dir> [--base <branch>]
-  skills pr publish --result <file> --base <branch> --head <sha>`;
+  skills pr publish --result <file> --base <branch> --head <sha> [--set-base]`;
 
 const GATE_USAGE = 'Usage: skills qa-gate <reset|status>';
 
@@ -54,6 +54,7 @@ export async function prCommand(argv, root) {
       result: need('result'),
       base: need('base'),
       head: need('head'),
+      setBase: flags['set-base'] === true,
     });
     console.log(JSON.stringify(outcome, null, 2));
     return 0;
@@ -78,12 +79,13 @@ export async function qaGate(argv, env = process.env) {
     return 2;
   }
 
-  const { token, repo, prNumber, headSha } = readGateEnv(env);
+  const { token, repo, prNumber, headSha, skill } = readGateEnv(env);
   const status = await runGate(command, {
     api: githubClient(token),
     repo,
     prNumber,
     headSha,
+    skill,
   });
 
   console.log(

@@ -39,7 +39,7 @@ and heredoc bodies rather than shell string quoting:
 ```
 
 A single line takes `line` + `side`. A range takes `start_line` + `line` and
-both `*_side` fields. `body` is the PR-level summary — `/code-review` puts its
+both `*_side` fields. `body` is the PR-level summary — `/{{name}}` puts its
 `prBody` here. Submitting leaves it alone, so write it now.
 
 POST it, and **omit `event` entirely** — that omission is what leaves the review

@@ -34,10 +34,9 @@ rests on — a cleanup that also changes logic cannot be reviewed as a cleanup.
 ```
 
 A `@euanmsm/preflight` hook, if the repository runs one, blocks edits to
-governed files until these are loaded, and its check is **session-scoped, not
-agent-scoped** — it reads the session transcript without caring which agent made
-the call. Loading them here is what lets every spawned agent edit without
-hitting the gate. Skip this step and the fan-out stalls on its first edit.
+governed files until the agent making the edit has loaded these. Loading them
+here covers only edits you make yourself, on the small-change path in step 4.
+Each `comments-specialist` loads its own before its first edit.
 
 ## 2. Resolve the scope
 
@@ -151,7 +150,7 @@ for f in <files>; do git diff --no-index -- "<snapshot>/$f" "$f"; done
 Only the cleanup shows up: the user's earlier edits are in the snapshot too, and
 untracked files are covered.
 
-{{#typecheck}}Typecheck — a mangled block comment can swallow code:
+{{#typecheck}}Typecheck — a mangled block comment can swallow code{{typecheckScope}}:
 
 ```bash
 {{typecheck}}

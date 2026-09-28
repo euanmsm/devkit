@@ -2,8 +2,8 @@
 name: {{name}}
 description:
   "Deep multi-agent review of named files, a module, or a branch diff. Reviews
-  by bundle, adversarially verifies every finding, and writes one report to
-  tmp/code-reviews/{{#githubReview}}, and can post it as a pending GitHub review{{/githubReview}}.
+  by bundle, adversarially verifies every finding,{{^githubReview}} and{{/githubReview}} writes one report to
+  tmp/code-reviews/{{#githubReview}} and can post it as a pending GitHub review{{/githubReview}}.
   Use when asked to review code or a branch before a pull request. Not for a
   quick look at one function."
 user-invocable: true

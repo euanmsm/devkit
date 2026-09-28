@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { sync } from '../src/sync.mjs';
 import { makeRepo, write } from './repo.mjs';
 
-/** The folder holding the Curricular and Sales harness PR configs. */
+/** The folder holding the web app and Sales harness PR configs. */
 export const FIXTURES = fileURLToPath(
   new URL('./fixtures/pr/', import.meta.url),
 );
@@ -24,7 +24,7 @@ export const TEMPLATE =
 /**
  * Makes a repository with the PR skill configured from a fixture.
  *
- * @param fixture - `curricular` or `sales`, or null for no config module
+ * @param fixture - `webapp` or `sales`, or null for no config module
  * @param options - `overrides` spread over the fixture's export, the skill's `options`, and shared `settings`
  * @returns The repository root
  */
@@ -47,7 +47,7 @@ export function prRepo(
 /**
  * Generates the PR workflow script for a fixture.
  *
- * @param fixture - `curricular` or `sales`
+ * @param fixture - `webapp` or `sales`
  * @param overrides - Spread over the fixture's export
  * @returns The generated script's text
  */

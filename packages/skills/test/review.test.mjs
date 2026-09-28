@@ -33,7 +33,7 @@ import {
 } from '../src/review/prepass.mjs';
 import { toSource } from '../src/review/serialise.mjs';
 import { plan, renderEngine, sync } from '../src/sync.mjs';
-import curricular from './fixtures/review/curricular.mjs';
+import webapp from './fixtures/review/webapp.mjs';
 import sales from './fixtures/review/sales.mjs';
 import { makeRepo, write } from './repo.mjs';
 import { runShell, SHELLS, staleBaseRepo } from './stale-base.mjs';
@@ -578,7 +578,7 @@ describe('resolveReviewConfig', () => {
   });
 
   test('resolves both repository configs cleanly', () => {
-    assert.equal(Object.keys(resolve(curricular).lenses).length, 30);
+    assert.equal(Object.keys(resolve(webapp).lenses).length, 30);
     assert.equal(Object.keys(resolve(sales).lenses).length, 21);
   });
 });
@@ -606,12 +606,12 @@ describe('the generated workflow', () => {
   for (const [name, raw, files] of [
     ['defaults', {}, ['src/a.ts', 'migrations/001.sql', 'src/a.test.ts']],
     [
-      'Curricular',
-      curricular,
+      'web app',
+      webapp,
       [
-        'apps/main/src/app/api/rooms/route.ts',
-        'apps/main/src/lib/x/Card.tsx',
-        'supabase/migrations/1.sql',
+        'src/routes/api/bookings/route.ts',
+        'src/components/BookingCard.tsx',
+        'db/migrations/1.sql',
       ],
     ],
     [
@@ -1103,8 +1103,8 @@ describe('sync with code-review', () => {
     const paths = (await plan(reviewRepo())).map((file) => file.path);
 
     assert.deepEqual(paths.sort(), [
-      '.claude/skills/code-review/SKILL.md',
-      '.claude/skills/code-review/review.workflow.js',
+      '.claude/skills/review/SKILL.md',
+      '.claude/skills/review/review.workflow.js',
     ]);
   });
 
@@ -1211,7 +1211,7 @@ describe('sync with code-review', () => {
 
     assert.deepEqual(
       (await check(root)).map((problem) => problem.path),
-      ['.claude/skills/code-review/review.workflow.js'],
+      ['.claude/skills/review/review.workflow.js'],
     );
   });
 
@@ -1308,7 +1308,7 @@ describe('sync with code-review', () => {
     );
     await sync(root);
 
-    assert.equal(existsSync(join(root, '.claude/skills/code-review')), false);
+    assert.equal(existsSync(join(root, '.claude/skills/review')), false);
     assert.equal(existsSync(join(root, '.claude/rules/pr-reviews.md')), false);
   });
 });

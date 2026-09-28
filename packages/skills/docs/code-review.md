@@ -21,10 +21,10 @@ it.
 ## Running it
 
 ```
-/code-review                     # this branch against the base branch
-/code-review <path> [<path>...]  # named files or a directory, as they stand
-/code-review pr                  # this branch's PR, posted as a pending review
-/code-review pr 793              # a named PR, with its branch checked out
+/review                     # this branch against the base branch
+/review <path> [<path>...]  # named files or a directory, as they stand
+/review pr                  # this branch's PR, posted as a pending review
+/review pr 793              # a named PR, with its branch checked out
 ```
 
 The `pr` forms exist only when `githubReview` is on. The command name is the
@@ -212,12 +212,15 @@ verdict for its id. `stats.unverified` counts all three, after merging.
 
 ### 9. Findings are merged
 
-- Two findings from different bundles, under the same lens, on the same file,
-  with lines within 2 of each other are treated as one. Two findings from the
-  same reviewer are never merged.
-- Each verdict applies to its own finding. A merged finding is dropped only when
-  every verifier refuted it, and the report shows the most severe finding that
-  survived. If the verifiers disagree, the finding is marked **Split verdict**
+- By default, two findings from different bundles, under the same lens, on the
+  same file, with lines within 2 of each other are treated as one. Two findings
+  from the same reviewer are never merged. With `dedupe: { by: 'location' }`,
+  any two findings on the same file within the slack are one, whichever lens and
+  reviewer raised them, and the merged finding lists every lens.
+- Each verdict applies to its own finding. By default a merged finding is
+  dropped only when every verifier refuted it, and the report shows the most
+  severe finding that survived. With `verdicts: 'any-refutes'`, one refutation
+  drops it. If the verifiers disagree, the finding is marked **Split verdict**
   so the disagreement is visible.
 
 ### 10. The report is written
@@ -263,7 +266,7 @@ Two files:
 
 | Option         | Default                   | What it does                                                                                  |
 | -------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
-| `name`         | `code-review`             | The skill's folder name and slash command: lowercase letters, digits and dashes               |
+| `name`         | `review`                  | The skill's folder name and slash command: lowercase letters, digits and dashes               |
 | `config`       | `.devkit/code-review.mjs` | Path to the review config                                                                     |
 | `githubReview` | `false`                   | Adds the `pr` modes, the "Deliver to GitHub" step, and writes `pr-reviews.md` into `rulesDir` |
 
@@ -303,6 +306,8 @@ export default {
   splitOrder: [ … ],
   prompts: { … },
   rosterNotes: `…`,
+  dedupe: { by: 'lens', lines: 2 },
+  verdicts: 'all-refute',
 };
 ```
 
@@ -531,6 +536,24 @@ Replacement wording for the passages of the agents' instructions that depend on
 how your repository is built. Every one has a generic default. Change only the
 ones that read wrong for your repository. See [Prompt wording](#prompt-wording).
 
+### `dedupe`
+
+How findings at the same spot are merged into one entry.
+
+| Key     | Default  | What it does                                                                                                                 |
+| ------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `by`    | `'lens'` | `'lens'` merges only one lens's findings from different bundles. `'location'` merges any findings on the same file and lines |
+| `lines` | `2`      | How many lines apart two findings can be and still count as the same spot                                                    |
+
+`'location'` gives a shorter report when several lenses flag the same line, and
+fewer inline comments under GitHub's cap when posting.
+
+### `verdicts`
+
+When a merged finding went to several verifiers and they disagree:
+`'all-refute'` (the default) keeps it unless every verifier refuted it;
+`'any-refutes'` drops it when any one did.
+
 ### `rosterNotes`
 
 A markdown string appended to the Bundle Roster section of the generated
@@ -603,12 +626,16 @@ table shows the sentence around it, so you can see what your wording has to fit.
 
 ### Coverage (test lenses, diff mode)
 
-| Slot               | Sentence it completes                                            | Default                                                                                        |
-| ------------------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `coverageUnits`    | List every behaviour the conventions require covered — **\___**. | `new functions, branches, error paths, edge cases`                                             |
-| `coverageLocation` | "Find and read **\___**, in full."                               | `the corresponding test files at their conventional locations`                                 |
-| `coverageExamples` | `issue` is the missing coverage in one line (**\___**).          | `"no test for the error branch of createInvoice", "parseDate has no test for an empty string"` |
-| `coverageSeverity` | "Severity reflects the gap: **\___**."                           | `an untested error path on a write is high, a missing test for a formatting helper is low`     |
+| Slot                | Sentence it completes                                            | Default                                                                                        |
+| ------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `coverageArtifacts` | "You do not write **\___** to fill them."                        | `tests`                                                                                        |
+| `coverageSubject`   | "A **\___** the branch left alone is a pre-existing gap."        | `symbol`                                                                                       |
+| `coverageUnits`     | List every behaviour the conventions require covered — **\___**. | `new functions, branches, error paths, edge cases`                                             |
+| `coverageLocation`  | "Find and read **\___**, in full."                               | `the corresponding test files at their conventional locations`                                 |
+| `coverageExamples`  | `issue` is the missing coverage in one line (**\___**).          | `"no test for the error branch of createInvoice", "parseDate has no test for an empty string"` |
+| `coverageFile`      | "`file` is the uncovered **\___**."                              | `production file`                                                                              |
+| `coverageDetail`    | "`detail` says **\___**."                                        | `whether the file is absent or incomplete, and which convention requires it`                   |
+| `coverageSeverity`  | "Severity reflects the gap: **\___**."                           | `an untested error path on a write is high, a missing test for a formatting helper is low`     |
 
 ### Verifiers
 
@@ -700,9 +727,9 @@ generator failed and reviewers search for callers themselves.
 
 ## Posting to GitHub
 
-With `githubReview: true`, `/code-review pr` reviews the branch as normal, then
-posts the findings as a **pending** GitHub review — visible only to you until
-you submit it. The skill:
+With `githubReview: true`, `/review pr` reviews the branch as normal, then posts
+the findings as a **pending** GitHub review — visible only to you until you
+submit it. The skill:
 
 - writes the report to disk before posting anything, so a failed post never
   loses the review
@@ -786,6 +813,5 @@ export default {
 };
 ```
 
-The configs that reproduce Curricular's and Sales harness's reviews in full are
-in [`test/fixtures/review/`](../test/fixtures/review/) — the most complete
-examples of custom lenses, bundles and splits.
+Fuller configs are in [`test/fixtures/review/`](../test/fixtures/review/) — the
+most complete examples of custom lenses, bundles and splits.

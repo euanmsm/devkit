@@ -3,7 +3,7 @@
 # PR → Manual QA
 #
 # Keeps the manual testing checklist honest about which commit it was ticked
-# against. The checklist is the PR comment `/pr` posts. Every push un-ticks its
+# against. The checklist is the PR comment `/{{name}}` posts. Every push un-ticks its
 # boxes, and the `Manual QA` commit status stays red until they are ticked
 # again against the new head commit.
 #
@@ -15,10 +15,10 @@
 # Ticking a box edits the comment, which fires the `issue_comment` half. The
 # required check is the commit status `Manual QA`, not either job's name.
 #
-# Drafts are not skipped: `/pr` opens PRs as drafts, and skipping them would
+# Drafts are not skipped: `/{{name}}` opens PRs as drafts, and skipping them would
 # leave boxes ticked across every push made before the PR is marked ready.
 # A fork PR gets a read-only token, so its reset is skipped and its check
-# stays pending.
+# stays pending. A checklist counts only when its author can push here.
 
 name: 'PR → Manual QA'
 
@@ -46,21 +46,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read
       pull-requests: write
       statuses: write
     concurrency:
       group: manual-qa-reset-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     steps:
-      - uses: actions/setup-node@v4
+{{#gateCheckout}}      # The default branch, so a PR cannot change what the gate runs.
+      - uses: actions/checkout@v4
         with:
-          node-version: 22
-      - name: Reset the QA checklist
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+{{/gateCheckout}}      - uses: actions/setup-node@v4
+        with:
+          {{gateNode}}
+{{#gateLockfile}}      - name: Install from the lockfile
+        run: npm ci --ignore-scripts
+{{/gateLockfile}}      - name: Reset the QA checklist
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: npx --yes @euanmsm/skills@{{packageVersion}} qa-gate reset
+          QA_SKILL: {{name}}
+        run: {{gateCommand}} qa-gate reset
 
   manual-qa-status:
     if: >
@@ -72,6 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read
       pull-requests: read
       statuses: write
     # Only the newest comment state matters, so a newer run replacing an older
@@ -80,13 +90,21 @@ jobs:
       group: manual-qa-status-${{ github.event.issue.number || inputs.pr }}
       cancel-in-progress: true
     steps:
-      - uses: actions/setup-node@v4
+{{#gateCheckout}}      # The default branch, so a PR cannot change what the gate runs.
+      - uses: actions/checkout@v4
         with:
-          node-version: 22
-      # No HEAD_SHA: a comment event is about a comment, not a commit, so the
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+{{/gateCheckout}}      - uses: actions/setup-node@v4
+        with:
+          {{gateNode}}
+{{#gateLockfile}}      - name: Install from the lockfile
+        run: npm ci --ignore-scripts
+{{/gateLockfile}}      # No HEAD_SHA: a comment event is about a comment, not a commit, so the
       # gate reads the PR's head from the API.
       - name: Evaluate the QA checklist
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number || inputs.pr }}
-        run: npx --yes @euanmsm/skills@{{packageVersion}} qa-gate status
+          QA_SKILL: {{name}}
+        run: {{gateCommand}} qa-gate status

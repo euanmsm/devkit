@@ -26,12 +26,15 @@ export const BANNER_END = '<!-- pr-qa:banner:end -->';
 const STATUS_CONTEXT = 'Manual QA';
 
 /**
- * The `author_association` values whose checklist comments count.
+ * The repository roles whose checklist comments count: anyone who can push.
  *
  * Anyone who can comment could otherwise post a marked, pre-ticked checklist
  * and turn the gate green.
  */
-export const TRUSTED_AUTHORS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+export const TRUSTED_ROLES = ['admin', 'maintain', 'write'];
+
+/** The skill's name when the workflow does not pass one. */
+const DEFAULT_SKILL = 'pr';
 
 /** Page cap when reading a PR's comments, as a backstop against a runaway loop. */
 const MAX_COMMENT_PAGES = 50;
@@ -163,22 +166,49 @@ function sameCommit(a, b) {
 }
 
 /**
- * Picks the checklist comment and its continuation parts from a PR's comments.
+ * Tells whether a comment body opens with a checklist marker, main or part.
  *
  * A marker must open the comment: a "Quote reply" prefixes every line with
- * `> `, and a quoted checklist must never count as the checklist. Only
- * comments from an owner, member or collaborator count.
+ * `> `, and a quoted checklist must never count as the checklist.
  *
- * @param comments - Comments in API order, oldest first, each with the REST API's `author_association`
+ * @param body - A comment body
+ * @returns Whether it is marked as a checklist comment
+ */
+export function isChecklistBody(body) {
+  if (typeof body !== 'string') return false;
+  const start = body.trimStart();
+  return start.startsWith(CHECKLIST_MARKER) || PART_MARKER_PATTERN.test(start);
+}
+
+/**
+ * Tells whether a permission API answer lets its user push.
+ *
+ * @param answer - The body of `GET /repos/{repo}/collaborators/{user}/permission`
+ * @returns Whether the user's role is write or above
+ */
+export function canPush(answer) {
+  return (
+    TRUSTED_ROLES.includes(answer?.role_name) ||
+    ['admin', 'write'].includes(answer?.permission)
+  );
+}
+
+/**
+ * Picks the checklist comment and its continuation parts from a PR's comments.
+ *
+ * Only comments whose author is in `trusted` count.
+ *
+ * @param comments - Comments in API order, oldest first, each with its `user.login`
+ * @param trusted - The logins allowed to post a checklist
  * @returns The last marked `main` comment or null, and the last comment for each part number, in order
  */
-export function findChecklistComments(comments) {
+export function findChecklistComments(comments, trusted) {
   let main = null;
   const parts = new Map();
 
   for (const comment of comments ?? []) {
-    if (typeof comment?.body !== 'string') continue;
-    if (!TRUSTED_AUTHORS.includes(comment.author_association)) continue;
+    if (!isChecklistBody(comment?.body)) continue;
+    if (!trusted.has(comment.user?.login)) continue;
 
     const body = comment.body.trimStart();
     if (body.startsWith(CHECKLIST_MARKER)) {
@@ -322,12 +352,17 @@ function describeStaleStamp(stamped, headSha) {
  * Checks for a missing checklist or part first, then a stale stamp on any
  * comment, then outstanding boxes across every comment.
  *
- * @param context - The checklist `main` comment or null, its continuation `parts`, and the `headSha` the status attaches to
+ * @param context - The checklist `main` comment or null, its continuation `parts`, the `headSha` the status attaches to, and the `skill` a fix re-runs
  * @returns The status `state` and `description`
  */
-export function computeStatus({ main, parts = [], headSha }) {
+export function computeStatus({
+  main,
+  parts = [],
+  headSha,
+  skill = DEFAULT_SKILL,
+}) {
   if (!main) {
-    return { state: 'failure', description: 'no QA checklist — run /pr' };
+    return { state: 'failure', description: `no QA checklist — run /${skill}` };
   }
 
   // A part that was never posted, or was deleted, would drop its boxes unseen.
@@ -336,7 +371,7 @@ export function computeStatus({ main, parts = [], headSha }) {
     if (!parts.some(({ part }) => part === n)) {
       return {
         state: 'failure',
-        description: `checklist part ${n} of ${expected} is missing — re-run /pr`,
+        description: `checklist part ${n} of ${expected} is missing — re-run /${skill}`,
       };
     }
   }
@@ -446,34 +481,67 @@ async function listComments(api, repo, prNumber) {
 }
 
 /**
+ * Finds which authors of checklist comments can push to the repository.
+ *
+ * @param api - The GitHub client
+ * @param repo - `owner/repo`
+ * @param comments - The PR's comments
+ * @returns The logins allowed to post a checklist; a failed lookup leaves its login out
+ */
+async function pushers(api, repo, comments) {
+  const logins = new Set(
+    comments
+      .filter((comment) => isChecklistBody(comment?.body))
+      .map((comment) => comment.user?.login)
+      .filter(Boolean),
+  );
+  const trusted = new Set();
+
+  for (const login of logins) {
+    try {
+      const answer = await api(
+        `/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`,
+      );
+      if (canPush(answer)) trusted.add(login);
+    } catch {
+      // Not a collaborator, or the lookup failed: the comment does not count.
+    }
+  }
+
+  return trusted;
+}
+
+/**
  * Runs `reset` or `status` for one pull request, ending with the commit status.
  *
  * `reset` clears every checklist comment not already stamped against the head,
  * so a `ready_for_review` event or a re-run with an unchanged head leaves the
  * ticks alone. A checklist with no boxes at all is left on its old commit and
- * the status asks for a new `/pr`, since the push may have added code worth
+ * the status asks for a re-run, since the push may have added code worth
  * checking.
  *
  * @param command - `reset` or `status`
- * @param context - The GitHub `api` client, `repo`, `prNumber`, the `headSha` when the event carries one, and the time `now`
+ * @param context - The GitHub `api` client, `repo`, `prNumber`, the `headSha` when the event carries one, the `skill` name for status text, and the time `now`
  * @returns The status that was posted
  */
 export async function runGate(
   command,
-  { api, repo, prNumber, headSha, now = new Date() },
+  { api, repo, prNumber, headSha, skill = DEFAULT_SKILL, now = new Date() },
 ) {
   const head =
     headSha ?? (await api(`/repos/${repo}/pulls/${prNumber}`)).head.sha;
+  const comments = await listComments(api, repo, prNumber);
   let { main, parts } = findChecklistComments(
-    await listComments(api, repo, prNumber),
+    comments,
+    await pushers(api, repo, comments),
   );
 
   let status = null;
 
   if (command === 'reset' && main) {
-    const comments = [main, ...parts.map(({ comment }) => comment)];
-    const counts = sumCounts(comments.map((comment) => comment.body ?? ''));
-    const stale = comments.filter(
+    const checklist = [main, ...parts.map(({ comment }) => comment)];
+    const counts = sumCounts(checklist.map((comment) => comment.body ?? ''));
+    const stale = checklist.filter(
       (comment) => !sameCommit(readStampedSha(comment.body ?? ''), head),
     );
 
@@ -481,12 +549,12 @@ export async function runGate(
       // With no boxes to clear, a restamp would pass new code nobody looked at.
       status = {
         state: 'failure',
-        description: `checklist predates ${shortSha(head)}, re-run /pr`,
+        description: `checklist predates ${shortSha(head)}, re-run /${skill}`,
       };
     } else {
       const updated = [];
 
-      for (const comment of comments) {
+      for (const comment of checklist) {
         if (!stale.includes(comment)) {
           updated.push(comment);
           continue;
@@ -517,7 +585,7 @@ export async function runGate(
     }
   }
 
-  status ??= computeStatus({ main, parts, headSha: head });
+  status ??= computeStatus({ main, parts, headSha: head, skill });
 
   await api(`/repos/${repo}/statuses/${head}`, {
     method: 'POST',
@@ -536,7 +604,7 @@ export async function runGate(
  * Reads the environment the GitHub workflow passes in.
  *
  * @param env - The process environment
- * @returns The `token`, `repo`, `prNumber` and `headSha` (null when unset)
+ * @returns The `token`, `repo`, `prNumber`, `headSha` (null when unset) and the `skill` name from `QA_SKILL`
  * @throws When the token, repository or PR number is missing
  */
 export function readGateEnv(env) {
@@ -557,5 +625,11 @@ export function readGateEnv(env) {
     throw new Error(`Missing required environment: ${missing.join(', ')}`);
   }
 
-  return { token, repo, prNumber, headSha: env.HEAD_SHA || null };
+  return {
+    token,
+    repo,
+    prNumber,
+    headSha: env.HEAD_SHA || null,
+    skill: env.QA_SKILL?.trim() || DEFAULT_SKILL,
+  };
 }

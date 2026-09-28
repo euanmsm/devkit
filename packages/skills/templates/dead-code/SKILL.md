@@ -252,13 +252,13 @@ the gap, not the file.
 comment naming the file, the symbol and the evidence that nothing reaches it.
 Delete only when deleting is the task.
 
-| Finding                          | Fix                                                                |
-| -------------------------------- | ------------------------------------------------------------------ |
+| Finding                          | Fix                                                                            |
+| -------------------------------- | ------------------------------------------------------------------------------ |
 | Unused file                      | Delete the file, with its story and test files. Never a generated one (step 5) |
-| Unused export, used in its file  | Drop the `export` keyword. The symbol stays; it stops being public |
-| Unused export, used nowhere      | Delete the symbol                                                  |
-| Unused export in a module barrel | Delete the re-export line only (step 4)                            |
-| Unused exported type             | The same three cases as an export                                  |
+| Unused export, used in its file  | Drop the `export` keyword. The symbol stays; it stops being public             |
+| Unused export, used nowhere      | Delete the symbol                                                              |
+| Unused export in a module barrel | Delete the re-export line only (step 4)                                        |
+| Unused exported type             | The same three cases as an export                                              |
 
 ### Deletion cascades
 
@@ -269,7 +269,7 @@ importer of. So a cleanup is not one pass:
 2. Re-run `npx --no-install dead-code --json`. It finds what the deletion
    orphaned
 3. Repeat until the report stops growing
-4. Run the repository's typecheck, which catches anything the graph missed
+4. Run {{#typecheck}}the typecheck, `{{typecheck}}`,{{/typecheck}}{{^typecheck}}the repository's typecheck,{{/typecheck}} which catches anything the graph missed
 
 Land the cleanup as **one commit**, with ordered passes inside it, not one
 commit per folder.

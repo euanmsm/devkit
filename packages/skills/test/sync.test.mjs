@@ -15,7 +15,7 @@ import { check } from '../src/check.mjs';
 import { readConfig } from '../src/config.mjs';
 import { MARKER_TAG, plan, sync } from '../src/sync.mjs';
 import { FIXTURES, TEMPLATE } from './pr-helpers.mjs';
-import curricularReview from './fixtures/review/curricular.mjs';
+import webappReview from './fixtures/review/webapp.mjs';
 import salesReview from './fixtures/review/sales.mjs';
 import { makeRepo, write } from './repo.mjs';
 import { runShell, SHELLS, staleBaseRepo } from './stale-base.mjs';
@@ -34,13 +34,13 @@ const EVERYTHING = {
   },
 };
 
-/** The folder holding the Curricular and Sales harness review configs. */
+/** The folder holding the web app and Sales harness review configs. */
 const REVIEW_FIXTURES = fileURLToPath(
   new URL('./fixtures/review/', import.meta.url),
 );
 
 /** The review fixtures by name, matching the PR fixtures of the same name. */
-const REVIEW_CONFIGS = { curricular: curricularReview, sales: salesReview };
+const REVIEW_CONFIGS = { webapp: webappReview, sales: salesReview };
 
 /** The example config this package ships. */
 const EXAMPLE = fileURLToPath(
@@ -391,11 +391,11 @@ describe('plan', () => {
           pr: { qaGate: true },
         },
       },
-      'pr.mjs': reexport(join(FIXTURES, 'curricular.mjs')),
+      'pr.mjs': reexport(join(FIXTURES, 'webapp.mjs')),
     });
     write(root, '.github/pull_request_template.md', TEMPLATE);
     const own = {
-      'code-review': '.devkit/review.mjs',
+      review: '.devkit/review.mjs',
       pr: '.devkit/pr.mjs',
       'pr-manual-qa': '.devkit/pr.mjs',
     };
@@ -426,7 +426,7 @@ describe('generated commands', () => {
   async function planEverything() {
     const root = makeRepo({
       'skills.json': EVERYTHING,
-      'pr.mjs': reexport(join(FIXTURES, 'curricular.mjs')),
+      'pr.mjs': reexport(join(FIXTURES, 'webapp.mjs')),
     });
     write(root, '.github/pull_request_template.md', TEMPLATE);
     return plan(root);
