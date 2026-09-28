@@ -1,6 +1,6 @@
 {
   "name": "@euanmsm/terse",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A comment contract scanner, a Claude Code edit gate and a CI check that fails only on newly added violations",
   "type": "module",
   "license": "MIT",
@@ -35,6 +35,6 @@
     "node": ">=22.11"
   },
   "dependencies": {
-    "@euanmsm/devkit-core": "0.1.0"
+    "@euanmsm/devkit-core": "0.1.1"
   }
 }
