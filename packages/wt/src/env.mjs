@@ -11,6 +11,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -45,7 +46,14 @@ export function envFiles(root, env) {
   const found = [];
 
   const walk = (dir, depth) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
       const path = join(dir, entry.name);
 
       if (entry.isDirectory()) {
@@ -54,7 +62,9 @@ export function envFiles(root, env) {
         }
       } else if (patterns.some((re) => re.test(entry.name))) {
         const rel = relative(root, path);
-        if (!tracked.has(rel)) found.push(rel);
+        if (!tracked.has(rel) && (!entry.isSymbolicLink() || isFile(path))) {
+          found.push(rel);
+        }
       }
     }
   };
@@ -64,17 +74,41 @@ export function envFiles(root, env) {
 }
 
 /**
- * Copies the listed files from one checkout into another.
+ * True when a path leads to a regular file, following symlinks.
+ *
+ * @param path - Any path
+ * @returns Whether it resolves to a file
+ */
+function isFile(path) {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Copies the listed files from one checkout into another, warning on any that fail.
  *
  * @param from - The source checkout's root
  * @param to - The target checkout's root
  * @param files - Repo-relative paths to copy
+ * @returns The paths copied
  */
 export function copyFiles(from, to, files) {
+  const copied = [];
+
   for (const rel of files) {
-    mkdirSync(dirname(join(to, rel)), { recursive: true });
-    copyFileSync(join(from, rel), join(to, rel));
+    try {
+      mkdirSync(dirname(join(to, rel)), { recursive: true });
+      copyFileSync(join(from, rel), join(to, rel));
+      copied.push(rel);
+    } catch (error) {
+      console.warn(`  Warning: could not copy ${rel}: ${error.message}`);
+    }
   }
+
+  return copied;
 }
 
 /**
@@ -111,14 +145,22 @@ export function rewritePorts(text, mappings) {
  * @param root - The checkout's root
  * @param files - Repo-relative paths to rewrite
  * @param mappings - Pairs of old port and new port
+ * @returns The paths whose contents changed
  */
 export function rewriteFiles(root, files, mappings) {
+  const changed = [];
+
   for (const rel of files) {
     const path = join(root, rel);
     const before = readFileSync(path, 'utf8');
     const after = rewritePorts(before, mappings);
-    if (after !== before) writeFileSync(path, after);
+    if (after !== before) {
+      writeFileSync(path, after);
+      changed.push(rel);
+    }
   }
+
+  return changed;
 }
 
 /**

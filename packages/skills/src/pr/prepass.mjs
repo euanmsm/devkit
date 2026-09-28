@@ -22,6 +22,20 @@ const CODE_FILE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|vue|svelte)$/;
 
 const STORY_FILE = /\.stories\.[cm]?[jt]sx?$/;
 
+// Pins the diff's output format, whatever the user's git config says.
+const DIFF_ARGS = [
+  '-c',
+  'core.quotePath=false',
+  'diff',
+  '--no-ext-diff',
+  '--no-color',
+  '--src-prefix=a/',
+  '--dst-prefix=b/',
+];
+
+// Unquoted, NUL-separated statuses and paths, with moves detected whatever diff.renames says.
+const STATUS_ARGS = ['diff', '--name-status', '-z', '--find-renames'];
+
 /**
  * Runs the prepass and returns the Workflow tool's args.
  *
@@ -63,7 +77,7 @@ export async function prPrepass(
   mkdirSync(scratchDir, { recursive: true });
 
   const diffPath = path.join(scratchDir, 'pr-qa-diff.tmp.patch');
-  writeFileSync(diffPath, git('diff', mergeBase, 'HEAD'));
+  writeFileSync(diffPath, git(...DIFF_ARGS, mergeBase, 'HEAD'));
 
   const split = await splitPatches(root, {
     base: mergeBase,
@@ -71,27 +85,16 @@ export async function prPrepass(
     out: path.join(scratchDir, 'pr-qa-patches'),
   });
 
-  const changed = git(
-    'diff',
-    '--name-only',
-    '--diff-filter=d',
-    mergeBase,
-    'HEAD',
-  )
-    .split('\n')
-    .filter(Boolean);
-  const deleted = git(
-    'diff',
-    '--name-only',
-    '--diff-filter=D',
-    mergeBase,
-    'HEAD',
-  )
-    .split('\n')
-    .filter(Boolean);
-  const tracked = git('ls-files').split('\n').filter(Boolean);
+  const { changed, deleted, moved } = parseNameStatus(
+    git(...STATUS_ARGS, mergeBase, 'HEAD'),
+  );
+  const tracked = names(git('ls-files', '-z'));
 
-  const touched = classifyFiles([...changed, ...deleted], config.layers);
+  // A file moved out of a layer still touches it, so its old path counts too.
+  const touched = classifyFiles(
+    [...changed, ...deleted, ...moved.map(({ from }) => from)],
+    config.layers,
+  );
   const tests = testsBeside(changed, tracked, config.tests);
   const stories = config.storybook ? findStories(root, changed, tracked) : [];
   const importers = findImporters(
@@ -113,6 +116,7 @@ export async function prPrepass(
       base,
       touched,
       deleted,
+      moved,
       tests,
       importers,
       stories,
@@ -121,7 +125,7 @@ export async function prPrepass(
     }),
   );
 
-  const diffStat = git('diff', '--stat', mergeBase, 'HEAD').trimEnd();
+  const diffStat = git(...DIFF_ARGS, '--stat', mergeBase, 'HEAD').trimEnd();
 
   return {
     branch,
@@ -196,6 +200,46 @@ function resolveRef(git, base) {
   throw new Error(
     `The base branch "${base}" does not exist locally or on origin.`,
   );
+}
+
+/**
+ * Splits git's `-z` output into paths.
+ *
+ * @param stdout - NUL-separated paths
+ * @returns The paths
+ */
+function names(stdout) {
+  return stdout.split('\0').filter(Boolean);
+}
+
+/**
+ * Reads git's `--name-status -z` output.
+ *
+ * @param stdout - NUL-separated statuses and paths
+ * @returns The changed paths (a moved or copied file under its new path), the deleted paths, and one `{ from, to }` per moved file
+ */
+export function parseNameStatus(stdout) {
+  const fields = names(stdout);
+  const changed = [];
+  const deleted = [];
+  const moved = [];
+
+  for (let i = 0; i < fields.length;) {
+    const status = fields[i++][0];
+
+    if (status === 'R' || status === 'C') {
+      const from = fields[i++];
+      const to = fields[i++];
+      changed.push(to);
+      if (status === 'R') moved.push({ from, to });
+    } else if (status === 'D') {
+      deleted.push(fields[i++]);
+    } else {
+      changed.push(fields[i++]);
+    }
+  }
+
+  return { changed, deleted, moved };
 }
 
 /**
@@ -509,20 +553,30 @@ export function renderFacts({
   base,
   touched,
   deleted,
+  moved = [],
   tests,
   importers,
   stories,
   readFiles,
   layers,
 }) {
+  const movedTo = new Map(moved.map(({ from, to }) => [from, to]));
   const list = (items, empty = '- (none)') =>
     items.length > 0 ? items.map((item) => `- \`${item}\``).join('\n') : empty;
+  const layerList = (items) =>
+    items
+      .map((item) =>
+        movedTo.has(item)
+          ? `- \`${item}\` — moved to \`${movedTo.get(item)}\``
+          : `- \`${item}\``,
+      )
+      .join('\n');
 
   const layerBlocks = layers
     .filter((layer) => touched.layers[layer.key].length > 0)
     .map(
       (layer) =>
-        `### ${layer.title} (${layer.section} section)\n\n${list(touched.layers[layer.key])}`,
+        `### ${layer.title} (${layer.section} section)\n\n${layerList(touched.layers[layer.key])}`,
     );
 
   const testBlocks = tests.map(
@@ -546,6 +600,10 @@ export function renderFacts({
     `## Changed files by layer\n\n${layerBlocks.join('\n\n') || '(no file matched a layer)'}`,
     `## Changed files in no layer\n\n${list(touched.unmatched)}`,
     `## Deleted files\n\n${list(deleted)}`,
+    `## Moved files\n\n${
+      moved.map(({ from, to }) => `- \`${from}\` → \`${to}\``).join('\n') ||
+      '- (none)'
+    }`,
     `## Tests beside each changed file\n\n${testBlocks.join('\n') || '- (none)'}`,
     `## Importers of each changed module\n\n${importerBlocks.join('\n') || '- (none)'}`,
   ];
@@ -607,6 +665,8 @@ export function ripgrep(args, cwd) {
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     if (error.status === 1) return '';
+    // Exit 2 with a silent stderr: --no-messages hid unreadable paths, so keep the matches.
+    if (error.status === 2 && !error.stderr?.trim()) return error.stdout;
     throw error;
   }
 }

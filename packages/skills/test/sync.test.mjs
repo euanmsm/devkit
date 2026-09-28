@@ -18,6 +18,7 @@ import { FIXTURES, TEMPLATE } from './pr-helpers.mjs';
 import curricularReview from './fixtures/review/curricular.mjs';
 import salesReview from './fixtures/review/sales.mjs';
 import { makeRepo, write } from './repo.mjs';
+import { runShell, SHELLS, staleBaseRepo } from './stale-base.mjs';
 
 const BOTH = {
   skills: { 'clean-commit-history': {}, 'clean-comments': {} },
@@ -65,6 +66,20 @@ function reexport(path) {
  */
 async function planned(root, suffix) {
   return (await plan(root)).find((file) => file.path.endsWith(suffix)).content;
+}
+
+/**
+ * Finds the fenced shell block holding a line, from that line to the fence's end.
+ *
+ * @param content - The rendered skill
+ * @param first - The start of the block's first line to run
+ * @returns The block's lines from that one on
+ */
+function fenced(content, first) {
+  const lines = content.split('\n');
+  const start = lines.findIndex((line) => line.startsWith(first));
+  const end = lines.indexOf('```', start);
+  return lines.slice(start, end).join('\n');
 }
 
 describe('readConfig', () => {
@@ -442,6 +457,28 @@ describe('generated commands', () => {
     assert.doesNotMatch(content, /reset (-q )?--soft "?\$BASE|\$BASE\.\.HEAD/);
   });
 
+  test('takes the fork point from origin when the local base is behind it', async () => {
+    const content = await planned(
+      makeRepo({ 'skills.json': BOTH }),
+      'clean-commit-history/SKILL.md',
+    );
+    const preflight = fenced(content, 'BASE=').replace(
+      'BASE=<base branch>',
+      'BASE=main',
+    );
+
+    for (const behind of ['local', 'origin', 'none']) {
+      const { repo, fork } = staleBaseRepo({ behind });
+      for (const shell of SHELLS) {
+        assert.equal(
+          runShell(shell, preflight, repo).split('\n').at(-1),
+          fork,
+          `${behind} copy behind, in ${shell}`,
+        );
+      }
+    }
+  });
+
   test('takes the base branch from $ARGUMENTS and checks it exists', async () => {
     const content = await planned(
       makeRepo({ 'skills.json': BOTH }),
@@ -532,9 +569,28 @@ describe('generated commands', () => {
     );
 
     assert.match(content, /diff --name-only --diff-filter=d HEAD/);
-    assert.match(content, /diff --name-only --diff-filter=d main\.\.\.HEAD/);
+    assert.match(content, /diff --name-only --diff-filter=d "\$FORK" HEAD/);
     assert.match(content, /ls-files --others --exclude-standard/);
     assert.doesNotMatch(content, /awk '\{print \$NF\}'/);
+  });
+
+  test('scopes a clean tree to the branch, whichever copy of the base is behind', async () => {
+    const content = await planned(
+      makeRepo({ 'skills.json': BOTH }),
+      'clean-comments/SKILL.md',
+    );
+    const scope = fenced(content, 'FORK=');
+
+    for (const behind of ['local', 'origin', 'none', 'gone']) {
+      const { repo } = staleBaseRepo({ behind });
+      for (const shell of SHELLS) {
+        assert.equal(
+          runShell(shell, scope, repo),
+          'mine.txt',
+          `${behind}, in ${shell}`,
+        );
+      }
+    }
   });
 
   test('fans out unless both the file and the finding counts are small', async () => {
@@ -691,6 +747,33 @@ describe('sync and check', () => {
       '.claude/skills/clean-comments/SKILL.md',
     ]);
     assert.deepEqual(await check(root), []);
+  });
+
+  test('leaves generated files a CRLF checkout rewrote in step, and removes them when dropped', async () => {
+    const root = makeRepo({ 'skills.json': BOTH });
+    const { written } = await sync(root);
+    for (const path of written) {
+      const target = join(root, path);
+      writeFileSync(
+        target,
+        readFileSync(target, 'utf8').replace(/\n/g, '\r\n'),
+      );
+    }
+
+    assert.deepEqual((await sync(root)).written, []);
+    assert.deepEqual(await check(root), []);
+
+    const path = join(root, '.claude/agents/comments-specialist.md');
+    writeFileSync(
+      join(root, '.devkit/skills.json'),
+      JSON.stringify({ skills: { 'clean-commit-history': {} } }),
+    );
+
+    assert.ok(
+      (await sync(root)).removed.includes(
+        '.claude/agents/comments-specialist.md',
+      ),
+    );
   });
 
   test('removes a skill folder left empty when skillsDir ends in a slash', async () => {

@@ -259,6 +259,38 @@ describe('rule 2 — scope', () => {
     passes(src('/** Does a thing. */', '', 'function local(): void {}'));
   });
 
+  test('accepts JSDoc above a decorator', () => {
+    passes(
+      `${HEADER}\n\n/** A service. */\n@Injectable()\nexport class Foo {}\n`,
+    );
+  });
+
+  test('accepts JSDoc above a decorator whose arguments span lines', () => {
+    passes(
+      `${HEADER}\n\n/** A view. */\n@Component({\n  selector: 'x',\n})\nexport class Foo {}\n`,
+    );
+  });
+
+  test('accepts JSDoc above a `//` directive', () => {
+    passes(
+      `${HEADER}\n\n/** A value. */\n// eslint-disable-next-line no-explicit-any\nexport const a: any = 1;\n`,
+    );
+  });
+
+  test('flags a decorated class with no JSDoc', () => {
+    breaks(
+      'exported-jsdoc',
+      `${HEADER}\n\n@Injectable()\nexport class Foo {}\n`,
+    );
+  });
+
+  test('flags a declaration whose JSDoc sits above a logic comment', () => {
+    breaks(
+      'exported-jsdoc',
+      `${HEADER}\n\n/** A value. */\n// The value is fixed.\nexport const a = 1;\n`,
+    );
+  });
+
   test('accepts a documented local function', () => {
     passes(src('/** Does a thing. */', 'function local(): void {}'));
   });
@@ -766,6 +798,69 @@ describe('rule 2 — brace counting', () => {
     );
   });
 
+  test('reads no comment inside a template literal spanning lines', () => {
+    passes(
+      src('export const t = `', '// We used to do this.', '// TODO fix', '`;'),
+    );
+  });
+
+  test('keeps checking after a template line opening with `/*`', () => {
+    breaks(
+      'exported-jsdoc',
+      src('export const t = `', '/* not a comment', '`;', 'function g() {}'),
+    );
+  });
+
+  test('reads a comment inside a template expression spanning lines', () => {
+    assert.deepEqual(
+      rules(src('export const t = `a ${f(', '  // We used to.', ')} b`;')),
+      ['no-history', 'no-person'],
+    );
+  });
+
+  test('reads a regex after `return` as a regex, not a template', () => {
+    breaks(
+      'todo-form',
+      src(
+        '/**',
+        ' * Tests.',
+        ' *',
+        ' * @param s - Text',
+        ' * @returns Whether it has a backtick',
+        ' */',
+        'function f(s) {',
+        '  return /`/.test(s);',
+        '}',
+        '',
+        '// TODO fix',
+      ),
+    );
+  });
+
+  test('reads no template in a comment opened mid-line', () => {
+    assert.ok(
+      rules(
+        src(
+          'export const E = () => (',
+          '  <div>',
+          '    {/*',
+          '      the ` key toggles it',
+          '    */}',
+          '  </div>',
+          ');',
+          '// TODO fix',
+        ),
+      ).includes('todo-form'),
+    );
+  });
+
+  test('reads comments again once a template closes', () => {
+    assert.deepEqual(
+      rules(src('export const t = `', 'text', '`;', '// We used to.')),
+      ['no-history', 'no-person'],
+    );
+  });
+
   test('balances a JSX comment, whose braces sit either side of `/* */`', () => {
     breaks(
       'exported-jsdoc',
@@ -837,6 +932,20 @@ describe('rule 5 — header cap', () => {
     assert.equal(found[0].rule, 'header-cap');
   });
 
+  test('catches a header grown past the cap by a line inserted above it', () => {
+    const body = '\n/** F. */\nexport const a = 1;\n';
+    const overview = Array.from({ length: 4 }, (_, i) => `// Line ${i}.`).join(
+      '\n',
+    );
+    const before = `${BAR}\n// Fixture\n${BAR}\n//\n${overview}\n${body}`;
+    const after = `${BAR}\n// Fixture\n${BAR}\n//\n// Inserted.\n${overview}\n${body}`;
+
+    const found = newFindings(before, after, [{ from: 5, to: 5 }]);
+
+    assert.equal(found.length, 1);
+    assert.equal(found[0].rule, 'header-cap');
+  });
+
   test('does not absorb a comment block sitting below the header', () => {
     const source = `${BAR}\n// Fixture\n${BAR}\n//\n// Overview.\n\n// The regex matches a slug.\n// The regex matches a code.\n\n/** F. */\nexport const a = 1;\n`;
 
@@ -897,6 +1006,25 @@ describe('rule 6 — JSDoc cap', () => {
   });
 });
 
+describe('rule 6 — JSDoc cap, grown in the middle', () => {
+  test('catches a block grown past the cap by a line inserted above it', () => {
+    const block = (extra) => [
+      '/**',
+      ...extra,
+      ...Array.from({ length: 4 }, (_, i) => ` * Line ${i}.`),
+      ' */',
+      'export const a = 1;',
+    ];
+    const before = src(...block([]));
+    const after = src(...block([' * Extra.']));
+
+    const found = newFindings(before, after, [{ from: 9, to: 9 }]);
+
+    assert.equal(found.length, 1);
+    assert.equal(found[0].rule, 'jsdoc-cap');
+  });
+});
+
 describe('rule 7 — logic comment cap', () => {
   test('flags a two-line logic comment', () => {
     breaks(
@@ -911,6 +1039,37 @@ describe('rule 7 — logic comment cap', () => {
 
   test('accepts a single line', () => {
     passes(src('// The regex matches a slug.', 'export const a = 1;'));
+  });
+
+  test('catches a line added below an existing one', () => {
+    const before = src('// The regex matches a slug.', 'export const a = 1;');
+    const after = src(
+      '// The regex matches a slug.',
+      '// The regex matches a code.',
+      'export const a = 1;',
+    );
+
+    const found = newFindings(before, after, [{ from: 9, to: 9 }]);
+
+    assert.deepEqual(
+      found.map((f) => f.rule),
+      ['logic-comment-length'],
+    );
+  });
+
+  test('leaves a run the file already had alone when an edit rewords it', () => {
+    const before = src(
+      '// The regex matches a slug.',
+      '// The regex matches a code.',
+      'export const a = 1;',
+    );
+    const after = src(
+      '// The regex matches a slug.',
+      '// The regex matches an id.',
+      'export const a = 1;',
+    );
+
+    assert.deepEqual(newFindings(before, after, [{ from: 9, to: 9 }]), []);
   });
 });
 
@@ -990,6 +1149,57 @@ describe('rule 16 — marker form', () => {
 
   test('accepts `TODO(CUR-1234):`', () => {
     passes(src('// TODO(CUR-1234): drop the shim.', 'export const a = 1;'));
+  });
+});
+
+describe('one-line JSDoc content', () => {
+  test('flags a banned phrase in a one-line block above a declaration', () => {
+    assert.deepEqual(
+      rules(
+        src(
+          '/** We previously used this, see ABC-123. */',
+          'export const a = 1;',
+        ),
+      ),
+      ['no-history', 'no-issue-id', 'no-person'],
+    );
+  });
+
+  test('flags a bare TODO in a one-line block', () => {
+    breaks('todo-form', src('/** TODO: fix this. */', 'export const a = 1;'));
+  });
+
+  test('flags a disallowed tag in a one-line block', () => {
+    breaks('jsdoc-tags', src('/** @example f() */', 'export const a = 1;'));
+  });
+
+  test('flags a one-line block over the character cap', () => {
+    breaks(
+      'comment-length',
+      src(`/** ${'x'.repeat(101)} */`, 'export const a = 1;'),
+    );
+  });
+
+  test('accepts an allowed tag in a one-line block', () => {
+    passes(src('/** @deprecated */', 'export const a = 1;'));
+  });
+
+  test('accepts a tool pragma in a one-line block', () => {
+    for (const pragma of [
+      '@vitest-environment jsdom',
+      '@jest-environment jsdom',
+      '@jsxImportSource @emotion/react',
+    ])
+      assert.deepEqual(
+        scan(`${HEADER}\n/** ${pragma} */\nimport x from 'y';\n`, 'src/a.tsx'),
+        [],
+      );
+  });
+
+  test('names a hyphenated tag in full', () => {
+    const found = scan(src('/** @made-up x */', 'export const a = 1;'));
+
+    assert.equal(found[0].message, '`@made-up` is not an allowed tag.');
   });
 });
 

@@ -5,7 +5,15 @@
 // Runs the `wt` bin against throwaway repositories, end to end.
 
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -41,6 +49,22 @@ function fixture(config = {}) {
     'URL=http://localhost:3000\nDOCS=:3001\nOTHER=:30001\n',
   );
   return repo;
+}
+
+/**
+ * Makes a folder holding a fake `supabase` that logs its arguments.
+ *
+ * @param base - The temp folder
+ * @returns The folder to put on the PATH
+ */
+function fakeSupabase(base) {
+  const bin = join(base, 'sb-bin');
+  write(
+    join(bin, 'supabase'),
+    `#!/bin/sh\necho "$@" >> "${join(base, 'supabase.log')}"\n`,
+  );
+  chmodSync(join(bin, 'supabase'), 0o755);
+  return bin;
 }
 
 describe('creating a worktree', () => {
@@ -175,6 +199,42 @@ describe('creating a worktree', () => {
     assert.equal(existsSync(join(base, 'app-wt', 'feat', 'after.out')), true);
   });
 
+  test('skips an unreadable folder and a broken env symlink in the main checkout', (t) => {
+    const { base, root } = fixture();
+    const locked = join(root, 'pgdata');
+    write(join(locked, '.env'), 'X=1\n');
+    chmodSync(locked, 0o000);
+    t.after(() => chmodSync(locked, 0o755));
+    symlinkSync('../missing/.env', join(root, '.env.broken'));
+
+    const { status, out } = wt(root, ['feat', '-b', 'feat']);
+
+    assert.equal(status, 0, out);
+    assert.equal(
+      existsSync(join(base, 'app-wt', 'feat', 'web', '.env.local')),
+      true,
+    );
+    assert.equal(existsSync(join(base, 'app-wt', 'feat', 'hook.out')), true);
+  });
+
+  test('skips a slot another create has claimed, and reclaims a dead one', () => {
+    const { root } = fixture();
+    const dead = spawnSync(process.execPath, ['-e', '']).pid;
+    write(join(root, '.git', 'wt-slot-1.lock'), String(process.pid));
+    write(join(root, '.git', 'wt-slot-2.lock'), String(dead));
+
+    wt(root, ['one', '-b', 'one']);
+    wt(root, ['two', '-b', 'two']);
+
+    const slots = wt(root, ['list']).out;
+    assert.match(slots, /one\s+one\s+2\s/);
+    assert.match(slots, /two\s+two\s+3\s/);
+    assert.deepEqual(
+      readdirSync(join(root, '.git')).filter((f) => f.startsWith('wt-slot-')),
+      ['wt-slot-1.lock'],
+    );
+  });
+
   test('refuses a config with an unknown setting', () => {
     const { root } = fixture({ directory: '../x' });
 
@@ -206,6 +266,19 @@ describe('deleting a worktree', () => {
     assert.match(git(root, 'branch', '--list', 'feat'), /feat/);
   });
 
+  test('skips the preDelete hooks when the folder is already gone', () => {
+    const { base, root } = fixture({ hooks: { preDelete: ['true'] } });
+    wt(root, ['feat', '-b', 'feat']);
+    rmSync(join(base, 'app-wt', 'feat'), { recursive: true, force: true });
+
+    const { status, out } = wt(root, ['-d', 'feat']);
+
+    assert.equal(status, 0, out);
+    assert.match(out, /skipping the preDelete hooks/);
+    assert.equal(git(root, 'branch', '--list', 'feat'), '');
+    assert.equal(git(root, 'worktree', 'list').split('\n').length, 1);
+  });
+
   test('fails on an unknown name', () => {
     const { root } = fixture();
 
@@ -235,6 +308,19 @@ describe('ports', () => {
     write(env, readFileSync(env, 'utf8').replace('OFFSET=100', 'OFFSET=700'));
 
     assert.equal(wt(join(base, 'app-wt', 'feat'), ['port', 'app']).out, '3700');
+  });
+
+  test('reads the local config from the main checkout inside a worktree', () => {
+    const { base, root } = fixture();
+    write(
+      join(root, '.devkit', 'wt.local.json'),
+      JSON.stringify({ ports: { step: 50 } }),
+    );
+    wt(root, ['feat', '-b', 'feat']);
+    const env = join(base, 'app-wt', 'feat', 'web', '.env.local');
+    write(env, readFileSync(env, 'utf8').replace(/WORKTREE.*\n/, ''));
+
+    assert.equal(wt(join(base, 'app-wt', 'feat'), ['port', 'app']).out, '3050');
   });
 
   test('names the known services for an unknown one', () => {
@@ -317,6 +403,80 @@ describe('supabase', () => {
       'select 1;\n',
     );
     assert.match(out, /Supabase: not booted/);
+  });
+
+  test('rebuilds a missing override instead of using the main stack config', () => {
+    const { base, root } = fixture({ supabase: {} });
+    const bin = fakeSupabase(base);
+
+    const created = wt(root, ['feat', '-b', 'feat'], [bin]);
+    assert.match(created.out, /no supabase\/config.toml on this branch/);
+
+    const feat = join(base, 'app-wt', 'feat');
+    write(join(feat, 'supabase', 'config.toml'), 'project_id = "demo"\n');
+    const { status, out } = wt(feat, ['supabase', 'status'], [bin]);
+
+    assert.equal(status, 0, out);
+    assert.equal(
+      readFileSync(join(base, 'supabase.log'), 'utf8'),
+      '--workdir .wt-supabase status\n',
+    );
+    assert.match(
+      readFileSync(
+        join(feat, '.wt-supabase', 'supabase', 'config.toml'),
+        'utf8',
+      ),
+      /project_id = "demo-wt1"/,
+    );
+  });
+
+  test('shifts the env files to the rebuilt stack, once', () => {
+    const { base, root } = fixture({
+      supabase: { envFiles: ['web/.env.local'] },
+    });
+    write(
+      join(root, 'web', '.env.local'),
+      'SUPABASE_URL=http://127.0.0.1:54321\nURL=http://localhost:3000\n',
+    );
+    const bin = fakeSupabase(base);
+    wt(root, ['feat', '-b', 'feat'], [bin]);
+
+    const feat = join(base, 'app-wt', 'feat');
+    const env = join(feat, 'web', '.env.local');
+    write(
+      join(feat, 'supabase', 'config.toml'),
+      'project_id = "demo"\n\n[api]\nport = 54321\n',
+    );
+    const { status, out } = wt(feat, ['supabase', 'check'], [bin]);
+
+    assert.equal(status, 0, out);
+    assert.match(out, /Shifted the Supabase ports in web\/\.env\.local/);
+    assert.match(out, /Supabase target: http:\/\/127\.0\.0\.1:55321/);
+    assert.match(
+      readFileSync(env, 'utf8'),
+      /^SUPABASE_URL=http:\/\/127\.0\.0\.1:55321\nURL=http:\/\/localhost:3100\n/,
+    );
+
+    rmSync(join(feat, '.wt-supabase'), { recursive: true });
+    assert.equal(wt(feat, ['supabase', 'check'], [bin]).status, 0);
+    assert.match(readFileSync(env, 'utf8'), /127\.0\.0\.1:55321\n/);
+  });
+
+  test('reads a supabase block set only in the local config inside a worktree', () => {
+    const { base, root } = fixture();
+    write(
+      join(root, '.devkit', 'wt.local.json'),
+      JSON.stringify({ supabase: {} }),
+    );
+    wt(root, ['feat', '-b', 'feat', '--no-supabase']);
+
+    const { status, out } = wt(join(base, 'app-wt', 'feat'), [
+      'supabase',
+      'check',
+    ]);
+
+    assert.equal(status, 0, out);
+    assert.match(out, /Supabase target: http:\/\/127\.0\.0\.1:54321/);
   });
 
   test('counts a slot held by a worktree the shell script made', () => {

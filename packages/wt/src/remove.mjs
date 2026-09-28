@@ -33,16 +33,21 @@ export async function remove({
   const slot = slotOf(path);
   const shift = slot * config.ports.step;
 
-  try {
-    await runHooks(config.hooks.preDelete, path, {
-      WT_NAME: name,
-      WT_PATH: path,
-      WT_BRANCH: branch ?? '',
-      WT_SLOT: String(slot),
-      WT_OFFSET: String(shift),
-    });
-  } catch (error) {
-    throw new Error(`Delete stopped, nothing removed: ${error.message}`);
+  if (!existsSync(path)) {
+    if (config.hooks.preDelete.length > 0)
+      console.log(`${path} is already gone, skipping the preDelete hooks.`);
+  } else {
+    try {
+      await runHooks(config.hooks.preDelete, path, {
+        WT_NAME: name,
+        WT_PATH: path,
+        WT_BRANCH: branch ?? '',
+        WT_SLOT: String(slot),
+        WT_OFFSET: String(shift),
+      });
+    } catch (error) {
+      throw new Error(`Delete stopped, nothing removed: ${error.message}`);
+    }
   }
 
   if (slot > 0 && existsSync(path)) {

@@ -9,7 +9,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { repoRoot } from '@euanmsm/devkit-core';
 import { loadWtConfig } from '../config.mjs';
-import { OVERRIDE_DIR } from './project.mjs';
+import { configMain } from '../git.mjs';
+import { OVERRIDE_DIR, getValue } from './project.mjs';
 
 const DEFAULT_API_PORT = 54321;
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '0.0.0.0', '::1']);
@@ -62,7 +63,7 @@ function readProcessEnv(key) {
  */
 function supabaseConfig(root) {
   try {
-    return loadWtConfig(root).supabase;
+    return loadWtConfig(root, configMain(root)).supabase;
   } catch {
     return null;
   }
@@ -90,22 +91,9 @@ function configPath(root, dir) {
  * @returns The pinned port, or null when the table omits it
  */
 function readApiPort(path) {
-  let inApi = false;
-
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
-    const trimmed = line.trim();
-
-    if (trimmed.startsWith('[')) {
-      inApi = trimmed === '[api]';
-      continue;
-    }
-    if (!inApi) continue;
-
-    const match = trimmed.match(/^port\s*=\s*(\d+)/);
-    if (match) return Number(match[1]);
-  }
-
-  return null;
+  const value = getValue(readFileSync(path, 'utf8'), 'api', 'port');
+  const match = value?.match(/^(\d+)/);
+  return match ? Number(match[1]) : null;
 }
 
 /**

@@ -87,6 +87,15 @@ describe('changedSinceCommit', () => {
     assert.deepEqual(changedSinceCommit(root).sort(), ['b.ts']);
   });
 
+  test('sees a file whose name holds a non-ASCII character', () => {
+    const root = fixture();
+    writeFileSync(join(root, 'naïve.ts'), 'export const b = 1;\n');
+    writeFileSync(join(root, 'a.ts'), `${CLEAN}\n// A change.\n`);
+    git(root, 'mv', 'a.ts', 'café.ts');
+
+    assert.deepEqual(changedSinceCommit(root).sort(), ['café.ts', 'naïve.ts']);
+  });
+
   test('ignores a file the contract does not govern', () => {
     const root = fixture();
     writeFileSync(join(root, 'notes.md'), '# notes\n');
@@ -124,6 +133,40 @@ describe('unreported', () => {
 
     assert.equal(second.length, 1);
     assert.match(second[0], /todo-form/);
+  });
+
+  test("reports a later violation sharing the first one's message", () => {
+    const root = fixture();
+    append(root, 'function a() {}');
+
+    const first = unreported(root, 'session-a');
+    append(root, 'function a() {}\nfunction b() {}');
+    const second = unreported(root, 'session-a');
+
+    assert.equal(first.length, 1);
+    assert.equal(second.length, 1);
+    assert.match(second[0], /^a\.ts:18 {2}\[exported-jsdoc\]/);
+  });
+
+  test('reports two identical violations written at once', () => {
+    const root = fixture();
+    append(root, '// We do this.\nconst x = 1;\n// We do this.');
+
+    const found = unreported(root, 'session-a');
+
+    assert.equal(found.filter((l) => l.includes('no-person')).length, 2);
+  });
+
+  test('reports a violation again once it is fixed and written back', () => {
+    const root = fixture();
+    append(root, '// We previously did this.');
+    assert.equal(unreported(root, 'session-a').length, 2);
+
+    writeFileSync(join(root, 'a.ts'), CLEAN);
+    assert.deepEqual(unreported(root, 'session-a'), []);
+
+    append(root, '// We previously did this.');
+    assert.equal(unreported(root, 'session-a').length, 2);
   });
 
   test('keeps one session from silencing another', () => {

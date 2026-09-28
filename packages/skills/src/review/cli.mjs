@@ -112,11 +112,32 @@ export function parseFlags(argv) {
  *
  * @param root - The repository root
  * @param listFile - The list file's path relative to the root
- * @returns The trimmed paths
+ * @returns The trimmed paths, each inside the root rewritten from it the way tools print them
  */
 function readFileList(root, listFile) {
   return readFileSync(path.resolve(root, listFile), 'utf8')
     .split('\n')
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((line) => fromRoot(root, line));
+}
+
+/**
+ * Rewrites a path inside the root as a plain path from it, the way tools report it.
+ *
+ * @param root - The repository root
+ * @param file - A path relative to the root, or absolute
+ * @returns The path from the root, or the path unchanged when it is the root or outside it
+ */
+function fromRoot(root, file) {
+  const relative = path.relative(root, path.resolve(root, file));
+  if (
+    !relative ||
+    path.isAbsolute(relative) ||
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`)
+  ) {
+    return file;
+  }
+  return relative.split(path.sep).join('/');
 }

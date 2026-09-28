@@ -11,12 +11,20 @@ import { parseArgs } from 'node:util';
 import { repoRoot } from '@euanmsm/devkit-core';
 import { CONFIG_NAME, LOCAL_NAME, loadWtConfig } from './config.mjs';
 import { create } from './create.mjs';
+import { envFiles, rewriteFiles } from './env.mjs';
+import { configMain } from './git.mjs';
 import { kill } from './kill.mjs';
 import { list } from './list.mjs';
 import { port } from './ports.mjs';
 import { remove } from './remove.mjs';
 import { exec } from './run.mjs';
-import { workdir } from './supabase/project.mjs';
+import { slotOf } from './slots.mjs';
+import {
+  OVERRIDE_DIR,
+  buildProject,
+  supabaseMappings,
+  workdir,
+} from './supabase/project.mjs';
 import {
   bypassWarning,
   bypassed,
@@ -80,8 +88,30 @@ worktree, go in .devkit/${LOCAL_NAME}, which belongs in .gitignore.`;
  */
 async function supabase(args) {
   const root = repoRoot();
-  const sb = loadWtConfig(root).supabase;
+  const config = loadWtConfig(root, configMain(root));
+  const sb = config.supabase;
   if (!sb) throw new Error(`No "supabase" block in .devkit/${CONFIG_NAME}.`);
+
+  const slot = slotOf(root);
+  if (slot > 0 && workdir(root, sb) !== OVERRIDE_DIR) {
+    const appPort = sb.appService
+      ? config.ports.services[sb.appService] + slot * config.ports.step
+      : null;
+    if (buildProject(root, sb, slot, appPort)) {
+      console.log(
+        `Rebuilt this worktree's Supabase override in ${OVERRIDE_DIR}/.`,
+      );
+      // A tree made before its branch had a config.toml still has main's ports.
+      const shifted = rewriteFiles(
+        root,
+        envFiles(root, config.env),
+        supabaseMappings(sb, slot),
+      );
+      if (shifted.length > 0) {
+        console.log(`Shifted the Supabase ports in ${shifted.join(', ')}`);
+      }
+    }
+  }
 
   if (args[0] === 'check') {
     const target = resolveSupabaseTarget({ root });

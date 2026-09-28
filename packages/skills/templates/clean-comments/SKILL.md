@@ -54,10 +54,17 @@ git -c core.quotePath=false ls-files --others --exclude-standard
 ```
 
 **No paths, working tree clean** → the branch's own changes, minus the files it
-deleted:
+deleted, from where it left `{{baseBranch}}`. That is the local branch or
+`origin/{{baseBranch}}`, whichever is further along the branch's history, so a
+copy that was never pulled does not add commits that landed upstream:
 
 ```bash
-git -c core.quotePath=false diff --name-only --diff-filter=d {{baseBranch}}...HEAD
+FORK="$(git merge-base {{baseBranch}} HEAD 2>/dev/null)"
+UPSTREAM_FORK="$(git merge-base refs/remotes/origin/{{baseBranch}} HEAD 2>/dev/null)"
+if [ -n "$UPSTREAM_FORK" ] && { [ -z "$FORK" ] || git merge-base --is-ancestor "$FORK" "$UPSTREAM_FORK"; }; then
+  FORK="$UPSTREAM_FORK"
+fi
+git -c core.quotePath=false diff --name-only --diff-filter=d "$FORK" HEAD
 ```
 
 Each line is one path. A path can contain spaces, so quote every path in every

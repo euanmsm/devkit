@@ -19,9 +19,9 @@ import { ownProjectId, stopStack } from './supabase/stack.mjs';
 // Matches the processes behind Docker's published ports, which wt never signals.
 const DOCKER = /docker|vpnkit|orbstack|colima|limactl|rootlesskit/i;
 
-// Matches shells, editors and agent sessions, which `--all` never signals.
+// Matches shells, editors, terminal multiplexers and agent sessions, which `--all` never signals.
 const PROTECTED =
-  /^-?(sh|bash|zsh|fish|dash|ksh|tcsh|csh|login)$|^(code|cursor|electron|vim|nvim|vi|claude)$|^(code|cursor) helper/i;
+  /^-?(sh|bash|zsh|fish|dash|ksh|tcsh|csh|login|pwsh|nu|xonsh|elvish)$|^(code|cursor|electron|vim|nvim|vi|gvim|mvim|macvim|nano|pico|micro|hx|helix|kak|mg|emacsclient|zed|subl|sublime_text|sublime text|claude)$|^(code|cursor|zed) helper|^(emacs|tmux|screen|zellij)\b/i;
 
 const GRACE_MS = 5000;
 

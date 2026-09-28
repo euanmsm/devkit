@@ -120,8 +120,14 @@ subtraction.
   under the same name and type in a file the branch added or renamed, has moved.
   This catches moves git does not pair, such as near-identical files or a file
   rewritten around the export.
+- A project or workspace folder the branch moved is analysed where it was at the
+  fork point, found through the rename of its `package.json`, so its old
+  findings carry across too. It counts as moved only when most of its files
+  moved with it: a deleted package and an unrelated new one stay apart.
 - A file that was wholly unused at the fork point already held all its dead
-  exports, so importing one of them does not make the rest new.
+  exports, so importing one of them does not make the rest new. This holds even
+  when `include` leaves out `files`: the fork point always looks for unused
+  files.
 - A workspace the branch added is left out at the fork point, and a project the
   branch created has no findings there: everything in them is new.
 - When HEAD is the fork point and nothing has changed, the fork point is not

@@ -66,7 +66,8 @@ A script, not an agent. It:
 3. Writes the diff, one patch file per changed file, and a **facts file** to the
    scratch folder. The facts file lists:
    - the changed files sorted into layers, and the files in no layer
-   - deleted files
+   - deleted files, and moved files with both paths; a moved file also counts in
+     its old path's layer, marked with where it moved to
    - the tests beside each changed file — same folder or a `__tests__` folder
      beside it, same name stem
    - the files importing each changed module (at most 30 per module), found with
@@ -403,7 +404,12 @@ keeps the checklist honest about which commit was tested:
 
 Only a checklist comment from an owner, member or collaborator counts (the REST
 API's `author_association`). Anyone else who can comment could otherwise post a
-marked, pre-ticked checklist and turn the gate green.
+marked, pre-ticked checklist and turn the gate green. The gate reads that field
+with the workflow's `GITHUB_TOKEN`, which cannot see private organisation
+membership, so a member whose membership is private and who has write access
+only through the organisation or a team can show as `CONTRIBUTOR` there, while
+`/pr` still sees them as a member. Their checklist then never counts. Make the
+membership public, or add them to the repository as a collaborator.
 
 Make `Manual QA` a required status check in the branch ruleset for it to block
 merges. Drafts are not skipped, since `/pr` opens drafts. A fork's PR gets a

@@ -49,7 +49,12 @@ git rev-parse --verify --quiet "$BASE^{commit}" || echo "ABORT: no branch $BASE"
 git rev-parse --abbrev-ref HEAD
 git status --porcelain
 git rev-parse HEAD
-git merge-base "$BASE" HEAD
+FORK="$(git merge-base "$BASE" HEAD)"
+UPSTREAM_FORK="$(git merge-base "refs/remotes/origin/$BASE" HEAD 2>/dev/null)"
+if [ -n "$UPSTREAM_FORK" ] && git merge-base --is-ancestor "$FORK" "$UPSTREAM_FORK" 2>/dev/null; then
+  FORK="$UPSTREAM_FORK"
+fi
+echo "$FORK"
 ```
 
 - Abort if the base branch does not exist.
@@ -62,7 +67,10 @@ git merge-base "$BASE" HEAD
   stacks onto `FORK`, never onto the base's tip: if the base has moved on,
   resetting onto its tip would make the new commits revert everything it gained
   since. Rebasing onto the newer base is a separate step for the user, not part
-  of this skill.
+  of this skill. When `origin/<base>` is further along the branch's history than
+  the local base, as it is when the local copy was never pulled, `FORK` comes
+  from `origin/<base>`, so commits that landed upstream are not folded into the
+  branch's own.
 
 Then check what runs on every commit:
 

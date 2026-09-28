@@ -182,14 +182,15 @@ function makeRepo() {
  *
  * @param root - Repository root, used as the working directory
  * @param payload - The hook payload
+ * @param cwd - Working directory, when the session is not at the root
  * @returns The hook's stdout, empty when it allowed the call
  */
-function runHook(root, payload) {
+function runHook(root, payload, cwd = root) {
   const { PREFLIGHT, ...env } = process.env;
   const result = spawnSync(process.execPath, [BIN], {
     input: JSON.stringify(payload),
     encoding: 'utf8',
-    cwd: root,
+    cwd,
     env,
   });
   assert.equal(result.status, 0);
@@ -247,6 +248,108 @@ describe('the hook end to end', () => {
     });
 
     assert.match(reason(out), /BLOCKED — src\/x\.ts /);
+  });
+});
+
+describe('the hook across checkouts', () => {
+  test('gates a nested worktree by its own map, not the session root', () => {
+    const { root, transcript } = makeRepo();
+    const worktree = join(root, '.claude', 'worktrees', 'w');
+    mkdirSync(join(worktree, '.devkit'), { recursive: true });
+    writeFileSync(join(worktree, '.git'), 'gitdir: elsewhere\n');
+    writeFileSync(
+      join(worktree, '.devkit', 'preflight.json'),
+      JSON.stringify(MAP),
+    );
+
+    const out = runHook(root, {
+      tool_name: 'Write',
+      tool_input: { file_path: join(worktree, 'src', 'x.ts') },
+      transcript_path: transcript,
+    });
+
+    assert.match(reason(out), /BLOCKED — src\/x\.ts /);
+  });
+
+  test('gates a file in the outer repo when the session sits in a nested one', () => {
+    const { root, transcript } = makeRepo();
+    const nested = join(root, 'vendor', 'lib');
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, '.git'), 'gitdir: elsewhere\n');
+
+    const payload = {
+      tool_name: 'Edit',
+      tool_input: { file_path: join(root, 'src', 'x.ts') },
+      transcript_path: transcript,
+    };
+
+    assert.match(
+      reason(runHook(root, payload, nested)),
+      /BLOCKED — src\/x\.ts /,
+    );
+    assert.match(
+      reason(runHook(root, { ...payload, cwd: nested })),
+      /BLOCKED — src\/x\.ts /,
+    );
+  });
+
+  test('gates a file when the session is outside any repository', () => {
+    const { root, transcript } = makeRepo();
+    const outside = realpathSync(mkdtempSync(join(tmpdir(), 'elsewhere-')));
+
+    const out = runHook(
+      root,
+      {
+        tool_name: 'Edit',
+        tool_input: { file_path: join(root, 'src', 'x.ts') },
+        transcript_path: transcript,
+      },
+      outside,
+    );
+
+    assert.match(reason(out), /BLOCKED — src\/x\.ts /);
+  });
+
+  test('gates a nested checkout without a map by the outer rule naming it', () => {
+    const { root, transcript } = makeRepo();
+    writeFileSync(
+      join(root, '.devkit', 'preflight.json'),
+      JSON.stringify({
+        ...MAP,
+        primary: [
+          { pattern: '^vendor/lib/', skills: ['vendor-rules'] },
+          ...MAP.primary,
+        ],
+      }),
+    );
+    const nested = join(root, 'vendor', 'lib');
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, '.git'), 'gitdir: elsewhere\n');
+
+    const out = runHook(root, {
+      tool_name: 'Edit',
+      tool_input: { file_path: join(nested, 'src', 'a.ts') },
+      transcript_path: transcript,
+    });
+
+    assert.match(reason(out), /BLOCKED — vendor\/lib\/src\/a\.ts /);
+    assert.match(reason(out), /vendor-rules/);
+  });
+
+  test('falls back to the outer map when a nested one will not parse', () => {
+    const { root, transcript } = makeRepo();
+    const nested = join(root, 'src', 'vendor');
+    mkdirSync(join(nested, '.devkit'), { recursive: true });
+    writeFileSync(join(nested, '.git'), 'gitdir: elsewhere\n');
+    writeFileSync(join(nested, '.devkit', 'preflight.json'), '{ nope');
+
+    const out = runHook(root, {
+      tool_name: 'Edit',
+      tool_input: { file_path: join(nested, 'x.ts') },
+      transcript_path: transcript,
+    });
+
+    assert.match(reason(out), /BLOCKED — src\/vendor\/x\.ts /);
   });
 });
 

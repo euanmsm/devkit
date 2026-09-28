@@ -62,6 +62,13 @@ round. `universal` rules always add on top of whichever primary rule matched.
 
 A path no rule names requires nothing, so the gate is opt-in per directory.
 
+A file answers to the map of the checkout it sits in, not the one the session
+started in. A worktree or nested repository under your root follows its own
+`.devkit/preflight.json`. One without a map, or with one that will not parse,
+falls back to the nearest enclosing checkout that has one, and the path is
+matched from that checkout's root. `tools` rules are read the same way, starting
+from the session's working directory.
+
 ### Gating a tool by name
 
 `tools` rules match the tool name instead of a path, so they can gate calls that
@@ -93,7 +100,7 @@ context, so it has not read those conventions either.
 ## When it does not block
 
 The gate fails open. A missing map, an unreadable transcript, a subagent
-transcript it cannot find, a file outside the repository or a malformed payload
+transcript it cannot find, a file outside any repository or a malformed payload
 all allow the edit rather than halting work on a tool that cannot do its job.
 `PREFLIGHT=off` disables it for one command.
 

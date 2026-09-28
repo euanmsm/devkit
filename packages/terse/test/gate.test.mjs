@@ -36,13 +36,26 @@ const HEADER =
  * @returns What the hook wrote to stdout, empty when it allowed the edit
  */
 function hook(name, contents) {
+  return edit(name, null, { content: contents });
+}
+
+/**
+ * Runs the hook over any tool call, in a throwaway repository.
+ *
+ * @param name - Repo-relative path the call targets
+ * @param existing - What the file holds beforehand, null for no file
+ * @param toolInput - The call's input, less its `file_path`
+ * @returns What the hook wrote to stdout, empty when it allowed the call
+ */
+function edit(name, existing, toolInput) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'terse-')));
   mkdirSync(join(root, '.git'));
   mkdirSync(join(root, '.devkit'));
   writeFileSync(join(root, '.devkit', 'terse.json'), '{}');
+  if (existing !== null) writeFileSync(join(root, name), existing);
 
   const payload = JSON.stringify({
-    tool_input: { file_path: join(root, name), content: contents },
+    tool_input: { file_path: join(root, name), ...toolInput },
   });
 
   return execFileSync(process.execPath, [BIN], {
@@ -74,6 +87,36 @@ describe('the hook end to end', () => {
     );
 
     assert.match(out, /has no @param/);
+  });
+
+  test('denies a multi-line Edit to a CRLF file adding a violation', () => {
+    const existing = `${HEADER}\n/** A. */\nexport const a = 1;\n`.replace(
+      /\n/g,
+      '\r\n',
+    );
+    const out = edit('a.ts', existing, {
+      old_string: '/** A. */\nexport const a = 1;',
+      new_string:
+        '/** A. */\n// We changed this as discussed.\nexport const a = 1;',
+    });
+
+    assert.match(out, /"permissionDecision":"deny"/);
+    assert.match(out, /no-conversation/);
+  });
+
+  test('allows a clean multi-line Edit to a CRLF file', () => {
+    const existing = `${HEADER}\n/** A. */\nexport const a = 1;\n`.replace(
+      /\n/g,
+      '\r\n',
+    );
+
+    assert.equal(
+      edit('a.ts', existing, {
+        old_string: '/** A. */\nexport const a = 1;',
+        new_string: '/** A. */\nexport const a = 2;',
+      }),
+      '',
+    );
   });
 
   test('allows an edit whose JSDoc is complete', () => {
@@ -128,6 +171,25 @@ describe('applyEdit', () => {
 
     assert.equal(result.after, 'new\n');
     assert.equal(result.span, null);
+  });
+
+  test('matches a multi-line old_string against a CRLF file', () => {
+    const result = applyEdit('a\r\nb\r\nc\r\n', {
+      old_string: 'a\nb',
+      new_string: 'x\ny',
+    });
+
+    assert.equal(result.after, 'x\ny\nc\n');
+    assert.deepEqual(result.span, [{ from: 1, to: 2 }]);
+  });
+
+  test('leaves a CRLF file alone when old_string matches it as written', () => {
+    const result = applyEdit('a\r\nb\r\n', {
+      old_string: 'b',
+      new_string: 'z',
+    });
+
+    assert.equal(result.after, 'a\r\nz\r\n');
   });
 
   test('returns null when old_string is not in the source', () => {

@@ -42,13 +42,13 @@ function git(root, ...args) {
  * @returns Repo-relative paths, tracked changes and new files alike
  */
 export function changedSinceCommit(root) {
+  // NUL-separated output leaves a path unquoted, whatever characters it holds.
   const tracked =
-    git(root, 'diff', '--name-only', '--diff-filter=d', 'HEAD') ?? '';
+    git(root, 'diff', '--name-only', '-z', '--diff-filter=d', 'HEAD') ?? '';
   const untracked =
-    git(root, 'ls-files', '--others', '--exclude-standard') ?? '';
+    git(root, 'ls-files', '-z', '--others', '--exclude-standard') ?? '';
 
-  return [...tracked.split('\n'), ...untracked.split('\n')]
-    .map((f) => f.trim())
+  return [...tracked.split('\0'), ...untracked.split('\0')]
     .filter(Boolean)
     .filter(governs);
 }
@@ -58,7 +58,7 @@ export function changedSinceCommit(root) {
  *
  * @param root - Repository root
  * @param file - Repo-relative path
- * @returns Findings the working copy adds
+ * @returns Findings the working copy adds, each with the text of its line
  */
 function findingsFor(root, file) {
   const path = join(root, file);
@@ -72,18 +72,26 @@ function findingsFor(root, file) {
   const span = patch ? addedRanges(patch) : null;
   if (span && span.length === 0) return [];
 
-  return newFindings(before, after, span, file);
+  const lines = after.split('\n');
+
+  return newFindings(before, after, span, file).map((f) => ({
+    ...f,
+    text: lines[f.line - 1]?.trim() ?? '',
+  }));
 }
 
 /**
  * Identifies a finding across runs, so one is reported once.
  *
+ * The line's text stands in for its number, which shifts as lines are added
+ * above it.
+ *
  * @param file - Repo-relative path the finding sits in
- * @param f - The finding
+ * @param f - The finding, with the text of its line
  * @returns A key two runs of the same finding share
  */
 function key(file, f) {
-  return `${file}|${f.rule}|${f.message.replace(/\d+/g, '#')}`;
+  return `${file}|${f.rule}|${f.message.replace(/\d+/g, '#')}|${f.text}`;
 }
 
 /**
@@ -126,23 +134,34 @@ function readSeen(path) {
 export function unreported(root, session) {
   const path = seenPath(root, session);
   const seen = readSeen(path);
+  const current = new Set();
   const fresh = [];
 
   for (const file of changedSinceCommit(root)) {
+    const copies = new Map();
+
     for (const f of findingsFor(root, file)) {
-      const id = key(file, f);
+      // Counting copies keeps a second identical finding from hiding behind the first.
+      const base = key(file, f);
+      const copy = copies.get(base) ?? 0;
+      copies.set(base, copy + 1);
+
+      const id = `${base}|${copy}`;
+      current.add(id);
       if (seen.has(id)) continue;
 
-      seen.add(id);
       fresh.push(`${file}:${f.line}  [${f.rule}]  ${f.message}`);
     }
   }
 
+  // Forgetting a fixed finding lets it be reported again if it comes back.
+  const forgot = [...seen].some((id) => !current.has(id));
+
   // Failing to save only risks reporting a finding twice, never hiding one.
-  if (fresh.length > 0) {
+  if (fresh.length > 0 || forgot) {
     try {
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, JSON.stringify([...seen]));
+      writeFileSync(path, JSON.stringify([...current]));
     } catch {}
   }
 

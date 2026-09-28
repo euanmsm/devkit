@@ -389,6 +389,196 @@ describe('dead-code branch and renames', () => {
 
     assert.equal(status, 0, JSON.stringify(json.findings));
   });
+  test('a revived file is not new debt when the include leaves out files', () => {
+    const root = onBranch({
+      'src/orphan.ts':
+        'export const orphan = 1;\nexport const spare = 2;\nexport const spare2 = 3;\n',
+    });
+    write(
+      join(root, 'src/index.ts'),
+      "import { orphan } from './orphan';\nimport { alsoUsed, used } from './lib';\nimport { helper } from './util/helper';\n\nconsole.log(orphan, used(), alsoUsed(), helper());\n",
+    );
+    commit(root);
+
+    const { status, json } = report(root, [
+      'branch',
+      'main',
+      '--include',
+      'exports,types',
+    ]);
+
+    assert.equal(status, 0, JSON.stringify(json.findings));
+    assert.deepEqual(json.findings, []);
+  });
+
+  test('a renamed project folder carries its old debt', () => {
+    const app = Object.fromEntries(
+      Object.entries(PROJECT).map(([rel, contents]) => [
+        `app/${rel}`,
+        contents,
+      ]),
+    );
+    const root = onBranch({
+      ...BARE,
+      ...app,
+      '.devkit/dead-code.json': { directory: 'app' },
+    });
+    git(root, 'mv', 'app', 'web');
+    write(join(root, '.devkit/dead-code.json'), { directory: 'web' });
+    commit(root);
+
+    const { status, json } = report(root, ['branch', 'main']);
+
+    assert.equal(status, 0, JSON.stringify(json.findings));
+    assert.deepEqual(json.findings, []);
+  });
+
+  test('a renamed workspace folder carries its old debt', () => {
+    const pkg = Object.fromEntries(
+      Object.entries(PROJECT)
+        .filter(([rel]) => rel.startsWith('src/'))
+        .map(([rel, contents]) => [`packages/a/${rel}`, contents]),
+    );
+    const root = onBranch({
+      ...BARE,
+      '.gitignore': 'node_modules/\n',
+      'package.json': {
+        name: 'root',
+        private: true,
+        type: 'module',
+        workspaces: ['packages/*'],
+      },
+      'packages/a/package.json': {
+        name: 'a',
+        private: true,
+        type: 'module',
+        main: 'src/index.ts',
+      },
+      ...pkg,
+      '.devkit/dead-code.json': { workspaces: ['packages/a'] },
+    });
+    git(root, 'mv', 'packages/a', 'packages/b');
+    write(join(root, '.devkit/dead-code.json'), { workspaces: ['packages/b'] });
+    commit(root);
+
+    const { status, json } = report(root, ['branch', 'main']);
+    const now = report(root, []).json;
+
+    assert.ok(now.findings.length > 0, JSON.stringify(now));
+    assert.equal(status, 0, JSON.stringify(json.findings));
+    assert.deepEqual(json.findings, []);
+  });
+
+  test('a deleted project folder and a new one are not a move', () => {
+    const legacy = Object.fromEntries(
+      Object.entries(PROJECT).map(([rel, contents]) => [
+        `legacy/${rel}`,
+        contents,
+      ]),
+    );
+    const root = onBranch({
+      ...BARE,
+      ...legacy,
+      'legacy/package.json': { name: 'legacy', private: true, type: 'module' },
+      // Broken where it was, so treating the new folder as a move fails the run.
+      'legacy/knip.json': '{ broken',
+      '.devkit/dead-code.json': { directory: 'web' },
+    });
+    git(root, 'rm', '-rq', 'legacy');
+    write(join(root, 'web/package.json'), {
+      name: 'web',
+      private: true,
+      type: 'module',
+    });
+    write(join(root, 'web/knip.json'), {
+      entry: ['main.ts'],
+      project: ['**/*.ts'],
+    });
+    write(
+      join(root, 'web/main.ts'),
+      "import { used } from './lib/api';\nconsole.log(used());\n",
+    );
+    write(
+      join(root, 'web/lib/api.ts'),
+      'export function used() {\n  return 1;\n}\n\nexport function unused() {\n  return 2;\n}\n',
+    );
+    commit(root);
+    assert.match(
+      git(root, 'diff', '-M20%', '--name-status', 'main'),
+      /^R\d+\tlegacy\/package\.json\tweb\/package\.json$/m,
+    );
+
+    const { status, json } = report(root, ['branch', 'main']);
+
+    assert.equal(status, 1, JSON.stringify(json));
+    assert.deepEqual(
+      json.findings.map((f) => `${f.type}:${f.file}:${f.name}`),
+      ['export:web/lib/api.ts:unused'],
+    );
+  });
+
+  test('a deleted workspace and a new one are not a move', () => {
+    const legacy = Object.fromEntries(
+      Object.entries(PROJECT)
+        .filter(([rel]) => rel.startsWith('src/'))
+        .map(([rel, contents]) => [`packages/legacy/${rel}`, contents]),
+    );
+    const root = onBranch({
+      ...BARE,
+      '.gitignore': 'node_modules/\n',
+      'package.json': {
+        name: 'root',
+        private: true,
+        type: 'module',
+        workspaces: ['packages/*'],
+      },
+      'packages/legacy/package.json': {
+        name: 'legacy',
+        private: true,
+        type: 'module',
+        main: 'src/index.ts',
+      },
+      ...legacy,
+      'packages/keep/package.json': {
+        name: 'keep',
+        private: true,
+        type: 'module',
+        main: 'index.ts',
+      },
+      'packages/keep/index.ts': 'export const k = 1;\n',
+    });
+    git(root, 'rm', '-rq', 'packages/legacy');
+    write(join(root, 'packages/fresh/package.json'), {
+      name: 'fresh',
+      private: true,
+      type: 'module',
+      main: 'main.ts',
+    });
+    write(
+      join(root, 'packages/fresh/main.ts'),
+      "import { used } from './api';\nconsole.log(used());\n",
+    );
+    write(
+      join(root, 'packages/fresh/api.ts'),
+      'export function used() {\n  return 1;\n}\n\nexport function unused() {\n  return 2;\n}\n',
+    );
+    write(join(root, '.devkit/dead-code.json'), {
+      workspaces: ['packages/fresh'],
+    });
+    commit(root);
+    assert.match(
+      git(root, 'diff', '-M20%', '--name-status', 'main'),
+      /^R\d+\tpackages\/legacy\/package\.json\tpackages\/fresh\/package\.json$/m,
+    );
+
+    const { status, json } = report(root, ['branch', 'main']);
+
+    assert.equal(status, 1, JSON.stringify(json));
+    assert.deepEqual(
+      json.findings.map((f) => `${f.type}:${f.file}:${f.name}`),
+      ['export:packages/fresh/api.ts:unused'],
+    );
+  });
 });
 
 describe('dead-code branch and the base', () => {

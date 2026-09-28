@@ -232,3 +232,78 @@ describe('renamedFrom', () => {
     assert.throws(() => renamedFrom('no-such-ref'));
   });
 });
+
+describe('paths git would quote', () => {
+  let root;
+  let cwd;
+
+  /** Runs git inside the fixture repo. */
+  function git(...args) {
+    return execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+  }
+
+  /** Writes a file inside the fixture repo's `src`. */
+  function write(name, contents) {
+    writeFileSync(join(root, 'src', name), contents, 'utf8');
+  }
+
+  before(() => {
+    cwd = process.cwd();
+    root = mkdtempSync(join(tmpdir(), 'comment-quoted-'));
+
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'Test');
+
+    mkdirSync(join(root, 'src'), { recursive: true });
+    write('plain.ts', 'export const a = 1;\n');
+    write('old ü.ts', 'export const b = 1;\nexport const c = 1;\n');
+    git('add', '-A');
+    git('commit', '-qm', 'base');
+    git('branch', 'base-marker');
+
+    write('plain.ts', 'export const a = 1;\nexport const d = 1;\n');
+    write('café.ts', 'export const e = 1;\nexport const f = 1;\n');
+    write('q"x.ts', 'export const g = 1;\n');
+    git('mv', 'src/old ü.ts', 'src/new ü.ts');
+    git('add', '-A');
+    git('commit', '-qm', 'change');
+
+    process.chdir(root);
+  });
+
+  afterAll(() => {
+    process.chdir(cwd);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('lists a file whose name holds a non-ASCII character or a quote', () => {
+    const files = changedFiles(mergeBase('base-marker'));
+
+    assert.deepEqual(files.sort(), [
+      'src/café.ts',
+      'src/new ü.ts',
+      'src/plain.ts',
+      'src/q"x.ts',
+    ]);
+  });
+
+  test('maps a renamed non-ASCII path back to its old name', () => {
+    assert.equal(
+      renamedFrom(mergeBase('base-marker')).get('src/new ü.ts'),
+      'src/old ü.ts',
+    );
+  });
+
+  test("keeps a quoted file's hunks out of the file before it", () => {
+    const spans = addedRangesByFile(mergeBase('base-marker'), [
+      'src/café.ts',
+      'src/plain.ts',
+      'src/q"x.ts',
+    ]);
+
+    assert.deepEqual(spans.get('src/café.ts'), [{ from: 1, to: 2 }]);
+    assert.deepEqual(spans.get('src/plain.ts'), [{ from: 2, to: 2 }]);
+    assert.equal(spans.has('src/q"x.ts'), false);
+  });
+});

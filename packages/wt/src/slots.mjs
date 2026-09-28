@@ -6,11 +6,20 @@
 // The record sits in the worktree's own git admin folder, which git deletes
 // along with the worktree.
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
-import { adminDir, real, worktrees } from './git.mjs';
+import { adminDir, git, real, worktrees } from './git.mjs';
 
 const RECORD = 'wt.json';
+
+// A claim older than this is left over from a create that never finished.
+const CLAIM_MAX_AGE_MS = 60 * 60 * 1000;
 
 // Matches the `-wtN` suffix a worktree's Supabase project id carries.
 const LEGACY_ID = /^project_id\s*=\s*".*-wt(\d+)"/m;
@@ -103,4 +112,77 @@ export function nextSlot(used) {
   let slot = 1;
   while (used.has(slot)) slot += 1;
   return slot;
+}
+
+/**
+ * Reads whether a slot claim is still held by a running create.
+ *
+ * @param path - The claim file
+ * @returns `held`, `stale` when its owner has exited or it is too old, or `gone`
+ */
+function claimState(path) {
+  let owner;
+  try {
+    if (Date.now() - statSync(path).mtimeMs > CLAIM_MAX_AGE_MS) return 'stale';
+    owner = Number(readFileSync(path, 'utf8'));
+  } catch (error) {
+    return error.code === 'ENOENT' ? 'gone' : 'held';
+  }
+  if (!Number.isInteger(owner) || owner <= 0) return 'held';
+
+  try {
+    process.kill(owner, 0);
+    return 'held';
+  } catch (error) {
+    return error.code === 'EPERM' ? 'held' : 'stale';
+  }
+}
+
+/**
+ * Creates a slot's claim file, replacing one a dead create left behind.
+ *
+ * @param path - The claim file
+ * @returns Whether this process now holds the claim
+ * @throws When the file cannot be written for any reason but being held
+ */
+function takeClaim(path) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      writeFileSync(path, String(process.pid), { flag: 'wx' });
+      return true;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+
+      const state = claimState(path);
+      if (state === 'held') return false;
+      if (state === 'stale') rmSync(path, { force: true });
+    }
+  }
+  return false;
+}
+
+/**
+ * Claims the lowest free slot, so a create running alongside cannot pick it too.
+ *
+ * @param cwd - Directory inside any checkout of the repository
+ * @returns The slot and a function that drops the claim once the record is written
+ */
+export function claimSlot(cwd) {
+  const common = git(
+    ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+    cwd,
+  );
+  const taken = usedSlots(cwd);
+
+  for (;;) {
+    const slot = nextSlot(taken);
+    taken.add(slot);
+
+    const path = join(common, `wt-slot-${slot}.lock`);
+    if (!takeClaim(path)) continue;
+
+    const release = () => rmSync(path, { force: true });
+    if (!usedSlots(cwd).has(slot)) return { slot, release };
+    release();
+  }
 }

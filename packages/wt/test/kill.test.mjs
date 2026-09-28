@@ -229,7 +229,7 @@ describe('kill helpers', () => {
     assert.equal(programName(undefined, 'next-server'), 'next-server');
   });
 
-  test('protects shells, editors and Claude sessions', () => {
+  test('protects shells, editors, multiplexers and Claude sessions', () => {
     for (const name of [
       'zsh',
       '-bash',
@@ -237,10 +237,24 @@ describe('kill helpers', () => {
       'Code Helper (Plugin)',
       'nvim',
       'claude',
+      'nano',
+      'emacs',
+      'Emacs-arm64-11',
+      'hx',
+      'micro',
+      'zed',
+      'sublime_text',
+      'pwsh',
+      'nu',
+      'tmux',
+      'tmux: server',
+      'screen',
+      'zellij',
     ]) {
       assert.ok(isProtected(name), name);
     }
     assert.ok(isProtected('node', 'node /usr/local/bin/claude --resume'));
     assert.ok(!isProtected('node', 'node vitest --watch'));
+    assert.ok(!isProtected('screencapture'));
   });
 });

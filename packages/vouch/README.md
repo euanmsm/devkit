@@ -64,6 +64,13 @@ cp node_modules/@euanmsm/vouch/vouch.example.json \
 explain is a hole nobody can review. Add `"timeout"` in milliseconds to override
 the five-minute default for a slow native build.
 
+The config is read from the git root, or, when there is no `.git` as in a Docker
+build, from the nearest directory above the cwd that has one. Each package is
+looked for in `node_modules` from the cwd up to the git root, as Node resolves
+modules, so an app below the git root or a workspace member with hoisted
+dependencies finds its packages. Its script runs from the directory where it was
+found.
+
 With no config file it runs nothing and says so. An allowlisted package that is
-not installed is skipped silently; one whose script fails is reported, and the
-command exits non-zero.
+not installed is skipped with a line saying where it looked; one whose script
+fails is reported, and the command exits non-zero.

@@ -9,7 +9,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 
 import { compile, loadConfig, repoRoot } from '@euanmsm/devkit-core';
 
@@ -156,24 +156,61 @@ export function requiredForTool(tool, map) {
  * Finds what a tool call needs and what to call it in the deny message.
  *
  * @param input - The hook payload
- * @param map - Parsed skill map
- * @param root - Repository root
  * @returns The tool name or path, and its skills; null when nothing governs it
  */
-function gateFor(input, map, root) {
+function gateFor(input) {
+  const cwd = input?.cwd || process.cwd();
+
   const tool = input?.tool_name ?? '';
-  const toolSkills = requiredForTool(tool, map);
+  const session = governing(cwd);
+  const toolSkills = session ? requiredForTool(tool, session.map) : [];
   if (toolSkills.length > 0) return { subject: tool, skills: toolSkills };
 
   const filePath = input?.tool_input?.file_path;
   if (!filePath) return null;
 
-  const rel = relative(root, filePath);
+  // A worktree or nested repo with its own map answers to it, not the session's.
+  const path = resolve(cwd, filePath);
+  const owner = governing(dirname(path));
+  if (!owner) return null;
 
-  // A file in another checkout is not this repo's to govern.
-  if (rel.startsWith('..')) return null;
+  const rel = relative(owner.root, path);
+  return { subject: rel, skills: requiredFor(rel, owner.map) };
+}
 
-  return { subject: rel, skills: requiredFor(rel, map) };
+/**
+ * Finds the nearest checkout holding a directory that has a map.
+ *
+ * @param dir - Any directory, which need not exist yet
+ * @returns The checkout's root and parsed map, or null when none above has one
+ */
+function governing(dir) {
+  // A submodule without a map stays under the enclosing repo's rules.
+  for (let root = rootOf(dir); root; root = rootOf(dirname(root))) {
+    try {
+      const map = loadConfig(CONFIG_NAME, null, root);
+      if (map) return { root, map };
+    } catch (error) {
+      process.stderr.write(`preflight: skipping ${error.message}\n`);
+    }
+
+    if (dirname(root) === root) return null;
+  }
+  return null;
+}
+
+/**
+ * Finds the checkout holding a directory.
+ *
+ * @param dir - Any directory, which need not exist yet
+ * @returns The repository root, or null outside a repository
+ */
+function rootOf(dir) {
+  try {
+    return repoRoot(dir);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -193,18 +230,7 @@ export function main() {
 
   const input = JSON.parse(readFileSync(0, 'utf8'));
 
-  // Outside a repository there is no map to read, so nothing is governed.
-  let root;
-  try {
-    root = repoRoot();
-  } catch {
-    allow();
-  }
-
-  const map = loadConfig(CONFIG_NAME, null, root);
-  if (!map) allow();
-
-  const gate = gateFor(input, map, root);
+  const gate = gateFor(input);
   if (!gate || gate.skills.length === 0) allow();
 
   const transcript = findTranscript(input);

@@ -515,9 +515,14 @@ function resolveBundles(raw, rawLenses = {}, lenses, fail) {
       .filter((bundle) => bundle.lenses.length > 0);
   }
 
+  const keys = new Set();
+
   for (const bundle of bundles) {
     unknownKeys(bundle, BUNDLE_KEYS, `bundle "${bundle.key}"`, fail);
     if (typeof bundle.key !== 'string') fail('every bundle needs a key');
+    // The workflow finds a bundle by its key, so a second one would hide the first's lenses.
+    if (keys.has(bundle.key)) fail(`two bundles use the key "${bundle.key}"`);
+    keys.add(bundle.key);
     if (bundle.scope !== 'target' && bundle.scope !== 'slice') {
       fail(`bundle "${bundle.key}" scope must be "target" or "slice"`);
     }

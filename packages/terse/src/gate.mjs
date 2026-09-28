@@ -58,6 +58,16 @@ function lineAt(source, offset) {
 }
 
 /**
+ * Converts CRLF line endings to LF.
+ *
+ * @param text - Any text
+ * @returns The text with every `\r\n` as `\n`
+ */
+function lf(text) {
+  return text.replace(/\r\n/g, '\n');
+}
+
+/**
  * Builds the text a tool call would leave on disk, plus the lines it writes.
  *
  * @param source - File contents before the call, empty for a new file
@@ -65,15 +75,18 @@ function lineAt(source, offset) {
  * @returns `{ after, span }`, where a null span means the whole file
  */
 export function applyEdit(source, toolInput) {
-  const {
-    content,
-    old_string: before,
-    new_string: after,
-    replace_all: all,
-  } = toolInput;
+  const { content, replace_all: all } = toolInput;
+  let { old_string: before, new_string: after } = toolInput;
 
   if (typeof content === 'string') return { after: content, span: null };
   if (typeof before !== 'string' || typeof after !== 'string') return null;
+
+  // Claude Code matches an edit to a CRLF file with its line endings as LF.
+  if (!source.includes(before) && source.includes('\r\n')) {
+    source = lf(source);
+    before = lf(before);
+    after = lf(after);
+  }
 
   // String.replace expands a `$&` or `$1` appearing inside a comment.
   if (all) {
@@ -141,7 +154,13 @@ export function main() {
   const edit = applyEdit(source, input.tool_input);
   if (!edit) allow();
 
-  const found = contract.newFindings(source, edit.after, edit.span, rel);
+  // Both sides share line endings, however the edit was matched.
+  const found = contract.newFindings(
+    lf(source),
+    lf(edit.after),
+    edit.span,
+    rel,
+  );
   if (found.length === 0) allow();
 
   deny(format(found, rel, contract.config));

@@ -79,18 +79,22 @@ done < <(find . \
 	-type f \( -name '*.config.js' -o -name '*.config.mjs' -o -name '*.config.ts' \) \
 	-print0 2>/dev/null || true)
 
+# Names start at an identifier boundary, so isFunction( or retrieval( do not
+# count as a call.
+B='(^|[^A-Za-z0-9_$])'
+
 if [ ${#CONFIG_FILES[@]} -gt 0 ]; then
 	# Pattern: description
 	PATTERNS=(
-		'eval\('                    # Direct code execution
-		'Function\('                # Indirect eval via Function constructor
-		'new Function'              # Indirect eval via new Function
-		'global\['                  # Global namespace manipulation
-		'globalThis\['              # Global namespace manipulation
+		"${B}eval\\("              # Direct code execution
+		"${B}Function\\("          # Indirect eval via Function constructor
+		"${B}new Function"          # Indirect eval via new Function
+		"${B}global\\["            # Global namespace manipulation
+		"${B}globalThis\\["        # Global namespace manipulation
 		'\\x[0-9a-fA-F]{2}'        # Hex escape obfuscation
 		'String\.fromCharCode'      # Character code obfuscation
-		'atob\('                    # Base64 decode in config
-		'btoa\('                    # Base64 encode in config
+		"${B}atob\\("              # Base64 decode in config
+		"${B}btoa\\("              # Base64 encode in config
 	)
 
 	PATTERN_NAMES=(
@@ -154,12 +158,46 @@ if [ ${#REQUIRED_PATTERNS[@]} -eq 0 ]; then
 	echo -e "${YELLOW}SKIP: no gitignoreRequired patterns configured${NC}"
 fi
 
+# Directories below the root with their own .gitignore, which can negate an
+# unanchored root pattern for the paths under them.
+NESTED_DIRS=()
+if [ ${#REQUIRED_PATTERNS[@]} -gt 0 ]; then
+	while IFS= read -r -d '' file; do
+		[ "$file" = .gitignore ] || NESTED_DIRS+=("${file%/.gitignore}/")
+	done < <(git ls-files -z --cached --others --exclude-standard \
+		-- ':(glob)**/.gitignore' 2>/dev/null || true)
+fi
+
 for pattern in ${REQUIRED_PATTERNS[@]+"${REQUIRED_PATTERNS[@]}"}; do
 	if ! grep -qxF "$pattern" .gitignore 2>/dev/null; then
 		echo -e "${RED}FAIL: Missing required .gitignore pattern: $pattern${NC}"
 		GITIGNORE_CHECK_FAILED=1
 		FAILED=1
+		continue
 	fi
+
+	# The line alone is not enough: a later !pattern un-ignores the path again.
+	# Ask git about a name the pattern matches, with a placeholder for * and ?
+	# and trailing spaces dropped, as git drops them from the rule.
+	case "$pattern" in '!'* | '#'* | *'['* | *'\'*) continue ;; esac
+	sample=$(printf '%s' "$pattern" | sed -e 's#^/##' -e 's/ *$//' \
+		-e 's/[*?]\{1,\}/__devkit_probe__/g')
+	[ -n "$sample" ] || continue
+	samples=("$sample")
+	anchor=${pattern#\*\*/}
+	case "${anchor%/}" in
+		*/*) ;;
+		*) for dir in ${NESTED_DIRS[@]+"${NESTED_DIRS[@]}"}; do samples+=("$dir$sample"); done ;;
+	esac
+	for path in "${samples[@]}"; do
+		rc=0
+		git check-ignore -q --no-index -- "$path" 2>/dev/null || rc=$?
+		if [ "$rc" -eq 1 ]; then
+			echo -e "${RED}FAIL: .gitignore contains $pattern but no longer ignores $path${NC}"
+			GITIGNORE_CHECK_FAILED=1
+			FAILED=1
+		fi
+	done
 done
 
 if [ "$GITIGNORE_CHECK_FAILED" -eq 0 ]; then
@@ -183,7 +221,7 @@ if [ "${PRE_COMMIT:-0}" = "1" ]; then
 	done < <(git diff --cached --name-only -z --diff-filter=ACMR 2>/dev/null || true)
 
 	if [ ${#STAGED_FILES[@]} -gt 0 ]; then
-		STAGED_PATTERNS=("global\\['" '(\\x[0-9a-fA-F]{2}){3,}')
+		STAGED_PATTERNS=("${B}global\\['" '(\\x[0-9a-fA-F]{2}){3,}')
 		STAGED_NAMES=("Suspicious global['...'] pattern" "Consecutive hex escapes")
 
 		UNREADABLE=0
