@@ -70,6 +70,10 @@ mkdir -p "$SCRATCH_DIR"
 reviewers read it. The prepass works from the repository root, so every folder
 handed to it below is prefixed with `$PWD` to land in the same place.
 
+Shell variables do not carry over from one Bash call to the next. Run each
+block below in the same call as the lines that set what it uses, or write
+those values out literally.
+
 ### Diff mode
 {{#githubReview}}
 **`pr` first reads the PR**, so the review is of its head against its own base:
@@ -190,8 +194,9 @@ this run's. Then write the file list, launch, and **do not wait**:
 rm -f "$SCRATCH_DIR/_prepass.done.json"
 find "$SCRATCH_DIR" -maxdepth 1 -name '_*.tmp.*' -delete
 
-# CHANGED_FILES in diff mode, TARGETS in target mode
-printf '%s\n' "${FILES[@]}" > "$SCRATCH_DIR/_files.tmp.txt"
+cat > "$SCRATCH_DIR/_files.tmp.txt" <<'EOF'
+<CHANGED_FILES in diff mode, TARGETS in target mode, written out one per line>
+EOF
 
 npx --no-install skills prepass tools --scratch "$PWD/$SCRATCH_DIR" --files-from "$PWD/$SCRATCH_DIR/_files.tmp.txt" --base "$BASE"
 ```
@@ -386,7 +391,7 @@ files out.
 In PR mode add the review URL and `Pending — not submitted.` When the user
 later says to submit, ask which event — see `{{rulesDir}}/pr-reviews.md`.
 {{/githubReview}}
-If `result.stats.findings === 0`, lead with
+If `result.stats.findings === 0` and `result.stats.coverage === 0`, lead with
 `Clean — every finding was refuted under verification.` and say what was
 checked.
 

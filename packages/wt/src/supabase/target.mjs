@@ -22,7 +22,7 @@ export const BYPASS_VAR = 'SUPABASE_ALLOW_CROSS_WORKTREE';
 // ============================================================================
 
 /**
- * Reads the first of several keys an env file defines.
+ * Reads the first of several keys an env file defines, parsed as dotenv does.
  *
  * @param path - Absolute path to a `.env`-style file, which may be missing
  * @param keys - Key names to try, in order
@@ -34,10 +34,13 @@ function readEnvFile(path, keys) {
   const contents = readFileSync(path, 'utf8');
 
   for (const key of keys) {
-    const match = contents.match(new RegExp(`^${key}=(.+)$`, 'm'));
-    if (!match) continue;
+    // Matches `KEY=value` with an optional `export` and spaces around `=`; the last one wins.
+    const line = new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=(.*)$`, 'gm');
+    const raw = [...contents.matchAll(line)].at(-1)?.[1].trim();
+    if (!raw) continue;
 
-    const value = match[1].trim().replace(/^['"]|['"]$/g, '');
+    const quoted = /^(['"`])(.*?)\1/.exec(raw);
+    const value = quoted ? quoted[2] : raw.replace(/#.*$/, '').trim();
     if (value) return { value, key };
   }
 

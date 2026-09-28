@@ -691,6 +691,21 @@ describe('sync and check', () => {
     assert.deepEqual(await check(root), []);
   });
 
+  test('removes a dropped agent once when agentsDir and rulesDir are one folder', async () => {
+    const shared = { agentsDir: '.claude/shared', rulesDir: '.claude/shared' };
+    const root = makeRepo({ 'skills.json': { ...shared, ...BOTH } });
+    await sync(root);
+
+    writeFileSync(
+      join(root, '.devkit/skills.json'),
+      JSON.stringify({ ...shared, skills: { 'clean-commit-history': {} } }),
+    );
+
+    assert.equal((await check(root)).length, 2);
+    assert.equal((await sync(root)).removed.length, 2);
+    assert.deepEqual(await check(root), []);
+  });
+
   test('leaves hand-written skills beside the generated ones alone', async () => {
     const root = makeRepo({ 'skills.json': BOTH });
     write(root, '.claude/skills/comments/SKILL.md', 'mine');
@@ -926,6 +941,14 @@ describe('the dead-code skill', () => {
       (await sync(makeRepo({ 'skills.json': BOTH }))).warnings,
       [],
     );
+  });
+
+  test('the CLI prints its usage on stdout and exits 0 when asked for help', () => {
+    for (const flag of ['help', '--help', '-h']) {
+      const { status, stdout } = cli(deadCodeRepo(), flag);
+      assert.equal(status, 0, flag);
+      assert.match(stdout, /^Usage:/, flag);
+    }
   });
 
   test('the CLI prints the warning on stderr for sync, and never for check', () => {

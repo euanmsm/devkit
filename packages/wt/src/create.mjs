@@ -149,6 +149,18 @@ export async function create({
   let root;
 
   try {
+    const top = Math.max(
+      ...Object.values(config.ports.services).map((p) => p + shift),
+      ...(config.supabase
+        ? supabaseMappings(config.supabase, slot).map(([, to]) => to)
+        : []),
+    );
+    if (top > 65535) {
+      throw new Error(
+        `Slot ${slot} would need port ${top}, past 65535. Delete a worktree or lower the port steps.`,
+      );
+    }
+
     mkdirSync(dir, { recursive: true });
     addWorktree({
       cwd: here,
@@ -205,6 +217,10 @@ export async function create({
     WT_BASE: base ?? '',
     WT_SLOT: String(slot),
     WT_OFFSET: String(shift),
+    // Drops an inherited offset, so the new worktree's own env files decide.
+    ...(config.ports.offsetEnv && {
+      [config.ports.offsetEnv.name]: undefined,
+    }),
   };
   try {
     await runHooks(config.hooks.postCreate, root, env);

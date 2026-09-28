@@ -257,7 +257,8 @@ export function folderProcesses(root) {
   return inside
     .filter(
       ({ pid, command }) =>
-        !skip.has(pid) && !isProtected(command, lines.get(pid)),
+        !skip.has(pid) &&
+        !isProtected(command, (lines.get(pid) ?? '').replaceAll(root, '')),
     )
     .map(({ pid, command }) => ({ pid, command }));
 }
@@ -382,7 +383,8 @@ export async function stopWorktree(
 
   for (const holder of holders) {
     const line = lines.get(holder.pid) ?? '';
-    if (DOCKER.test(holder.command) || DOCKER.test(line)) {
+    // The worktree's own path is left out, so a folder named like Docker does not hide a server.
+    if (DOCKER.test(holder.command) || DOCKER.test(line.replaceAll(root, ''))) {
       const loose = holder.ports.filter((p) => !covered.has(p));
       if (!dryRun && loose.length > 0) {
         console.log(
@@ -426,7 +428,7 @@ export async function stopWorktree(
  *
  * @param name - The worktree's name
  * @param options - The loaded `config`, the `main` checkout and a `cwd` in the repo
- * @returns The worktree's real path and its branch
+ * @returns The worktree's real path, its branch and whether it is locked
  * @throws When no worktree has that name
  */
 export function findWorktree(name, { config, main, cwd }) {
@@ -435,7 +437,7 @@ export function findWorktree(name, { config, main, cwd }) {
 
   if (!entry || path === main)
     throw new Error(`No worktree named ${name} at ${path}.`);
-  return { path, branch: entry.branch };
+  return { path, branch: entry.branch, locked: entry.locked };
 }
 
 /**

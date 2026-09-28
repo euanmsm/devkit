@@ -306,4 +306,17 @@ describe('paths git would quote', () => {
     assert.deepEqual(spans.get('src/plain.ts'), [{ from: 2, to: 2 }]);
     assert.equal(spans.has('src/q"x.ts'), false);
   });
+
+  test('reads the hunks when the user forces git to colour its output', () => {
+    git('config', 'color.ui', 'always');
+    try {
+      const spans = addedRangesByFile(mergeBase('base-marker'), [
+        'src/plain.ts',
+      ]);
+
+      assert.deepEqual(spans.get('src/plain.ts'), [{ from: 2, to: 2 }]);
+    } finally {
+      git('config', '--unset', 'color.ui');
+    }
+  });
 });

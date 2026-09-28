@@ -159,6 +159,8 @@ export function addedRangesByFile(from, paths) {
     '-c',
     'core.quotePath=false',
     'diff',
+    '--no-color',
+    '--no-ext-diff',
     '-U0',
     RENAMES,
     from,
@@ -198,7 +200,20 @@ function checkFile(file, from, renames, spans) {
   // Git quotes a header path holding a space, which the batched split misses.
   const span =
     spans.get(file) ??
-    addedRanges(run(['diff', '-U0', RENAMES, from, 'HEAD', '--', was, file]));
+    addedRanges(
+      run([
+        'diff',
+        '--no-color',
+        '--no-ext-diff',
+        '-U0',
+        RENAMES,
+        from,
+        'HEAD',
+        '--',
+        was,
+        file,
+      ]),
+    );
   if (span.length === 0) return [];
 
   const before = git('show', `${from}:${was}`) ?? '';

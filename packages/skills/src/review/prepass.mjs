@@ -662,6 +662,8 @@ async function findCallSites(root, names, globs) {
   } catch (err) {
     // rg exits 1 when nothing matched at all, which is an answer.
     if (err.code === 1) return '';
+    // rg exits 2 on any error, such as one unreadable file, after printing every other match.
+    if (err.code === 2 && err.stdout) return err.stdout;
     throw err;
   }
 }
@@ -676,7 +678,11 @@ async function findCallSites(root, names, globs) {
  */
 function groupCallSites(stdout, searched, symbols) {
   const matchers = new Map(
-    searched.map((name) => [name, new RegExp(`\\b${name}\\b`)]),
+    // `\b` never matches beside a `$`, so a `$` name needs lookarounds, and escaping.
+    searched.map((name) => [
+      name,
+      new RegExp(`(?<!\\w)${name.replace(/\$/g, '\\$')}(?!\\w)`),
+    ]),
   );
   const sitesByName = new Map(searched.map((name) => [name, []]));
   const definitionKeys = new Set(

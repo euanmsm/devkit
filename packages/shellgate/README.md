@@ -43,8 +43,9 @@ There is no config file — nothing goes in `.devkit/`.
 
 ## What it blocks
 
-- In-place editors: `sed -i`, `perl -i`, `awk -i inplace`, `patch`, and
-  `git apply` (except `--check`, `--stat` and `--cached`)
+- In-place editors: `sed -i`, `perl -i`, `ruby -i`, `awk -i inplace`, `patch`,
+  and `git apply` (except `--check`, `--stat`, `--numstat`, `--summary` and
+  `--cached`)
 - A `>` or `>>` redirect, or `tee`, into a path inside the repository —
   including quoted or escaped paths with spaces, and after a `cd` earlier in the
   same command (a `cd` inside `( … )` or `$( … )`, quoted or not, stops counting

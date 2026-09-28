@@ -42,7 +42,7 @@ export function loadConfig(name, fallback = null, root = repoRoot()) {
   if (!existsSync(path)) return fallback;
 
   try {
-    return JSON.parse(readFileSync(path, 'utf8'));
+    return JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
   } catch (error) {
     throw new Error(`${path} is not valid JSON — ${error.message}`);
   }
@@ -51,14 +51,17 @@ export function loadConfig(name, fallback = null, root = repoRoot()) {
 /**
  * Compiles a list of regex source strings, skipping any that will not compile.
  *
- * @param patterns - Regex sources from a config file
+ * @param patterns - Regex sources from a config file, or a single source
  * @param flags - Flags applied to every pattern
  * @returns One RegExp per usable pattern
  */
 export function compile(patterns = [], flags = '') {
   const out = [];
 
-  for (const p of patterns) {
+  // A lone string is one pattern, not a list of one-character patterns.
+  for (const p of typeof patterns === 'string'
+    ? [patterns]
+    : (patterns ?? [])) {
     try {
       out.push(new RegExp(p, flags));
     } catch (error) {

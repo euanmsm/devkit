@@ -131,7 +131,16 @@ export function main() {
     dirs.find((dir) => existsSync(join(dir, '.devkit', CONFIG_NAME))) ??
     dirs[0];
   const config = loadConfig(CONFIG_NAME, { allowed: [] }, configRoot);
-  const entries = config.allowed ?? [];
+  const entries = config?.allowed ?? [];
+  const malformed =
+    !Array.isArray(entries) ||
+    entries.some((entry) => typeof entry?.pkg !== 'string');
+  if (malformed) {
+    console.error(
+      `.devkit/${CONFIG_NAME} must hold an "allowed" list of entries with a string "pkg" field.`,
+    );
+    process.exit(1);
+  }
 
   if (entries.length === 0) {
     console.log(

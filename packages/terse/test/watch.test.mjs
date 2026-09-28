@@ -6,11 +6,12 @@
 // working tree and compares it against a real commit.
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   changedSinceCommit,
@@ -18,6 +19,13 @@ import {
   summarise,
   unreported,
 } from '../src/watch.mjs';
+
+const BIN = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'bin',
+  'terse-watch.mjs',
+);
 
 const CLEAN = [
   '// ============================================================================',
@@ -115,6 +123,14 @@ describe('unreported', () => {
     assert.match(found[0], /^a\.ts:\d+ {2}\[no-/);
   });
 
+  test('reports a violation when the user forces git to colour its output', () => {
+    const root = fixture();
+    git(root, 'config', 'color.ui', 'always');
+    append(root, '// We previously did this so that it worked.');
+
+    assert.equal(unreported(root, 'session-a').length, 3);
+  });
+
   test('reports each violation once, not on every command', () => {
     const root = fixture();
     append(root, '// We previously did this so that it worked.');
@@ -201,6 +217,21 @@ describe('unreported', () => {
       found.some((l) => l.includes('b.ts') && l.includes('file-header')),
       true,
     );
+  });
+});
+
+describe('terse-watch', () => {
+  test('exits cleanly when the config is malformed', () => {
+    const root = fixture();
+    writeFileSync(join(root, '.devkit', 'terse.json'), '{bad');
+
+    const { status } = spawnSync(process.execPath, [BIN], {
+      cwd: root,
+      input: '{}',
+      encoding: 'utf8',
+    });
+
+    assert.equal(status, 0);
   });
 });
 

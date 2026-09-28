@@ -66,7 +66,16 @@ function findingsFor(root, file) {
 
   const after = readFileSync(path, 'utf8');
   const before = git(root, 'show', `HEAD:${file}`) ?? '';
-  const patch = git(root, 'diff', '-U0', 'HEAD', '--', file);
+  const patch = git(
+    root,
+    'diff',
+    '--no-color',
+    '--no-ext-diff',
+    '-U0',
+    'HEAD',
+    '--',
+    file,
+  );
 
   // An untracked file has no diff, so every line of it is new.
   const span = patch ? addedRanges(patch) : null;

@@ -11,6 +11,7 @@ import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT = fileURLToPath(new URL('../sh/config.sh', import.meta.url));
+const BIN = fileURLToPath(new URL('../bin/secure-config.mjs', import.meta.url));
 
 /** Builds a throwaway git repo holding the given files. */
 function repo(files) {
@@ -32,6 +33,34 @@ function check(root, env = {}) {
   });
   return { status: result.status, output: result.stdout + result.stderr };
 }
+
+describe('Check A: config file patterns', () => {
+  test('skips a config file inside a gitignored directory', () => {
+    const root = repo({
+      '.gitignore': '.output/\n',
+      '.output/app.config.mjs': 'eval(x);\n',
+    });
+    const { status, output } = check(root);
+
+    assert.equal(status, 0, output);
+  });
+
+  test('reads a config file whose name looks like an awk assignment', () => {
+    const root = repo({ 'a=b.config.js': `${'x'.repeat(300)}\n` });
+    const { status, output } = check(root);
+
+    assert.equal(status, 1);
+    assert.match(output, /Lines exceeding 200 chars in \.\/a=b\.config\.js/);
+  });
+
+  test('fails a config file that is not ignored', () => {
+    const root = repo({ 'app.config.mjs': 'eval(x);\n' });
+    const { status, output } = check(root);
+
+    assert.equal(status, 1);
+    assert.match(output, /eval\(\) found in config files/);
+  });
+});
 
 describe('Check B: required .gitignore patterns', () => {
   test('passes a pattern the .gitignore still ignores', () => {
@@ -57,6 +86,28 @@ describe('Check B: required .gitignore patterns', () => {
     const root = repo({ '.gitignore': 'foo \n' });
     const { status, output } = check(root, {
       DEVKIT_GITIGNORE_REQUIRED: 'foo ',
+    });
+
+    assert.equal(status, 0, output);
+  });
+
+  test('passes a .gitignore saved with CRLF line endings', () => {
+    const root = repo({ '.gitignore': '.env.local\r\n' });
+    const { status, output } = check(root, {
+      DEVKIT_GITIGNORE_REQUIRED: '.env.local',
+    });
+
+    assert.equal(status, 0, output);
+  });
+
+  test('passes a .gitignore holding bytes that are not UTF-8', () => {
+    const root = repo({
+      '.gitignore': Buffer.from('.env.local\n\xe9t\xe9/\n', 'latin1'),
+    });
+    const { status, output } = check(root, {
+      LANG: 'C.UTF-8',
+      LC_ALL: 'C.UTF-8',
+      DEVKIT_GITIGNORE_REQUIRED: '.env.local',
     });
 
     assert.equal(status, 0, output);
@@ -128,5 +179,57 @@ describe('Check C: staged obfuscation', () => {
     const { status, output } = staged("myglobal['x'] = 1;\n");
 
     assert.equal(status, 0, output);
+  });
+});
+
+describe('launcher', () => {
+  /** Runs the secure-config bin in a directory and returns its result. */
+  function launch(cwd, env = {}) {
+    const result = spawnSync(process.execPath, [BIN], {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, ...env },
+    });
+    return { status: result.status, output: result.stdout + result.stderr };
+  }
+
+  test('names the config file when a list field holds a string', () => {
+    const root = repo({
+      '.devkit/secure.json': '{ "gitignoreRequired": ".env.local" }',
+    });
+    const { status, output } = launch(root);
+
+    assert.equal(status, 1);
+    assert.match(output, /secure\.json: gitignoreRequired must be a list/);
+  });
+
+  test('rejects a config that is not an object', () => {
+    const root = repo({ '.devkit/secure.json': 'null' });
+    const { status, output } = launch(root);
+
+    assert.equal(status, 1);
+    assert.match(output, /must hold a JSON object/);
+  });
+
+  test('runs with the defaults when the config is a list', () => {
+    const root = repo({ '.devkit/secure.json': '[]' });
+    const { status, output } = launch(root);
+
+    assert.equal(status, 0, output);
+  });
+
+  test('prints one line when there is no repository', () => {
+    const { status, output } = launch(mkdtempSync(join(tmpdir(), 'devkit-')));
+
+    assert.equal(status, 1);
+    assert.match(output, /^secure: No git repository above/);
+    assert.doesNotMatch(output, /\n\s+at /);
+  });
+
+  test('says so when bash cannot be started', () => {
+    const { status, output } = launch(repo({}), { PATH: '/nonexistent' });
+
+    assert.equal(status, 1);
+    assert.match(output, /secure: could not run bash/);
   });
 });

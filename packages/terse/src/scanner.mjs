@@ -240,6 +240,7 @@ const EXPORTED =
 const FN_KEYWORD = /^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\b/;
 const FN_ASSIGNED =
   /^(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*(?::(?:[^=]|=>)*)?=\s*(?:async\s+)?(?:function\b|\(|[A-Za-z_$][\w$]*\s*=>)/;
+const FN_ASSIGNED_FUNCTION = /=\s*(?:async\s+)?function\b/;
 const FN_BINDS =
   /^(?:async\s+)?function\s+[A-Za-z_$]|^(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*(?::(?:[^=]|=>)*)?=\s*(?:async\s+)?(?:function\b|\(|[A-Za-z_$][\w$]*\s*=>)/;
 const SHORT_ARROW =
@@ -268,6 +269,8 @@ const CODE_SHAPE =
   /^(import |export |const |let |var |return |await |if \(|for \(|\w+\.\w+\(|\}|\{)/;
 const DECLARATION = /^(export\s+)?(interface\s+\w+|type\s+\w+(<[^>]*>)?\s*=)/;
 const PROPERTY = /^(readonly\s+)?[\w"'`]+\??\s*:/;
+const FN_NAME =
+  /^(?:export\s+(?:default\s+)?)?(?:declare\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/;
 const DIRECTIVE =
   /^\/\/\s*(?:eslint-|@ts-|prettier-ignore|biome-ignore|oxlint-|tslint:|deno-lint-|(?:c8|istanbul|v8)\s+ignore)/;
 
@@ -667,9 +670,10 @@ function readSignature(lines, n) {
  *
  * @param lines - Every line of the file
  * @param sig - What `readSignature` returned
+ * @param arrow - Whether only a return type may sit between the `)` and the `=>`
  * @returns `{ returnType, body, expression }`, or null when no body follows
  */
-function readTail(lines, sig) {
+function readTail(lines, sig, arrow) {
   let depth = 0;
   let pre = '';
 
@@ -685,6 +689,10 @@ function readTail(lines, sig) {
       else if (ch === ')' || ch === ']') depth--;
       else if (ch === '<' && /[\w$>\]]$/.test(pre.trimEnd())) depth++;
       else if (ch === '>' && line[c - 1] !== '=' && depth > 0) depth--;
+
+      // Without semicolons, the next statement's code would otherwise pass as a body.
+      if (arrow && depth === 0 && pre.trim() && !pre.trim().startsWith(':'))
+        return null;
 
       if (depth === 0 && ch === '{')
         return {
@@ -761,7 +769,10 @@ function bodyFacts(lines, start) {
     const line = stripLiterals(lines[i]);
     const text = i === start.line ? line.slice(start.col + 1) : line;
 
-    if (nested === null && i > start.line) {
+    if (
+      nested === null &&
+      (i > start.line || !/(?:^|[^\w.$])function\b|=>/.test(text))
+    ) {
       if (/(?:^|[^\w.$])return\s+[^\s;]/.test(text)) returns = true;
       if (/(?:^|[^\w.$])throw\s/.test(text)) throws = true;
     }
@@ -809,7 +820,7 @@ function functionInfo(lines, n) {
   const body = short ? firstBrace(lines, n, arrow + 2, n + 8) : null;
   const tail = short
     ? { returnType: undefined, body, expression: !body }
-    : readTail(lines, sig);
+    : readTail(lines, sig, !keyword && !FN_ASSIGNED_FUNCTION.test(trimmed));
   if (!tail) return null;
   if (tail.returnType === null) return null;
 
@@ -1033,15 +1044,21 @@ function checkDocLine(line, n) {
  *
  * @param lines - Every line of the file
  * @param n - Line the declaration starts on, 0-based
- * @returns `{ start, end, isDoc }`, or null when the declaration carries none
+ * @returns `{ start, end, isDoc, shared }`, or null when the declaration carries none
  */
 function docAbove(lines, n) {
   let end = -1;
+  let shared = false;
+  const name = FN_NAME.exec(lines[n].trim())?.[1];
 
-  // A decorator or a tool's directive may sit between a declaration and its JSDoc.
+  // A decorator, a tool's directive or an overload may sit between a declaration and its JSDoc.
   for (let i = n - 1; i >= 0; i--) {
     const trimmed = lines[i].trim();
     if (!trimmed || DIRECTIVE.test(trimmed)) continue;
+    if (name && trimmed.endsWith(';') && FN_NAME.exec(trimmed)?.[1] === name) {
+      shared = true;
+      continue;
+    }
     if (trimmed.endsWith('*/')) {
       end = i;
       break;
@@ -1056,7 +1073,12 @@ function docAbove(lines, n) {
 
   for (let i = end; i >= 0; i--)
     if (lines[i].trim().startsWith('/*'))
-      return { start: i, end, isDoc: lines[i].trim().startsWith('/**') };
+      return {
+        start: i,
+        end,
+        isDoc: lines[i].trim().startsWith('/**'),
+        shared,
+      };
 
   return null;
 }
@@ -1198,7 +1220,8 @@ function checkDeclaration(lines, n, scope, exported) {
       ),
     ];
 
-  if (!fn || !doc.isDoc) return [];
+  // An overload's JSDoc describes the overload, not the implementation's parameters.
+  if (!fn || !doc.isDoc || doc.shared) return [];
 
   return checkTagCoverage(lines, n, doc, fn);
 }
@@ -1343,6 +1366,16 @@ export function scan(source, path = '') {
     // Clamping stops one miscounted line disabling exported-jsdoc for the rest of the file.
     depth = Math.max(0, depth + open - close);
   }
+
+  if (run > 1)
+    out.push(
+      finding(
+        'logic-comment-length',
+        runStart + 1,
+        `Logic comment runs ${run} lines, cap is 1.`,
+        { from: runStart + 1, to: runStart + run },
+      ),
+    );
 
   // Filtering here, rather than at each check, keeps one place a rule can be off.
   return out.filter((f) => enabled(f.rule)).sort((a, b) => a.line - b.line);

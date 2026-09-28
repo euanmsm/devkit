@@ -164,6 +164,16 @@ function isStrings(value) {
 }
 
 /**
+ * True for one file or folder name, with no path separator and not `.` or `..`.
+ *
+ * @param value - A string
+ * @returns Whether it names a single entry
+ */
+function isEntryName(value) {
+  return !/[/\\]/.test(value) && !['', '.', '..'].includes(value);
+}
+
+/**
  * True for a hook list of command strings or `{ run, optional }` objects.
  *
  * @param value - Any value
@@ -278,9 +288,15 @@ function validateSupabase(config) {
   if (!Number.isInteger(sb.step) || sb.step < 10) {
     bad('step', 'a whole number of at least 10');
   }
-  if (!isStrings(sb.link))
+  if (!isStrings(sb.link) || !sb.link.every(isEntryName))
     bad('link', 'a list of names inside the supabase folder');
-  if (sb.appService !== null && !(sb.appService in config.ports.services)) {
+  const { services } = config.ports;
+  if (
+    sb.appService !== null &&
+    typeof services === 'object' &&
+    services !== null &&
+    !(sb.appService in services)
+  ) {
     bad('appService', 'null or a name from ports.services');
   }
   if (sb.resetCommand !== null && typeof sb.resetCommand !== 'string') {

@@ -273,6 +273,34 @@ describe('dead-code branch in a monorepo', () => {
     );
   });
 
+  test('a workspace folder that held no package.json at the fork point is left out', () => {
+    const root = onBranch({ 'apps/web/README.md': '# web\n' });
+    write(join(root, 'package.json'), {
+      name: 'root',
+      private: true,
+      type: 'module',
+      workspaces: ['apps/*'],
+    });
+    write(join(root, 'apps/web/package.json'), {
+      name: 'web',
+      private: true,
+      type: 'module',
+      main: 'src/index.ts',
+    });
+    write(join(root, 'apps/web/src/index.ts'), 'export const w = 1;\n');
+    write(join(root, 'apps/web/src/stray.ts'), 'export const s = 1;\n');
+    write(join(root, '.devkit/dead-code.json'), { workspaces: ['apps/web'] });
+    commit(root);
+
+    const { status, json } = report(root, ['branch', 'main']);
+
+    assert.equal(status, 1);
+    assert.deepEqual(
+      json.findings.map((f) => f.file),
+      ['apps/web/src/stray.ts'],
+    );
+  });
+
   test('a project the branch created has no fork-point findings', () => {
     const root = makeRepo({ ...BARE, 'README.md': '# empty\n' });
     git(root, 'switch', '-q', '-c', 'feat');

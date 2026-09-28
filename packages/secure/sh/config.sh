@@ -70,6 +70,8 @@ grep_staged() {
 
 CONFIG_FILES=()
 while IFS= read -r -d '' file; do
+	# Skips gitignored build output; outside a repo check-ignore errors and the file is kept
+	if git check-ignore -q -- "$file" 2>/dev/null; then continue; fi
 	CONFIG_FILES+=("$file")
 done < <(find . \
 	-not -path '*/node_modules/*' \
@@ -169,7 +171,9 @@ if [ ${#REQUIRED_PATTERNS[@]} -gt 0 ]; then
 fi
 
 for pattern in ${REQUIRED_PATTERNS[@]+"${REQUIRED_PATTERNS[@]}"}; do
-	if ! grep -qxF "$pattern" .gitignore 2>/dev/null; then
+	# Trailing spaces and a CRLF's carriage return do not change the rule git reads
+	if ! PATTERN="$pattern" LC_ALL=C awk 'BEGIN { p = ENVIRON["PATTERN"]; sub(/ +$/, "", p) }
+		{ sub(/\r$/, ""); sub(/ +$/, "") } $0 == p "" { found = 1 } END { exit !found }' .gitignore 2>/dev/null; then
 		echo -e "${RED}FAIL: Missing required .gitignore pattern: $pattern${NC}"
 		GITIGNORE_CHECK_FAILED=1
 		FAILED=1

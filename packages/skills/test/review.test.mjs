@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -143,6 +144,24 @@ describe('resolveReviewConfig', () => {
     assert.ok(correctness.lenses.includes('events'));
     assert.ok(correctness.split[0].lenses.includes('events'));
     assert.equal(review.lenses.events.bundle, undefined);
+  });
+
+  test('a bundle field can name a default bundle whose built-ins were all removed', () => {
+    const review = resolve({
+      lenses: {
+        ci: false,
+        'gh-actions': {
+          judges: 'Actions.',
+          route: { always: 'code' },
+          bundle: 'ci',
+        },
+      },
+    });
+
+    assert.deepEqual(
+      review.bundles.find((bundle) => bundle.key === 'ci').lenses,
+      ['gh-actions'],
+    );
   });
 
   test('keeps the repository’s lens order ahead of the built-ins', () => {
@@ -475,7 +494,7 @@ describe('resolveReviewConfig', () => {
     write(
       root,
       'pnpm-workspace.yaml',
-      "packages:\n  - 'apps/*'\n  - \"tools/lint\"\n  - '!apps/skip'\ncatalog:\n  - nope\n",
+      "packages:\n  - 'apps/*' # apps\n  - \"tools/lint\"\n  - '!apps/skip'\ncatalog:\n  - nope\n",
     );
     write(
       root,
@@ -665,6 +684,28 @@ describe('the generated workflow', () => {
     const reviewer = calls.find((call) => call.label.startsWith('review:'));
 
     assert.match(reviewer.prompt, /boundary \(handler -> job -> store\)/);
+  });
+
+  test('titles a lens whose key ends in a dash', async () => {
+    const source = renderEngine(
+      ENGINE,
+      resolve({
+        lenses: {
+          'e2e-': {
+            judges: 'E.',
+            route: { always: 'code' },
+            bundle: 'correctness',
+          },
+        },
+      }),
+    );
+    const { result, calls } = await runWorkflow(source, {
+      ...DIFF_ARGS,
+      changedFiles: ['src/a.ts'],
+    });
+
+    assert.deepEqual(result.bundlesDied, []);
+    assert.ok(calls.some((call) => /Pass \d+ — E2e /.test(call.prompt)));
   });
 
   test('lists each configured tool report for the reviewers', async () => {
@@ -955,6 +996,60 @@ describe('merging findings', () => {
     assert.equal(corrected.additionalProperties, false);
   });
 
+  test('keeps each file’s verdict when a reviewer reuses an id across files', async () => {
+    const { result } = await reviewWith((label, _prompt, canned) => {
+      if (label === 'review:correctness-1') {
+        return {
+          ...canned,
+          findings: [
+            finding('bugs-1', 'bugs', '42', 'critical', 'Null deref'),
+            {
+              ...finding('bugs-1', 'bugs', '10', 'low', 'Naming nit'),
+              file: 'src/b.ts',
+            },
+          ],
+        };
+      }
+      if (label === 'verify:b.ts') {
+        return {
+          verdicts: canned.verdicts.map((one) => ({
+            ...one,
+            verdict: 'refuted',
+            reasoning: 'no',
+          })),
+        };
+      }
+      return undefined;
+    });
+
+    assert.match(result.markdown, /## \d+ — Null deref/);
+    assert.match(result.markdown, /## Refuted and dropped\n\n- \*\*Naming nit/);
+  });
+
+  test('ignores blank fields and an unknown lens in a correction', async () => {
+    const blank = Object.fromEntries(
+      ['id', 'file', 'line', 'issue', 'detail', 'whyItMatters', 'evidence'].map(
+        (key) => [key, ''],
+      ),
+    );
+    const { result } = await reviewWith((label, _prompt, canned) =>
+      label.startsWith('verify:')
+        ? {
+            verdicts: canned.verdicts.map((one, i) => ({
+              ...one,
+              verdict: 'amended',
+              reasoning: 'r',
+              corrected: { ...blank, lens: i === 0 ? '' : 'nope' },
+            })),
+          }
+        : undefined,
+    );
+
+    assert.ok(result.stats.findings > 0);
+    assert.doesNotMatch(result.markdown, /## \d+ — \n/);
+    assert.doesNotMatch(result.markdown, /# Nope\n/);
+  });
+
   test('escapes pipes and newlines in a summary table cell', async () => {
     const { result } = await review({
       'correctness-1': [
@@ -1096,6 +1191,12 @@ describe('sync with code-review', () => {
       '---\nname: security\n---\n',
     );
     await assert.doesNotReject(() => plan(root));
+  });
+
+  test('refuses a config module with no default export', async () => {
+    const root = reviewRepo({}, 'export const review = {};');
+
+    await assert.rejects(() => plan(root), /must export an object/);
   });
 
   test('check flags the workflow once the review config changes', async () => {
@@ -1933,4 +2034,38 @@ describe('prepass', () => {
     );
     assert.match(graph, /- `lonelyThing` — src\/a\.ts:2/);
   });
+
+  test(
+    'graph finds callers of a name holding a $',
+    { skip: !hasRipgrep },
+    async () => {
+      const root = makeRepo();
+      write(root, 'src/a.ts', 'export const $store = 1;\n');
+      write(root, 'src/b.ts', "import { $store } from './a';\nx.$store;\n");
+
+      const graph = await buildImportGraph(root, resolve({}), ['src/a.ts']);
+
+      assert.match(
+        graph,
+        /### `\$store` — defined at src\/a\.ts:1\n\n- src\/b\.ts:1,2/,
+      );
+    },
+  );
+
+  test(
+    'graph keeps the matches when ripgrep cannot read one file',
+    { skip: !hasRipgrep || process.getuid?.() === 0 },
+    async () => {
+      const root = makeRepo();
+      write(root, 'src/a.ts', 'export function usedThing() {}\n');
+      write(root, 'src/b.ts', 'usedThing();\n');
+      write(root, 'src/c.ts', 'usedThing();\n');
+      chmodSync(join(root, 'src/c.ts'), 0o000);
+
+      const graph = await buildImportGraph(root, resolve({}), ['src/a.ts']);
+
+      assert.match(graph, /- src\/b\.ts:1/);
+      assert.doesNotMatch(graph, /unavailable/);
+    },
+  );
 });

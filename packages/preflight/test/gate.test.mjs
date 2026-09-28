@@ -112,6 +112,38 @@ describe('loadedSkills', () => {
       'readability',
     ]);
   });
+
+  test('counts a skill the user ran as a slash command', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'devkit-')), 't.jsonl');
+    writeFileSync(
+      path,
+      '{"type":"user","message":{"role":"user","content":"<command-message>readmes</command-message>\\n<command-name>/readmes</command-name>"}}\n' +
+        '{"type":"user","message":{"role":"user","content":"<command-name>/vercel:deploy</command-name>"}}\n',
+    );
+
+    assert.deepEqual([...loadedSkills(path)].sort(), [
+      'readmes',
+      'vercel:deploy',
+    ]);
+  });
+
+  test('ignores a slash command quoted in a tool result', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'devkit-')), 't.jsonl');
+    const content = [
+      {
+        type: 'tool_result',
+        content:
+          '"role":"user","content":"<command-name>/readmes</command-name>',
+      },
+    ];
+    writeFileSync(
+      path,
+      JSON.stringify({ type: 'user', message: { role: 'user', content } }) +
+        '\n',
+    );
+
+    assert.deepEqual([...loadedSkills(path)], []);
+  });
 });
 
 /**

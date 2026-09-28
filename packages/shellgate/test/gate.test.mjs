@@ -159,6 +159,45 @@ describe('findShellEdit blocks', () => {
       'a rewrite script with a URL path',
       "python3 - <<'EOF'\np='a.ts'\ns=open(p).read().replace('/api/v1/users', '/api/v2/users')\nopen(p,'w').write(s)\nEOF",
     ],
+    ['a >& redirect into the repo', 'echo x >& src/a.ts'],
+    ['a >& redirect with no space', 'echo x >&src/a.ts'],
+    ['a redirect to a name starting with two dots', 'echo x > ..env'],
+    ['BSD sed -I', "sed -I '' 's/a/b/' src/a.ts"],
+    ['ruby -pi', 'ruby -pi -e \'gsub(/a/,"b")\' src/a.ts'],
+    ['perl -i after a digit flag', "perl -0777pi -e 's/a/b/' src/a.ts"],
+    ['perl -i with a ~ suffix', "perl -i~ -pe 's/a/b/' src/a.ts"],
+    ['gawk --include=inplace', "gawk --include=inplace '{print}' src/a.ts"],
+    ['git apply after git -C', 'git -C . apply fix.patch'],
+    ['git apply --stat --apply', 'git apply --stat --apply fix.patch'],
+    [
+      'a Python write to a path built by a call',
+      "python3 -c \"import os; open(os.path.join('src','a.ts'),'w').write('x')\"",
+    ],
+    [
+      'tee inside a quoted command substitution',
+      'x="$(echo a | tee src/a.ts)"',
+    ],
+    [
+      'a redirect between quoted parentheses',
+      'echo "((" > src/a.ts; echo "))"',
+    ],
+    [
+      'a Python r+ write',
+      "python3 -c \"f=open('src/a.ts','r+'); f.write('x')\"",
+    ],
+    [
+      'a redirect in a substitution inside a [[ test',
+      '[[ -z $(echo x > src/a.ts) ]]',
+    ],
+    [
+      'a redirect in backticks inside a [[ test',
+      '[[ -z `echo x > src/a.ts` ]]',
+    ],
+    [
+      'a redirect between bare [[ and ]]',
+      'echo [[ ; echo x > src/a.ts ; echo ]]',
+    ],
+    ['perl -pie', "perl -pie 's/a/b/' src/a.ts"],
   ];
 
   for (const [name, command] of blocked) {
@@ -218,6 +257,28 @@ describe('findShellEdit allows', () => {
       'a redirect inside a quoted command substitution after cd',
       'd="$(cd /tmp && echo x > a.ts)"',
     ],
+    [
+      'a heredoc with a hyphenated delimiter',
+      "cat > /tmp/x <<'END-DOC'\na > b\nEND-DOC",
+    ],
+    [
+      'a heredoc with a backslashed delimiter',
+      'cat > /tmp/x <<\\EOF\na > b\nEOF',
+    ],
+    ['a commit message naming tee', 'git commit -m "pipe through tee instead"'],
+    ['git apply --numstat', 'git apply --numstat fix.patch'],
+    ['git apply --summary', 'git apply --summary fix.patch'],
+    ['a comparison in arithmetic', '(( n > 5 )) && echo big'],
+    ['a comparison in a [[ test', '[[ $a > $b ]] && echo big'],
+    ['stdout closed with >&-', 'echo x >&-'],
+    ['git -c with an apply.* setting', 'git -c apply.whitespace=fix diff'],
+    ['git -C into a directory named apply', 'git -C apply status'],
+    [
+      'a perl script given a flag starting with i',
+      'perl script.pl -input a.txt',
+    ],
+    ['a perl script given -lib', 'perl tools/gen.pl -lib foo'],
+    ['a ruby script given -in', 'ruby bin/run.rb -in x'],
   ];
 
   for (const [name, command] of allowed) {

@@ -225,6 +225,10 @@ describe('rule 2 — scope', () => {
     breaks('exported-jsdoc', src('const local = (): void => {};'));
   });
 
+  test('leaves a parenthesised value alone in code without semicolons', () => {
+    passes(src('const x = (a || b)', 'if (x) {', '  run()', '}'));
+  });
+
   test('flags one carrying a TypeScript annotation on its name', () => {
     breaks('exported-jsdoc', src('const local: Handler = (): void => {};'));
   });
@@ -458,6 +462,89 @@ describe('rule 20 — tag coverage', () => {
         ' */',
         'export function f(a = g(1, 2), b: number): void {}',
       ),
+    );
+  });
+
+  test('accepts one JSDoc above the first of several overloads', () => {
+    passes(
+      `${HEADER}\n\n${[
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param a - The input',
+        ' * @returns The input',
+        ' */',
+        'export function f(a: string): string;',
+        'export function f(a: number): number;',
+        'export function f(a: any): any {',
+        '  return a;',
+        '}',
+      ].join('\n')}\n`,
+    );
+  });
+
+  test("flags a return or throw on the body's opening line", () => {
+    const found = scan(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param a - The input',
+        ' */',
+        'export function f(a) { return a + 1; }',
+        '',
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param a - The input',
+        ' */',
+        'export function g(a) { throw new Error(a); }',
+      ),
+    );
+
+    assert.deepEqual(
+      found.map((f) => f.message),
+      [
+        'Function returns a value but has no @returns.',
+        'Function throws but has no @throws.',
+      ],
+    );
+  });
+
+  test("ignores a callback's return or throw on the body's opening line", () => {
+    passes(
+      src(
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param xs - The inputs',
+        ' */',
+        'export function f(xs) { xs.forEach((x) => { return g(x); });',
+        '}',
+        '',
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param el - The element',
+        ' */',
+        "export function h(el) { el.on('click', () => { throw new Error('x'); }); }",
+      ),
+    );
+  });
+
+  test("holds an overload's implementation to no tags from the shared JSDoc", () => {
+    passes(
+      `${HEADER}\n\n${[
+        '/**',
+        ' * Does a thing.',
+        ' *',
+        ' * @param a - The input',
+        ' */',
+        'export function f(a: string): void;',
+        'export function f(v: string | number): void {',
+        '  g(v);',
+        '}',
+      ].join('\n')}\n`,
     );
   });
 
@@ -1039,6 +1126,13 @@ describe('rule 7 — logic comment cap', () => {
 
   test('accepts a single line', () => {
     passes(src('// The regex matches a slug.', 'export const a = 1;'));
+  });
+
+  test('flags a run that ends the file with no newline after it', () => {
+    breaks(
+      'logic-comment-length',
+      `${HEADER}\n\n// The regex matches a slug.\n// The regex matches a code.`,
+    );
   });
 
   test('catches a line added below an existing one', () => {

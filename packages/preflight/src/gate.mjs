@@ -9,7 +9,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
 import { compile, loadConfig, repoRoot } from '@euanmsm/devkit-core';
 
@@ -101,7 +101,7 @@ export function findAgentTranscript(sessionTranscript, agentId) {
  * Reads every skill loaded in a transcript.
  *
  * @param transcriptPath - Path to the session's JSONL transcript
- * @returns Skill names, one per Skill tool call
+ * @returns Skill names, one per Skill tool call or slash command
  */
 export function loadedSkills(transcriptPath) {
   const raw = readFileSync(transcriptPath, 'utf8');
@@ -109,6 +109,13 @@ export function loadedSkills(transcriptPath) {
 
   for (const match of raw.matchAll(
     /"name":"Skill","input":\{"skill":"([^"]+)"/g,
+  )) {
+    skills.add(match[1]);
+  }
+
+  // A slash command leaves no Skill call, only a user message opening with its name.
+  for (const match of raw.matchAll(
+    /"role":"user","content":"(?:<command-message>[^<"]*<\/command-message>\\n)?<command-name>\/([^<"]+)<\/command-name>/g,
   )) {
     skills.add(match[1]);
   }
@@ -174,7 +181,8 @@ function gateFor(input) {
   const owner = governing(dirname(path));
   if (!owner) return null;
 
-  const rel = relative(owner.root, path);
+  // Patterns are written with forward slashes, whatever the platform.
+  const rel = relative(owner.root, path).split(sep).join('/');
   return { subject: rel, skills: requiredFor(rel, owner.map) };
 }
 

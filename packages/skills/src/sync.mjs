@@ -146,7 +146,10 @@ export function generatedOnDisk(root, config = readConfig(root)) {
     if (/\.ya?ml$/.test(entry)) candidates.push(join(WORKFLOWS_DIR, entry));
   }
 
-  return candidates.filter((path) => isGenerated(join(root, path)));
+  // agentsDir and rulesDir may name the same folder.
+  return [...new Set(candidates)].filter((path) =>
+    isGenerated(join(root, path)),
+  );
 }
 
 /**

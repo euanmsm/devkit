@@ -15,12 +15,25 @@ import { configMain } from './git.mjs';
 import { slotOf } from './slots.mjs';
 
 /**
+ * Finds the current checkout, or the current folder outside one, such as a Docker build.
+ *
+ * @returns The root to read the config from
+ */
+function here() {
+  try {
+    return repoRoot();
+  } catch {
+    return process.cwd();
+  }
+}
+
+/**
  * Works out how far this checkout's ports shift from the base ones.
  *
  * @param options - `root` of the checkout and an already loaded `config`
  * @returns The offset added to every base port
  */
-export function offset({ root = repoRoot(), config } = {}) {
+export function offset({ root = here(), config } = {}) {
   const cfg = config ?? loadWtConfig(root, configMain(root));
   const set = offsetFromEnv(root, cfg.ports.offsetEnv);
 
@@ -64,7 +77,7 @@ function offsetFromEnv(root, offsetEnv) {
  * @param options - `root` of the checkout and an already loaded `config`
  * @returns Each service name mapped to its port
  */
-export function ports({ root = repoRoot(), config } = {}) {
+export function ports({ root = here(), config } = {}) {
   const cfg = config ?? loadWtConfig(root, configMain(root));
   const shift = offset({ root, config: cfg });
 

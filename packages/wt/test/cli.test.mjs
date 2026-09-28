@@ -8,16 +8,18 @@ import assert from 'node:assert/strict';
 import {
   chmodSync,
   existsSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
   symlinkSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-import { fakeCode, git, makeRepo, write, wt } from './repo.mjs';
+import { BIN, fakeCode, git, makeRepo, write, wt } from './repo.mjs';
 
 const CONFIG = {
   dir: '../app-wt',
@@ -235,6 +237,29 @@ describe('creating a worktree', () => {
     );
   });
 
+  test('refuses a slot whose ports would pass 65535', () => {
+    const { base, root } = fixture({ ports: { services: { app: 65500 } } });
+
+    const { status, out } = wt(root, ['feat', '-b', 'feat']);
+
+    assert.equal(status, 1);
+    assert.match(out, /past 65535/);
+    assert.equal(existsSync(join(base, 'app-wt', 'feat')), false);
+  });
+
+  test("gives hooks the new worktree's offset, not an inherited one", () => {
+    const { base, root } = fixture({
+      hooks: { postCreate: [`node "${BIN}" port app > hook.out`] },
+    });
+
+    wt(root, ['feat', '-b', 'feat'], [], { WORKTREE_PORT_OFFSET: '700' });
+
+    assert.equal(
+      readFileSync(join(base, 'app-wt', 'feat', 'hook.out'), 'utf8'),
+      '3100',
+    );
+  });
+
   test('refuses a config with an unknown setting', () => {
     const { root } = fixture({ directory: '../x' });
 
@@ -279,6 +304,19 @@ describe('deleting a worktree', () => {
     assert.equal(git(root, 'worktree', 'list').split('\n').length, 1);
   });
 
+  test('refuses a locked worktree before running anything', () => {
+    const { base, root } = fixture({ hooks: { preDelete: ['touch ../ran'] } });
+    wt(root, ['feat', '-b', 'feat']);
+    git(root, 'worktree', 'lock', join(base, 'app-wt', 'feat'));
+
+    const { status, out } = wt(root, ['-d', 'feat']);
+
+    assert.equal(status, 1);
+    assert.match(out, /is locked, nothing removed/);
+    assert.equal(existsSync(join(base, 'app-wt', 'ran')), false);
+    assert.equal(existsSync(join(base, 'app-wt', 'feat')), true);
+  });
+
   test('fails on an unknown name', () => {
     const { root } = fixture();
 
@@ -321,6 +359,13 @@ describe('ports', () => {
     write(env, readFileSync(env, 'utf8').replace(/WORKTREE.*\n/, ''));
 
     assert.equal(wt(join(base, 'app-wt', 'feat'), ['port', 'app']).out, '3050');
+  });
+
+  test('prints base ports outside a git checkout', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-nogit-'));
+    write(join(dir, '.devkit', 'wt.json'), JSON.stringify(CONFIG));
+
+    assert.equal(wt(dir, ['port', 'app']).out, '3000');
   });
 
   test('names the known services for an unknown one', () => {
@@ -477,6 +522,15 @@ describe('supabase', () => {
 
     assert.equal(status, 0, out);
     assert.match(out, /Supabase target: http:\/\/127\.0\.0\.1:54321/);
+  });
+
+  test('says so when the supabase CLI is missing', () => {
+    const { root } = fixture({ supabase: {} });
+
+    const { status, out } = wt(root, ['supabase', 'status']);
+
+    assert.equal(status, 127);
+    assert.match(out, /could not run supabase/);
   });
 
   test('counts a slot held by a worktree the shell script made', () => {

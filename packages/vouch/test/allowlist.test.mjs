@@ -78,6 +78,37 @@ describe('main', () => {
     assert.match(result.stdout, /nothing to run/);
   });
 
+  test('names the config when its allowlist is malformed', () => {
+    const root = fixture('exit 0');
+    mkdirSync(join(root, '.devkit'));
+    writeFileSync(
+      join(root, '.devkit', 'vouch.json'),
+      JSON.stringify({ allowed: { pkg: 'fake', script: 'install' } }),
+    );
+    const result = vouch(root);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /\.devkit\/vouch\.json must hold/);
+  });
+
+  test('still skips an uninstalled entry that has no script field', () => {
+    const root = fixture('echo > ran');
+    mkdirSync(join(root, '.devkit'));
+    writeFileSync(
+      join(root, '.devkit', 'vouch.json'),
+      JSON.stringify({
+        allowed: [
+          { pkg: 'fake', script: 'install', reason: 'x' },
+          { pkg: 'absent', reason: 'no script' },
+        ],
+      }),
+    );
+    const result = vouch(root);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(existsSync(join(root, 'node_modules', 'fake', 'ran')));
+  });
+
   test('reads the project config where there is no .git', () => {
     const root = fixture('echo > ran');
     allow(root);

@@ -81,7 +81,10 @@ function presentWorkspaces(dir, workspaces) {
   );
 
   return workspaces.filter(
-    (ws) => /[*?{[]/.test(ws) || names.has(ws) || existsSync(join(dir, ws)),
+    (ws) =>
+      /[*?{[]/.test(ws) ||
+      names.has(ws) ||
+      existsSync(join(dir, ws, 'package.json')),
   );
 }
 

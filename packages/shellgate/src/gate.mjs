@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { repoRoot } from '@euanmsm/devkit-core';
 
 // =============================================================================
@@ -32,13 +32,14 @@ export function findShellEdit(command, cwd, root) {
     quoted.replace(/[<>|;&]/g, ' '),
   );
   const cwdAt = trackCwd(unquoted, cwd);
+  const { inCode } = scanSubshells(unquoted);
   const isInRepo = (target, index) =>
     isRepoPath(toAbsolutePath(target, cwdAt(index)), root);
 
   return (
     findInPlaceEditor(bare) ??
-    findRepoRedirect(unquoted, isInRepo) ??
-    findRepoTee(unquoted, isInRepo) ??
+    findRepoRedirect(unquoted, inCode, isInRepo) ??
+    findRepoTee(unquoted, inCode, isInRepo) ??
     findWritingScript(bare, command, root)
   );
 }
@@ -66,8 +67,8 @@ export function main() {
 
 // ======== Heredocs ==========================================================
 
-// A heredoc opener such as `<<EOF`, `<<-'EOF'` or `<<"EOF"`, read from where a `<<` sits.
-const HEREDOC = /<<-?\s*(['"]?)(\w+)\1/y;
+// A heredoc opener such as `<<EOF`, `<<-'EOF'`, `<<\EOF` or `<<"END-DOC"`, read from a `<<`.
+const HEREDOC = /<<-?\s*\\?(['"]?)([^\s'"<>|;&()]+)\1/y;
 
 /**
  * Removes heredoc bodies, keeping the command lines around them.
@@ -162,15 +163,28 @@ function findHeredocOpeners(line, contexts) {
 // ======== In-place editors ==================================================
 
 const IN_PLACE_EDITORS = [
-  { name: 'sed -i', pattern: /\bsed\b[^|;&\n]*\s(?:-[Enrsuz]*i|--in-place)/ },
+  {
+    name: 'sed -i',
+    pattern: /\bsed\b[^|;&\n]*\s(?:-[EInrsuz]*[iI]|--in-place)/,
+  },
+  // Perl and Ruby read the rest of a flag after `i` as a backup suffix, as in `-pie` or `-i~`.
   {
     name: 'perl -i',
-    pattern: /\bperl\b[^|;&\n]*\s-[0lnpw]*i(?:\.\w*)?(?=\s|e\s|$)/,
+    pattern: /\bperl\b[^|;&\n]*\s-[\dalnpsw]*i(?:[.~][\w.~-]*|e)?(?=\s|$)/,
   },
-  { name: 'awk -i inplace', pattern: /\bg?awk\b[^|;&\n]*\s-i\s*inplace/ },
   {
+    name: 'ruby -i',
+    pattern: /\bruby\b[^|;&\n]*\s-[acdlnpsvw]*i(?:[.~][\w.~-]*|e)?(?=\s|$)/,
+  },
+  {
+    name: 'awk -i inplace',
+    pattern: /\bg?awk\b[^|;&\n]*\s(?:-i\s*|--include[= ]\s*)inplace/,
+  },
+  {
+    // `--apply` turns a read-only flag back into a write.
     name: 'git apply',
-    pattern: /\bgit\s+apply\b(?![^|;&\n]*--(?:check|stat|cached))/,
+    pattern:
+      /\bgit(?:\s+-[Cc]\s+\S+)*\s+apply(?=[\s|;&)]|$)(?![^|;&\n]*--cached)(?!(?![^|;&\n]*--apply\b)[^|;&\n]*--(?:check|stat|numstat|summary)\b)/,
   },
   { name: 'patch', pattern: /(?:^|[|;&\n(])\s*patch\b/ },
 ];
@@ -192,11 +206,14 @@ function findInPlaceEditor(bare) {
 // One shell word, keeping quoted strings and backslash-escaped characters, such as spaces, whole.
 const WORD = String.raw`(?:"(?:[^"\\]|\\.)*"|'[^']*'|\\.|[^\s<>|;&()])+`;
 
-// `>` or `>>` and its target, skipping `>&2` duplication and `>(…)` process substitution.
+// `>`, `>>` or `>&file` and its target, skipping `>&2` or `>&-` duplication and `>(…)` substitution.
 const REDIRECT = new RegExp(
-  String.raw`(?:^|[^<>])>>?\|?(?![&(])\s*(${WORD})`,
+  String.raw`(?:^|[^<>])>>?\|?(?!\(|&\s*(?:\d+-?|-)(?![^\s<>|;&()]))&?\s*(${WORD})`,
   'g',
 );
+
+// An arithmetic `(( … ))` or a `[[ … ]]` test, whose `>` is a comparison.
+const TEST = /\(\([^()]*\)\)|\[\[[^\n;]*?\]\]/g;
 
 // `tee` and every argument after it, up to the next separator.
 const TEE = new RegExp(String.raw`\btee\b((?:[ \t]+${WORD})+)`, 'g');
@@ -205,11 +222,16 @@ const TEE = new RegExp(String.raw`\btee\b((?:[ \t]+${WORD})+)`, 'g');
  * Finds a `>` or `>>` redirect whose target sits in the repository.
  *
  * @param unquoted - The command with shell operators blanked inside quotes
+ * @param inCode - Whether each position is shell code rather than quoted text
  * @param isInRepo - Tells whether a target, at a position in the command, sits in the repository
  * @returns A description of the redirect, or null
  */
-function findRepoRedirect(unquoted, isInRepo) {
-  for (const { 1: target, index } of unquoted.matchAll(REDIRECT)) {
+function findRepoRedirect(unquoted, inCode, isInRepo) {
+  // A `$( … )` or backtick substitution inside a test still runs its redirects.
+  const shell = unquoted.replace(TEST, (test, at) =>
+    inCode[at] && !/\$\(|`/.test(test) ? test.replace(/[<>]/g, ' ') : test,
+  );
+  for (const { 1: target, index } of shell.matchAll(REDIRECT)) {
     if (isInRepo(target, index)) return `redirect into ${target}`;
   }
   return null;
@@ -219,11 +241,13 @@ function findRepoRedirect(unquoted, isInRepo) {
  * Finds a `tee` writing to a file in the repository.
  *
  * @param unquoted - The command with shell operators blanked inside quotes
+ * @param inCode - Whether each position is shell code rather than quoted text
  * @param isInRepo - Tells whether a target, at a position in the command, sits in the repository
  * @returns A description of the tee, or null
  */
-function findRepoTee(unquoted, isInRepo) {
+function findRepoTee(unquoted, inCode, isInRepo) {
   for (const { 1: args, index } of unquoted.matchAll(TEE)) {
+    if (!inCode[index]) continue;
     const files = [...args.matchAll(new RegExp(WORD, 'g'))]
       .map(([arg]) => arg)
       .filter((arg) => !arg.startsWith('-'));
@@ -354,7 +378,7 @@ function unquote(word) {
 function isRepoPath(absolute, root) {
   if (!absolute) return false;
   const rel = relative(root, absolute);
-  return !rel.startsWith('..') && !isAbsolute(rel);
+  return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
 // ======== Inline scripts ====================================================
@@ -404,7 +428,7 @@ const RUNNER_VALUE_FLAGS = [
 
 // A file-writing call in Node, Bun, Deno, Python or Ruby.
 const WRITE_CALL =
-  /\b(?:writeFile|appendFile|writeTextFile)(?:Sync)?\b|\bcreateWriteStream\b|\bwrite_(?:text|bytes)\b|\b(?:File|Bun)\.write\b|\bopen(?:Sync)?\([^)]*["'][wax]b?\+?["']/;
+  /\b(?:writeFile|appendFile|writeTextFile)(?:Sync)?\b|\bcreateWriteStream\b|\bwrite_(?:text|bytes)\b|\b(?:File|Bun)\.write\b|\bopen(?:Sync)?\((?:[^()]|\([^()]*\))*["'](?:[wax]b?\+?|rb?\+)["']/;
 
 // An absolute path with a directory, not a URL tail, closing tag or regex literal passed to a call.
 const ABSOLUTE_PATH = /(?<![\w.~$}/:<(-])\/[\w.-]+\/[\w./-]*/g;

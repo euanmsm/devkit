@@ -147,6 +147,22 @@ describe('resolving the url and key', () => {
     assert.match(target.urlSource, /apps\/main\/\.env\.local/);
   });
 
+  test('reads an env file the way dotenv does', () => {
+    for (const envLocal of [
+      'NEXT_PUBLIC_SUPABASE_URL = http://127.0.0.1:54321\n',
+      'export NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321\n',
+      'NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:56321\nNEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321\n',
+      'NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 # this tree\n',
+      'NEXT_PUBLIC_SUPABASE_URL="http://127.0.0.1:54321" # "old"\n',
+      "NEXT_PUBLIC_SUPABASE_URL='http://127.0.0.1:54321' # it's\n",
+    ]) {
+      const root = makeTree({ slot: 2, envLocal });
+      const target = resolveSupabaseTarget({ root });
+
+      assert.equal(target.url, 'http://127.0.0.1:54321', envLocal);
+    }
+  });
+
   test('reads a caller-supplied env file first', () => {
     const root = makeTree({
       slot: 2,
