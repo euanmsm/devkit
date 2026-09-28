@@ -109,7 +109,7 @@ Give the PR URL, and say:
 
 - **The checklist arrives unticked**, and that is correct: its steps have
   never been run against this commit.
-- **Each unresolved unit**, by name. It failed verification four times, or its
+- **Each unresolved unit**, by name. It failed verification twice, or its
   checker gave no verdict for it, so it was left out of the steps and listed
   under "Not covered by these checks"; shipping a step that never passed is
   not an option.

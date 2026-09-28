@@ -137,7 +137,7 @@ A unit's fate is one of:
   heard. Storybook items render from their verified text.
 - **deleted** — the checker found no accurate version. It is listed under "Not
   covered by these checks" with the reason.
-- **exhausted** — still failing after four rounds.
+- **exhausted** — still failing after two rounds.
 - **unverified** — the checker returned nothing, or its answer left the unit's
   id out.
 
@@ -220,7 +220,7 @@ batched verification.
 ### What verification costs
 
 Verification used to start one Opus agent per unit per round, so a 40-step
-checklist meant 40 checkers in round 1 and up to 160 over four rounds, each
+checklist meant 40 checkers in round 1 and up to 160 over four rounds (the limit then), each
 re-reading the traps file, the diff and the pack. With up to 8 units a checker,
 the same 40 steps take one checker per drafter group, 6 in the test fixture,
 plus one for the boot block. Later rounds cost one checker per 8 failing units,

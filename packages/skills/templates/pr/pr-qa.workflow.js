@@ -35,7 +35,7 @@ const DEEP = 'opus';
 const LIGHT = 'sonnet';
 
 /** Rounds of verify-and-rewrite a unit gets before it is reported unresolved. */
-const MAX_VERIFY_ROUNDS = 4;
+const MAX_VERIFY_ROUNDS = 2;
 
 /** Units one checker verifies at once, the same cap code-review gives its verifiers. */
 const PER_VERIFIER_CAP = 8;
@@ -944,7 +944,7 @@ function batchUnits(units) {
 /**
  * Verifies one group of units to a fixed point, several to a checker.
  *
- * Round 1 runs the full checks. Rounds 2 to 4 re-check only the units that
+ * Round 1 runs the full checks. Round 2 re-checks only the units that
  * failed with a rewrite, in fresh batches, with the narrower recheck prompt.
  *
  * @param input - Workflow args plus derived paths

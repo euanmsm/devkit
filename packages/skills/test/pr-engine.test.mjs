@@ -257,7 +257,7 @@ describe('pr workflow — verification', () => {
         claims: ['be-1'],
         failClaims: ['be-1'],
         verify: (label) =>
-          label.startsWith(slow) && !label.endsWith(':r3')
+          label.startsWith(slow) && !label.endsWith(':r2')
             ? {
                 verdict: 'FAIL',
                 findings: 'wrong port',
@@ -269,8 +269,8 @@ describe('pr workflow — verification', () => {
     });
 
     const convert = find(calls, 'convert:be-1');
-    const lastSlowRound = find(calls, 'verify:backend:r3');
-    assert.ok(lastSlowRound, 'the slow step took three rounds');
+    const lastSlowRound = find(calls, 'verify:backend:r2');
+    assert.ok(lastSlowRound, 'the slow step took two rounds');
     assert.ok(
       convert.started < lastSlowRound.ended,
       'the conversion did not wait for the slow step',
@@ -336,7 +336,7 @@ describe('pr workflow — verification', () => {
     assert.ok(logs.some((line) => line.startsWith('Deleted')));
   });
 
-  it('leaves out a step still failing after four rounds, as a gap', async () => {
+  it('leaves out a step still failing after two rounds, as a gap', async () => {
     const source = await prWorkflow('curricular');
     const { result, calls, logs } = await runWorkflow(
       source,
@@ -356,7 +356,7 @@ describe('pr workflow — verification', () => {
       },
     );
 
-    // Rounds 2 to 4 re-check only the failing step.
+    // Round 2 re-checks only the failing step.
     assert.deepEqual(
       calls
         .filter((c) => c.label.startsWith('verify:backend'))
@@ -364,8 +364,6 @@ describe('pr workflow — verification', () => {
       [
         ['verify:backend', 2],
         ['verify:backend:r2', 1],
-        ['verify:backend:r3', 1],
-        ['verify:backend:r4', 1],
       ],
     );
     assert.deepEqual(result.unresolved, ['backend:Check be-1']);
@@ -374,11 +372,11 @@ describe('pr workflow — verification', () => {
     assert.doesNotMatch(result.checklist, /Backend \d — Check be-1/);
     assert.match(
       result.checklist,
-      /- backend:Check be-1 — failed verification 4 times — still wrong/,
+      /- backend:Check be-1 — failed verification 2 times — still wrong/,
     );
     assert.ok(
       logs.includes(
-        'Left out, still failing after 4 rounds: backend:Check be-1',
+        'Left out, still failing after 2 rounds: backend:Check be-1',
       ),
     );
   });
@@ -959,7 +957,7 @@ describe('pr workflow — edges', () => {
     assert.deepEqual(result.unresolved, []);
   });
 
-  it('warns on a boot block still failing after four rounds, keeping the last rewrite', async () => {
+  it('warns on a boot block still failing after two rounds, keeping the last rewrite', async () => {
     const source = await prWorkflow('curricular');
     const { result, calls } = await runWorkflow(
       source,
@@ -978,10 +976,10 @@ describe('pr workflow — edges', () => {
       },
     );
 
-    assert.ok(find(calls, 'verify:boot:r4'));
+    assert.ok(find(calls, 'verify:boot:r2'));
     assert.match(
       result.checklist,
-      /^> \[!WARNING\]\n> \*\*This boot block did not pass verification\*\* — it still failed after 4 rounds: still no port\./,
+      /^> \[!WARNING\]\n> \*\*This boot block did not pass verification\*\* — it still failed after 2 rounds: still no port\./,
     );
     assert.match(result.checklist, /npm run dev -- --port 3000/);
     assert.ok(!result.gaps.some((gap) => gap.gap === 'boot'));
