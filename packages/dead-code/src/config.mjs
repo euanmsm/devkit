@@ -2,21 +2,44 @@
 // Config
 // ============================================================================
 //
-// Reads and validates `.devkit/dead-code.json`: the workspaces, the issue types
-// and the known false positives, each with its reason.
+// Reads and validates `.devkit/dead-code.json`: the project folder, the
+// workspaces, the issue types and the known false positives, each with its
+// reason.
 
-import { compile, loadConfig, repoRoot } from '@euanmsm/devkit-core';
+import { loadConfig, repoRoot } from '@euanmsm/devkit-core';
 
 /** The config file's name inside `.devkit/`. */
 export const CONFIG_NAME = 'dead-code.json';
 
 /** Values used for any key the config leaves out. */
 export const DEFAULTS = {
+  directory: null,
   workspaces: [],
   include: ['files', 'exports', 'types'],
 };
 
-const TOP_KEYS = new Set(['workspaces', 'include', 'known']);
+/** Knip's issue types, the values `include` accepts. */
+export const ISSUE_TYPES = [
+  'files',
+  'dependencies',
+  'devDependencies',
+  'optionalPeerDependencies',
+  'unlisted',
+  'binaries',
+  'unresolved',
+  'exports',
+  'nsExports',
+  'types',
+  'nsTypes',
+  'enumMembers',
+  'namespaceMembers',
+  'duplicates',
+  'catalog',
+  'catalogReferences',
+  'cycles',
+];
+
+const TOP_KEYS = new Set(['directory', 'workspaces', 'include', 'known']);
 const KNOWN_KEYS = new Set(['path', 'names', 'reason']);
 
 /**
@@ -44,6 +67,29 @@ function rejectUnknownKeys(object, allowed, where) {
 }
 
 /**
+ * Checks a list of knip issue types.
+ *
+ * @param include - The types, as given
+ * @param where - Names the list in errors
+ * @returns The same list
+ * @throws When it is empty or holds a name knip does not know
+ */
+export function checkInclude(include, where) {
+  if (include.length === 0)
+    throw new Error(`${where} must name at least one knip issue type`);
+
+  for (const type of include) {
+    if (ISSUE_TYPES.includes(type)) continue;
+    const near = ISSUE_TYPES.find((t) => t === `${type}s` || t === `${type}es`);
+    throw new Error(
+      `${where}: "${type}" is not a knip issue type${near ? `. Did you mean "${near}"?` : ''} Use any of ${ISSUE_TYPES.join(', ')}.`,
+    );
+  }
+
+  return include;
+}
+
+/**
  * Validates one `known` entry and compiles its path.
  *
  * @param entry - The entry as parsed
@@ -58,11 +104,19 @@ function knownEntry(entry, where) {
 
   if (typeof entry.path !== 'string' || entry.path === '')
     throw new Error(`${where}.path is required, as a regex string`);
-  const [pattern] = compile([entry.path]);
-  if (!pattern) throw new Error(`${where}.path is not a valid regex`);
+  let pattern;
+  try {
+    pattern = new RegExp(entry.path);
+  } catch (error) {
+    throw new Error(`${where}.path is not a valid regex: ${error.message}`);
+  }
 
   if (entry.names !== undefined && !isStringList(entry.names))
     throw new Error(`${where}.names must be a list of strings`);
+  if (entry.names?.length === 0)
+    throw new Error(
+      `${where}.names is empty, so it matches nothing. Leave it out to match every name`,
+    );
   if (typeof entry.reason !== 'string' || entry.reason.trim() === '')
     throw new Error(`${where}.reason is required`);
 
@@ -79,7 +133,7 @@ function knownEntry(entry, where) {
  *
  * @param raw - The parsed JSON, or null when there is no file
  * @param source - The file's name, used to prefix every error
- * @returns `{ workspaces, include, known }`
+ * @returns `{ directory, workspaces, include, known }`
  * @throws When a key is unknown, mistyped or missing
  */
 export function validate(raw, source) {
@@ -88,13 +142,23 @@ export function validate(raw, source) {
     throw new Error(`${source} must hold a JSON object`);
   rejectUnknownKeys(config, TOP_KEYS, source);
 
+  if (
+    config.directory !== undefined &&
+    (typeof config.directory !== 'string' || config.directory.trim() === '')
+  )
+    throw new Error(
+      `${source}: directory must be a folder path, relative to the repository root`,
+    );
   for (const key of ['workspaces', 'include'])
     if (config[key] !== undefined && !isStringList(config[key]))
       throw new Error(`${source}: ${key} must be a list of strings`);
+  if (config.include !== undefined)
+    checkInclude(config.include, `${source}: include`);
   if (config.known !== undefined && !Array.isArray(config.known))
     throw new Error(`${source}: known must be a list`);
 
   return {
+    directory: config.directory ?? DEFAULTS.directory,
     workspaces: config.workspaces ?? DEFAULTS.workspaces,
     include: config.include ?? DEFAULTS.include,
     known: (config.known ?? []).map((entry, i) =>
@@ -104,38 +168,54 @@ export function validate(raw, source) {
 }
 
 /**
- * Sets the findings a `known` entry covers apart from the rest.
+ * Tells whether a known entry covers a finding.
+ *
+ * @param entry - A validated `known` entry
+ * @param finding - A finding
+ * @returns True when the path matches and the name is listed, or no names are
+ */
+function covers(entry, finding) {
+  return (
+    entry.pattern.test(finding.file) &&
+    (!entry.names || entry.names.includes(finding.name))
+  );
+}
+
+/**
+ * Sets the findings a `known` entry covers apart from the rest, each taking the
+ * first covering entry's reason while every covering entry counts as used, and
+ * lists as stale the entries, or the `names` in them, that matched nothing.
  *
  * @param findings - Findings from knip
  * @param known - The config's validated `known` entries
- * @returns `{ findings, known, stale }`, each known finding carrying its entry's reason
+ * @returns `{ findings, known, stale }`, known findings carrying the reason
  */
 export function applyKnown(findings, known) {
   const kept = [];
   const set = [];
-  const hit = new Set();
+  const hit = new Map(known.map((k) => [k, new Set()]));
 
   for (const finding of findings) {
-    const entry = known.find(
-      (k) =>
-        k.pattern.test(finding.file) &&
-        (!k.names || k.names.includes(finding.name)),
-    );
-    if (!entry) {
+    const entries = known.filter((k) => covers(k, finding));
+    if (entries.length === 0) {
       kept.push(finding);
       continue;
     }
-    hit.add(entry);
-    set.push({ ...finding, reason: entry.reason });
+    for (const entry of entries) hit.get(entry).add(finding.name);
+    set.push({ ...finding, reason: entries[0].reason });
   }
 
-  const stale = known
-    .filter((k) => !hit.has(k))
-    .map(({ path, names, reason }) => ({
-      path,
-      ...(names ? { names } : {}),
-      reason,
-    }));
+  const stale = [];
+  for (const entry of known) {
+    const { path, names, reason } = entry;
+    const seen = hit.get(entry);
+    if (seen.size === 0) {
+      stale.push({ path, ...(names ? { names } : {}), reason });
+      continue;
+    }
+    const unseen = (names ?? []).filter((n) => !seen.has(n));
+    if (unseen.length) stale.push({ path, names: unseen, reason });
+  }
 
   return { findings: kept, known: set, stale };
 }

@@ -1,5 +1,5 @@
 {
-  "_readme": "Settings for dead-code. `workspaces` narrows knip to those workspaces (empty means all of them). `include` is knip's issue types. Every `known` entry is a false positive kept on purpose: `path` is a regex matched against repo-root paths, `names` (optional) limits it to those exports, and `reason` is required.",
+  "_readme": "Settings for dead-code. `directory` (optional) is the folder holding the project's package.json, relative to the repository root; leave it out to find it from the current folder. `workspaces` narrows knip to those workspaces (empty means all of them). `include` is knip's issue types. Every `known` entry is a false positive kept on purpose: `path` is a regex matched against paths from the repository root, `names` (optional) limits it to those exports, and `reason` is required.",
   "workspaces": [],
   "include": ["files", "exports", "types"],
   "known": [

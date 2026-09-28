@@ -50,4 +50,92 @@ describe('dead-code why', () => {
     assert.equal(deadCode(root, ['why', 'src/nope.ts']).status, 2);
     assert.equal(deadCode(root, ['why']).status, 2);
   });
+
+  test('a folder is a usage error, not a knip failure', () => {
+    const root = makeRepo();
+
+    for (const path of ['.', 'src']) {
+      const { status, out } = deadCode(root, ['why', path]);
+      assert.equal(status, 2);
+      assert.match(out, /why takes a file, not a folder/);
+      assert.doesNotMatch(out, /knip could not run/);
+    }
+  });
+
+  test('an export that is not in the file exits 2', () => {
+    const root = makeRepo();
+
+    const { status, out } = deadCode(root, ['why', 'src/lib.ts', 'nothere']);
+
+    assert.equal(status, 2);
+    assert.match(out, /No export nothere found in src\/lib\.ts/);
+  });
+
+  test('a file knip does not analyse is not called unused', () => {
+    const root = makeRepo({ 'README.md': '# fixture\n' });
+
+    const { status, out } = deadCode(root, ['why', 'README.md']);
+
+    assert.equal(status, 0);
+    assert.match(out, /Knip does not analyse README\.md/);
+    assert.doesNotMatch(out, /Nothing reaches/);
+  });
+
+  test('takes a repo-root path from a subfolder', () => {
+    const root = makeRepo();
+
+    const { status, out } = deadCode(join(root, 'src/util'), [
+      'why',
+      'src/orphan.ts',
+    ]);
+
+    assert.equal(status, 0, out);
+    assert.match(out, /Nothing reaches src\/orphan\.ts/);
+  });
+
+  test("ignores the config's workspaces, so a used file is not called unused", () => {
+    const root = makeRepo({
+      'package.json': {
+        name: 'fixture',
+        private: true,
+        type: 'module',
+        workspaces: ['packages/*'],
+      },
+      'knip.json': null,
+      'packages/a/package.json': {
+        name: 'a',
+        type: 'module',
+        main: 'src/index.js',
+      },
+      'packages/a/src/index.js':
+        "import { y } from './lib.js';\nconsole.log(y);\n",
+      'packages/a/src/lib.js': 'export const y = 1;\n',
+      'packages/b/package.json': {
+        name: 'b',
+        type: 'module',
+        main: 'index.js',
+      },
+      'packages/b/index.js': 'export const b = 1;\n',
+      '.devkit/dead-code.json': { workspaces: ['packages/b'] },
+    });
+
+    const { status, out } = deadCode(root, [
+      'why',
+      'packages/a/src/lib.js',
+      'y',
+    ]);
+
+    assert.equal(status, 0, out);
+    assert.doesNotMatch(out, /Nothing reaches/);
+    assert.match(out, /packages\/a\/src\/index\.js/);
+  });
+
+  test('takes no --json', () => {
+    const root = makeRepo();
+
+    const { status, out } = deadCode(root, ['why', 'src/lib.ts', '--json']);
+
+    assert.equal(status, 2);
+    assert.match(out, /--json does not apply to dead-code why/);
+  });
 });

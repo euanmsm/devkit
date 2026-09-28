@@ -5,158 +5,13 @@
 // `dead-code branch`. Runs knip at the fork point, in a throwaway worktree, and
 // on the working tree, then keeps only the findings the branch introduced.
 
-import { execFileSync } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  symlinkSync,
-  unlinkSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
+import { changesSince, git, isClean, mergeBase } from './git.mjs';
 import { analyse } from './knip.mjs';
-
-// A missed rename reads a moved file's existing debt as new.
-const RENAMES = '--find-renames=20%';
-
-/**
- * Runs git, throwing an error carrying its stderr.
- *
- * @param cwd - Directory to run in
- * @param args - Arguments after `git`
- * @returns What the command wrote to stdout
- */
-function run(cwd, args) {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    maxBuffer: 1 << 28,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-}
-
-/**
- * Runs git, swallowing a failure.
- *
- * @param cwd - Directory to run in
- * @param args - Arguments after `git`
- * @returns What the command wrote to stdout, or null when it failed
- */
-function git(cwd, ...args) {
-  try {
-    return run(cwd, args);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Names the commit the branch diverged from.
- *
- * @param root - The repository root
- * @param base - The branch to compare against
- * @returns The merge base, or null when there is none
- */
-export function mergeBase(root, base) {
-  return git(root, 'merge-base', base, 'HEAD')?.trim() || null;
-}
-
-/**
- * Maps each path the working tree renamed to its name at the fork point.
- *
- * @param root - The repository root
- * @param from - The fork point
- * @returns Old path to new path, for renames only
- */
-export function renamedTo(root, from) {
-  const out = new Map();
-
-  for (const line of run(root, ['diff', '--name-status', RENAMES, from]).split(
-    '\n',
-  )) {
-    const [code, old, now] = line.split('\t');
-    if (code?.startsWith('R') && old && now) out.set(old, now);
-  }
-
-  return out;
-}
-
-/**
- * Lists the folders holding a package.json the working tree knows about.
- *
- * @param root - The repository root
- * @returns Repo-relative folders, `''` for the root
- */
-function packageDirs(root) {
-  const files = run(root, [
-    'ls-files',
-    '-z',
-    '--cached',
-    '--others',
-    '--exclude-standard',
-    '--',
-    'package.json',
-    '*/package.json',
-  ]).split('\0');
-
-  return [
-    '',
-    ...files.filter((f) => f.endsWith('/package.json')).map((f) => dirname(f)),
-  ];
-}
-
-/**
- * Symlinks every installed node_modules folder into the worktree.
- *
- * @param root - The repository root
- * @param tree - The worktree's root
- * @returns The links made
- */
-function linkNodeModules(root, tree) {
-  const links = [];
-
-  for (const dir of packageDirs(root)) {
-    const target = join(root, dir, 'node_modules');
-    const link = join(tree, dir, 'node_modules');
-    if (!existsSync(target) || existsSync(link)) continue;
-
-    mkdirSync(join(tree, dir), { recursive: true });
-    symlinkSync(target, link, 'dir');
-    links.push(link);
-  }
-
-  return links;
-}
-
-/**
- * Runs a function inside a temporary worktree checked out at a commit.
- *
- * @param root - The repository root
- * @param commit - The commit to check out
- * @param fn - Receives the worktree's root
- * @returns What the function returned
- */
-export async function atCommit(root, commit, fn) {
-  const tmp = mkdtempSync(join(tmpdir(), 'dead-code-base-'));
-  const tree = join(tmp, 'tree');
-  const links = [];
-
-  try {
-    run(root, ['worktree', 'add', '--detach', '--quiet', tree, commit]);
-    links.push(...linkNodeModules(root, tree));
-    return await fn(tree);
-  } finally {
-    // Unlinked first, so no removal below can reach the real node_modules.
-    for (const link of links) unlinkSync(link);
-    const removed = git(root, 'worktree', 'remove', '--force', tree) !== null;
-    rmSync(tmp, { recursive: true, force: true });
-    // Pruning also drops other stale worktrees, so only a failed removal runs it.
-    if (!removed) git(root, 'worktree', 'prune');
-  }
-}
+import { reader, workspacePackages } from './project.mjs';
+import { atCommit, sweep } from './worktree.mjs';
 
 /**
  * Builds the key two findings share when they are the same issue.
@@ -186,38 +41,156 @@ function moved(finding, renames) {
 }
 
 /**
- * Finds what the branch newly left dead, compared with its fork point.
+ * Builds the key a symbol keeps when its file moves.
  *
- * @param options - `{ root, base, workspaces, include }`
- * @returns `{ findings, hints, fork }`, hints from the working tree
- * @throws When there is no merge base, or knip fails on either side
+ * @param finding - A finding
+ * @returns `type|name`, without the file
  */
-export async function branchFindings({ root, base, workspaces, include }) {
-  const fork = mergeBase(root, base);
-  if (!fork)
-    throw new Error(
-      `Could not find a merge base with ${base}. Fetch it, or pass one as an argument.`,
-    );
+function symbolKey(finding) {
+  return `${finding.type}|${finding.name}`;
+}
 
-  const renames = renamedTo(root, fork);
+/**
+ * Tells whether a path sits at or under a folder.
+ *
+ * @param file - A path from the git root
+ * @param folder - A folder from the git root
+ * @returns True when it does
+ */
+function under(file, folder) {
+  return file === folder || file.startsWith(`${folder}/`);
+}
+
+/**
+ * Keeps the workspace filters that name something at the fork point.
+ *
+ * A workspace the branch added is not there yet, and knip fails on a filter
+ * that matches nothing, so those are dropped: everything in them is new.
+ *
+ * @param dir - The project folder inside the worktree
+ * @param workspaces - The filters, folders or package names
+ * @returns The filters that still apply
+ */
+function presentWorkspaces(dir, workspaces) {
+  if (workspaces.length === 0) return workspaces;
+  const names = workspacePackages(
+    git(dir, 'ls-files', '-z', '--', 'package.json', '*/package.json')
+      ?.split('\0')
+      .filter(Boolean) ?? [],
+    reader(dir),
+  );
+
+  return workspaces.filter(
+    (ws) => /[*?{[]/.test(ws) || names.has(ws) || existsSync(join(dir, ws)),
+  );
+}
+
+/**
+ * Runs knip at the fork point, finding nothing when the project or every named
+ * workspace is missing there.
+ *
+ * @param options - `{ root, fork, prefix, renames, workspaces, include }`
+ * @returns `{ findings, errors, missingSubmodules }`
+ */
+function atFork({ root, fork, prefix, renames, workspaces, include }) {
+  return atCommit(
+    { root, commit: fork, prefix, renames },
+    async ({ tree, missingSubmodules }) => {
+      const dir = join(tree, prefix);
+      const present = presentWorkspaces(dir, workspaces);
+      const empty = { findings: [], errors: [], missingSubmodules };
+
+      if (!existsSync(join(dir, 'package.json'))) return empty;
+      if (workspaces.length && present.length === 0) return empty;
+
+      const found = await analyse({
+        cwd: dir,
+        prefix,
+        workspaces: present,
+        include,
+      });
+      return { ...found, missingSubmodules };
+    },
+  );
+}
+
+/**
+ * Finds what the branch newly left dead, compared with its fork point, with
+ * everything but the errors coming from the working tree.
+ *
+ * @param options - `{ root, dir, prefix, base, workspaces, include }`
+ * @returns `{ findings, unresolved, hints, errors, warnings, fork }`
+ * @throws When there is no merge base, or knip cannot run on either side
+ */
+export async function branchFindings({
+  root,
+  dir,
+  prefix,
+  base,
+  workspaces,
+  include,
+}) {
+  sweep(root);
+  const fork = mergeBase(root, base);
+  const head = git(root, 'rev-parse', 'HEAD')?.trim();
+
+  // Nothing has changed since the fork point, so there is nothing new to find.
+  if (fork === head && isClean(root)) {
+    const now = await analyse({ cwd: dir, prefix, workspaces, include });
+    return { ...now, findings: [], warnings: [], fork };
+  }
+
+  const { renames, added, deleted } = changesSince(root, fork);
   // Settled together, so the worktree is gone before any failure is reported.
   const results = await Promise.allSettled([
-    atCommit(root, fork, (tree) =>
-      analyse({ cwd: tree, workspaces, include }),
-    ).catch((error) => {
-      error.message = `At the fork point ${fork.slice(0, 7)}, ${error.message}`;
-      throw error;
-    }),
-    analyse({ cwd: root, workspaces, include }),
+    atFork({ root, fork, prefix, renames, workspaces, include }).catch(
+      (error) => {
+        error.message = `At the fork point ${fork.slice(0, 7)}, ${error.message}`;
+        throw error;
+      },
+    ),
+    analyse({ cwd: dir, prefix, workspaces, include }),
   ]);
   const failed = results.find((r) => r.status === 'rejected');
   if (failed) throw failed.reason;
   const [before, after] = results.map((r) => r.value);
 
-  const seen = new Set(before.findings.map((f) => key(moved(f, renames))));
+  const was = before.findings.map((f) => moved(f, renames));
+  const seen = new Set(was.map(key));
+  // A file that was wholly unused already held every export it has now.
+  const deadFiles = new Set(
+    was.filter((f) => f.type === 'file').map((f) => f.file),
+  );
+  // A dead symbol that left a file now gone for a new one has moved.
+  const departed = new Set(
+    before.findings
+      .filter((f) => deleted.has(f.file) || renames.has(f.file))
+      .filter((f) => f.type !== 'file')
+      .map(symbolKey),
+  );
+  const arrived = new Set([...added, ...renames.values()]);
+  const skipped = before.missingSubmodules;
+
   return {
-    findings: after.findings.filter((f) => !seen.has(key(f))),
+    findings: after.findings.filter(
+      (f) =>
+        !seen.has(key(f)) &&
+        !(f.type !== 'file' && deadFiles.has(f.file)) &&
+        !(arrived.has(f.file) && departed.has(symbolKey(f))) &&
+        !skipped.some((path) => under(f.file, path)),
+    ),
+    unresolved: after.unresolved,
     hints: after.hints,
+    errors: [
+      ...before.errors.map(
+        (e) => `At the fork point ${fork.slice(0, 7)}: ${e}`,
+      ),
+      ...after.errors,
+    ],
+    warnings: skipped.map(
+      (path) =>
+        `The submodule ${path} could not be checked out at the fork point, so findings under it are left out.`,
+    ),
     fork,
   };
 }

@@ -47,6 +47,29 @@ describe('exit codes', () => {
     assert.equal(status, 0);
     assert.match(out, /dead-code branch \[base\]/);
   });
+
+  test('`help` is --help', () => {
+    const root = makeRepo();
+
+    const { status, out } = deadCode(root, ['help']);
+
+    assert.equal(status, 0);
+    assert.match(out, /dead-code branch \[base\]/);
+  });
+
+  test('2 for arguments a command does not take', () => {
+    const root = makeRepo();
+
+    assert.match(
+      deadCode(root, ['init', 'extra']).out,
+      /init takes no arguments/,
+    );
+    assert.match(
+      deadCode(root, ['init', '--json']).out,
+      /--json does not apply to dead-code init/,
+    );
+    assert.match(deadCode(root, ['--force']).out, /--force does not apply/);
+  });
 });
 
 describe('--workspace', () => {
@@ -87,6 +110,24 @@ describe('--workspace', () => {
     assert.deepEqual(files(['--workspace', 'packages/a']), [
       'packages/a/stray.ts',
     ]);
+
+    // A folder is read from the current folder, like every other path.
+    const fromA = JSON.parse(
+      deadCode(join(root, 'packages/a'), [
+        '--workspace',
+        '.',
+        '--include',
+        'files',
+        '--json',
+      ]).stdout,
+    );
+    assert.equal(fromA.directory, '.');
+    assert.deepEqual(
+      fromA.findings.map((f) => f.file),
+      ['packages/a/stray.ts'],
+    );
+    // A name that is no folder here still reaches knip as it is.
+    assert.deepEqual(files(['--workspace', 'a']), ['packages/a/stray.ts']);
   });
 });
 

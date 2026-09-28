@@ -2,8 +2,9 @@
 // Report
 // ============================================================================
 //
-// Prints a run's result: findings grouped by file, a count per type, the known
-// false positives set apart by reason, stale known entries and knip's hints.
+// Prints a run's result: knip's errors, findings grouped by file, a count per
+// type, the known false positives set apart by reason, stale known entries,
+// unresolved imports, knip's hints and any warnings.
 
 // Finding types mapped to the label printed beside each finding.
 const LABELS = {
@@ -11,8 +12,13 @@ const LABELS = {
   export: 'unused-export',
   type: 'unused-type',
   enumMember: 'unused-enum-member',
+  namespaceMember: 'unused-namespace-member',
   duplicate: 'duplicate-export',
   dependency: 'unused-dependency',
+  unlisted: 'unlisted-dependency',
+  binaries: 'unlisted-binary',
+  unresolved: 'unresolved-import',
+  cycles: 'import-cycle',
 };
 
 /**
@@ -88,7 +94,7 @@ function tally(items, by) {
  * @param result - The run's result
  * @returns One sentence
  */
-function summary({ findings, known, mode, base }) {
+function summary({ findings, known, errors, mode, base }) {
   const files = new Set(findings.map((f) => f.file)).size;
   const where =
     mode === 'branch'
@@ -97,25 +103,36 @@ function summary({ findings, known, mode, base }) {
         ? ' in the named paths'
         : '';
   const aside = known.length ? ` ${known.length} known, not counted.` : '';
+  const caveat = errors.length
+    ? ' Knip reported errors, so this result cannot be trusted.'
+    : '';
 
   if (findings.length === 0)
     return mode === 'branch'
-      ? `No new dead code since ${base}.${aside}`
-      : `No dead code found${where}.${aside}`;
+      ? `No new dead code since ${base}.${aside}${caveat}`
+      : `No dead code found${where}.${aside}${caveat}`;
 
   const noun = mode === 'branch' ? 'new finding' : 'finding';
-  return `${count(findings.length, noun)} in ${count(files, 'file')}${where}.${aside}`;
+  return `${count(findings.length, noun)} in ${count(files, 'file')}${where}.${aside}${caveat}`;
 }
 
 /**
  * Builds the text report.
  *
- * @param result - `{ findings, known, stale, hints, mode, base }`
+ * @param result - The run's result, as `formatJson` takes it
  * @returns The report, sections separated by blank lines
  */
 export function formatText(result) {
-  const { findings, known, stale, hints } = result;
+  const { findings, known, stale, hints, unresolved, errors, warnings } =
+    result;
   const sections = [];
+
+  if (errors.length)
+    sections.push(
+      `Knip reported errors (${errors.length}), so the findings below may be wrong\n${errors
+        .map((e) => e.replace(/^/gm, '  '))
+        .join('\n')}`,
+    );
 
   if (findings.length) {
     const byFile = new Map();
@@ -142,6 +159,15 @@ export function formatText(result) {
         .join('\n')}`,
     );
 
+  if (unresolved.length)
+    sections.push(
+      `Unresolved imports (${unresolved.length}), not counted\n${sortFindings(
+        unresolved,
+      )
+        .map((f) => `  ${f.line ? `${f.file}:${f.line}` : f.file}  ${f.name}`)
+        .join('\n')}`,
+    );
+
   if (hints.length)
     sections.push(
       `Configuration hints (${hints.length})\n${hints
@@ -154,24 +180,44 @@ export function formatText(result) {
         .join('\n')}`,
     );
 
+  if (warnings.length)
+    sections.push(`Warnings\n${warnings.map((w) => `  ${w}`).join('\n')}`);
+
   sections.push(summary(result));
   return sections.join('\n\n');
 }
 
 /**
- * Builds the machine-readable report.
+ * Builds the machine-readable report, leaving out `base` and `fork` when unset.
  *
- * @param result - `{ findings, known, stale, hints, mode, base }`
+ * @param result - The run's findings, lists, mode, directory, base and fork
  * @returns The JSON text
  */
-export function formatJson({ findings, known, stale, hints, mode, base }) {
+export function formatJson({
+  findings,
+  known,
+  stale,
+  hints,
+  unresolved,
+  errors,
+  warnings,
+  mode,
+  directory,
+  base,
+  fork,
+}) {
   const body = {
     findings: sortFindings(findings),
     known: sortFindings(known),
     stale,
     hints,
+    unresolved: sortFindings(unresolved),
+    errors,
+    warnings,
     mode,
+    directory,
     ...(base ? { base } : {}),
+    ...(fork ? { fork } : {}),
   };
   return JSON.stringify(body, null, 2);
 }

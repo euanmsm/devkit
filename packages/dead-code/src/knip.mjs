@@ -11,6 +11,8 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { withPrefix } from './project.mjs';
+
 const HINTS_REPORTER = join(
   dirname(fileURLToPath(import.meta.url)),
   'hints.mjs',
@@ -24,6 +26,7 @@ const TYPES = {
   types: 'type',
   nsTypes: 'type',
   enumMembers: 'enumMember',
+  namespaceMembers: 'namespaceMember',
   duplicates: 'duplicate',
   dependencies: 'dependency',
   devDependencies: 'dependency',
@@ -57,6 +60,18 @@ export function knipBin() {
   }
 }
 
+/** Knip processes still running, so an interrupted run can stop them. */
+const children = new Set();
+
+/**
+ * Stops every knip process this module started and has not seen exit.
+ *
+ * @param signal - The signal to send
+ */
+export function stopKnip(signal = 'SIGTERM') {
+  for (const child of children) child.kill(signal);
+}
+
 /**
  * Runs knip with the current node.
  *
@@ -69,19 +84,22 @@ export function runKnip(cwd, args) {
     const out = [];
     const err = [];
     const child = spawn(process.execPath, [knipBin(), ...args], { cwd });
+    children.add(child);
 
     child.stdout.on('data', (chunk) => out.push(chunk));
     child.stderr.on('data', (chunk) => err.push(chunk));
-    child.on('error', (error) =>
-      resolve({ status: null, stdout: '', stderr: '', error }),
-    );
-    child.on('close', (status) =>
+    child.on('error', (error) => {
+      children.delete(child);
+      resolve({ status: null, stdout: '', stderr: '', error });
+    });
+    child.on('close', (status) => {
+      children.delete(child);
       resolve({
         status,
         stdout: Buffer.concat(out).toString('utf8'),
         stderr: Buffer.concat(err).toString('utf8'),
-      }),
-    );
+      });
+    });
   });
 }
 
@@ -99,7 +117,7 @@ function workspaceArgs(workspaces) {
  * Turns one knip issue entry into a finding.
  *
  * @param type - The finding's type
- * @param file - The repo-relative file the entry belongs to
+ * @param file - The file the entry belongs to
  * @param item - The entry, a symbol or a group of symbols
  * @returns `{ type, file, name, line }`
  */
@@ -114,10 +132,8 @@ function toFinding(type, file, item) {
 
   if (type === 'file') return { type, file, name: file, line: null };
 
-  const name =
-    type === 'enumMember' && item.namespace
-      ? `${item.namespace}.${item.name}`
-      : item.name;
+  // Members of different enums or namespaces can share a name.
+  const name = item.namespace ? `${item.namespace}.${item.name}` : item.name;
   return { type, file, name, line: item.line ?? null };
 }
 
@@ -140,22 +156,24 @@ function entries(value) {
  * Flattens a knip JSON report into findings.
  *
  * @param report - Knip 5 or knip 6 JSON output, parsed
+ * @param prefix - Put in front of every path, `''` for none
  * @returns One `{ type, file, name, line }` per issue
  */
-export function toFindings(report) {
+export function toFindings(report, prefix = '') {
   const out = [];
+  const at = (file) => withPrefix(prefix, file);
 
   // Knip 5 lists unused files on their own, knip 6 inside each issue row.
   for (const file of report.files ?? [])
     if (typeof file === 'string')
-      out.push({ type: 'file', file, name: file, line: null });
+      out.push({ type: 'file', file: at(file), name: at(file), line: null });
 
   for (const row of report.issues ?? []) {
     for (const [key, value] of Object.entries(row)) {
       if (key === 'file' || key === 'owners') continue;
       const type = TYPES[key] ?? key;
       for (const item of entries(value))
-        out.push(toFinding(type, row.file, item));
+        out.push(toFinding(type, at(row.file), item));
     }
   }
 
@@ -188,13 +206,16 @@ export function parseOutput(stdout) {
 }
 
 /**
- * Runs knip over a tree and returns what it found.
+ * Runs knip in a project folder, always asking for unresolved imports, which
+ * come back apart unless `include` names them; `errors` holds what knip printed
+ * when it ran but failed part of the way, such as on a plugin config.
  *
- * @param options - `{ cwd, workspaces, include }`, `cwd` being the tree's root
- * @returns `{ findings, hints }`, paths relative to `cwd`
+ * @param options - `{ cwd, prefix, workspaces, include }`
+ * @returns `{ findings, unresolved, hints, errors }`, paths from the git root
  * @throws When knip exits with an error and prints no report
  */
-export async function analyse({ cwd, workspaces = [], include }) {
+export async function analyse({ cwd, prefix = '', workspaces = [], include }) {
+  const asked = [...new Set([...include, 'unresolved'])];
   const result = await runKnip(cwd, [
     '--reporter',
     'json',
@@ -203,21 +224,32 @@ export async function analyse({ cwd, workspaces = [], include }) {
     '--no-progress',
     '--no-exit-code',
     '--include',
-    include.join(','),
+    asked.join(','),
     ...workspaceArgs(workspaces),
   ]);
 
   const { report, hints } = parseOutput(result.stdout ?? '');
-  const detail = (result.stderr || result.stdout || '').trim();
+  const detail = (result.stderr || '').trim();
 
   if (!report)
     throw new Error(
-      `knip could not run${result.error ? ` (${result.error.message})` : ''}.\n\n${detail}`,
+      `knip could not run${result.error ? ` (${result.error.message})` : ''}.\n\n${detail || (result.stdout ?? '').trim()}`,
     );
-  if (result.status !== 0 && detail)
-    process.stderr.write(`knip reported errors:\n${detail}\n\n`);
 
-  return { findings: toFindings(report), hints };
+  const all = toFindings(report, prefix);
+  const apart = !include.includes('unresolved');
+  return {
+    findings: apart ? all.filter((f) => f.type !== 'unresolved') : all,
+    unresolved: apart ? all.filter((f) => f.type === 'unresolved') : [],
+    hints: hints.map((h) => ({
+      ...h,
+      file: h.file ? withPrefix(prefix, h.file) : h.file,
+    })),
+    errors:
+      result.status === 0
+        ? []
+        : [detail || `knip exited with code ${result.status}`],
+  };
 }
 
 /**

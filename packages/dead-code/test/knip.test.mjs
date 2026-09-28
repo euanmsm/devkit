@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+import { toHint, unconfigured } from '../src/hints.mjs';
 import { parseOutput, toFindings } from '../src/knip.mjs';
 
 describe('toFindings', () => {
@@ -61,6 +62,100 @@ describe('toFindings', () => {
       { type: 'type', file: 'src/b.ts', name: 'T', line: 2 },
       { type: 'enumMember', file: 'src/b.ts', name: 'E.B', line: 5 },
     ]);
+  });
+});
+
+describe('toFindings, names and paths', () => {
+  test('keeps the namespace on namespace members, so equal names stay apart', () => {
+    const findings = toFindings({
+      issues: [
+        {
+          file: 'src/ns.ts',
+          namespaceMembers: [
+            { namespace: 'NS1', name: 'x', line: 1 },
+            { namespace: 'NS2', name: 'x', line: 2 },
+          ],
+        },
+      ],
+    });
+
+    assert.deepEqual(
+      findings.map((f) => [f.type, f.name]),
+      [
+        ['namespaceMember', 'NS1.x'],
+        ['namespaceMember', 'NS2.x'],
+      ],
+    );
+  });
+
+  test('puts the project folder in front of every path', () => {
+    const findings = toFindings(
+      {
+        issues: [
+          { file: 'src/a.ts', files: [{ name: 'src/a.ts' }] },
+          { file: 'src/b.ts', exports: [{ name: 'x', line: 3 }] },
+        ],
+      },
+      'web',
+    );
+
+    assert.deepEqual(findings, [
+      { type: 'file', file: 'web/src/a.ts', name: 'web/src/a.ts', line: null },
+      { type: 'export', file: 'web/src/b.ts', name: 'x', line: 3 },
+    ]);
+  });
+});
+
+describe('hints', () => {
+  test('toHint makes the file relative and names the message', () => {
+    assert.deepEqual(
+      toHint(
+        { type: 'entry-redundant', identifier: /src\/index\.ts/ },
+        { cwd: '/repo', configFilePath: '/repo/knip.json' },
+      ),
+      {
+        type: 'entry-redundant',
+        identifier: 'src\\/index\\.ts',
+        workspace: '.',
+        file: 'knip.json',
+        message: 'Remove the redundant entry pattern',
+      },
+    );
+  });
+
+  test('says the project is unconfigured when most files are unused', () => {
+    const files = Object.fromEntries(
+      Array.from({ length: 25 }, (_, i) => [
+        `/repo/f${i}.js`,
+        { [`/repo/f${i}.js`]: { filePath: `/repo/f${i}.js` } },
+      ]),
+    );
+
+    const hints = unconfigured({
+      counters: { files: 25, processed: 26 },
+      issues: { files },
+      includedWorkspaceDirs: ['/repo'],
+      cwd: '/repo',
+    });
+
+    assert.deepEqual(hints, [
+      { type: 'top-level-unconfigured', identifier: '.', size: 25 },
+    ]);
+    assert.match(
+      toHint(hints[0], { cwd: '/repo' }).message,
+      /Create a knip\.json .*\(25 unused files\)/,
+    );
+  });
+
+  test('says nothing when few files are unused', () => {
+    assert.deepEqual(
+      unconfigured({
+        counters: { files: 5, processed: 100 },
+        issues: { files: {} },
+        includedWorkspaceDirs: ['/repo'],
+      }),
+      [],
+    );
   });
 });
 

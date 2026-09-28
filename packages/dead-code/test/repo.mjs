@@ -3,10 +3,17 @@
 // ============================================================================
 //
 // Builds throwaway git repositories holding a tiny TypeScript project, and runs
-// the `dead-code` bin inside them.
+// the `dead-code` bin inside them. Every folder made here is removed when the
+// test file's process exits.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +38,23 @@ export const PROJECT = {
   'src/orphan.ts': 'export const orphan = 1;\n',
   'src/util/helper.ts': 'export function helper() {\n  return 4;\n}\n',
 };
+
+const made = new Set();
+process.on('exit', () => {
+  for (const dir of made) rmSync(dir, { recursive: true, force: true });
+});
+
+/**
+ * Makes an empty folder under the system temp folder, removed on exit.
+ *
+ * @param prefix - Starts the folder's name
+ * @returns Its real path
+ */
+export function tempDir(prefix = 'dead-code-') {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  made.add(dir);
+  return dir;
+}
 
 /**
  * Runs git in a directory, hiding its output.
@@ -70,7 +94,7 @@ export function write(path, contents) {
  * @returns The repo's root
  */
 export function makeRepo(files = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'dead-code-')));
+  const root = tempDir();
 
   git(root, 'init', '-q', '-b', 'main');
   git(root, 'config', 'user.email', 'test@example.com');
@@ -102,12 +126,14 @@ export function commit(root, message = 'change') {
  * @param cwd - Directory to run in
  * @param args - Arguments after `dead-code`
  * @returns The exit status, stdout, and everything printed
+ * @throws When the bin cannot be started
  */
 export function deadCode(cwd, args = []) {
   const result = spawnSync(process.execPath, [BIN, ...args], {
     cwd,
     encoding: 'utf8',
   });
+  if (result.error) throw result.error;
   return {
     status: result.status,
     stdout: result.stdout,
