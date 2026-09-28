@@ -30,13 +30,14 @@ check is fast enough that nobody disables it. In CI they scan the whole tree.
 ## Installing
 
 ```sh
-npm i -D @euanmsm/secure
+npm i -D @euanmsm/secure lockfile-lint
 brew install gitleaks semgrep
 ```
 
-`gitleaks` and `semgrep` are external binaries. If either is missing the scan
-**skips that check and still passes** — so install them in CI, or a green build
-means less than it looks like.
+`gitleaks` and `semgrep` are external binaries, and `lockfile-lint` is a
+separate npm package. If any of the three is missing the scan **skips that check
+and still passes** — so install them in CI, or a green build means less than it
+looks like.
 
 Wire both into a pre-commit hook:
 

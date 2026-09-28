@@ -24,14 +24,22 @@ Block scripts in `.npmrc`:
 ignore-scripts=true
 ```
 
-Then run the allowlist after each install:
+Then run the allowlist after each install, as its own step:
 
 ```json
-{ "scripts": { "postinstall": "vouch" } }
+{ "scripts": { "setup": "npm install && vouch" } }
 ```
 
-A root `postinstall` in your own `package.json` still runs — `ignore-scripts`
-governs your dependencies, not you.
+```sh
+npm run setup           # locally
+npm ci && npx vouch     # in CI and Docker builds
+```
+
+Do not hook it to your own `postinstall`. `ignore-scripts` also skips your root
+package's lifecycle scripts (`preinstall`, `postinstall`, `prepare`, and the
+`pre`/`post` hooks of any script), so `npm install` would finish without running
+vouch and without saying so. A script you name directly, like `npm run setup`,
+still runs.
 
 ## Configuring
 

@@ -34,15 +34,52 @@ NC='\033[0m'
 
 echo "--- Check A: Scanning config files for malicious patterns ---"
 
-CONFIG_FILES=$(find . \
+# Prints the files among "$@" whose content matches the pattern, batched so a
+# long list cannot overflow the argument limit. Returns 2 when grep could not
+# read a file, so an unreadable file fails the check instead of passing it.
+grep_files() {
+	local pattern=$1 status=0 rc n
+	shift
+	while [ $# -gt 0 ]; do
+		n=$(( $# < 500 ? $# : 500 ))
+		rc=0
+		grep -lE -- "$pattern" "${@:1:n}" || rc=$?
+		[ "$rc" -gt 1 ] && status=2
+		shift "$n"
+	done
+	return "$status"
+}
+
+# Prints the staged files among "$@" whose staged content matches the pattern.
+# Reads the index, not the working tree, so it checks what is being committed.
+grep_staged() {
+	local pattern=$1 status=0 rc n i
+	local batch
+	shift
+	while [ $# -gt 0 ]; do
+		n=$(( $# < 500 ? $# : 500 ))
+		batch=()
+		for (( i = 1; i <= n; i++ )); do batch+=(":(literal)${!i}"); done
+		rc=0
+		git grep --cached -lE -e "$pattern" -- "${batch[@]}" || rc=$?
+		[ "$rc" -gt 1 ] && status=2
+		shift "$n"
+	done
+	return "$status"
+}
+
+CONFIG_FILES=()
+while IFS= read -r -d '' file; do
+	CONFIG_FILES+=("$file")
+done < <(find . \
 	-not -path '*/node_modules/*' \
 	-not -path '*/.next/*' \
 	-not -path '*/dist/*' \
 	-not -path '*/build/*' \
 	-type f \( -name '*.config.js' -o -name '*.config.mjs' -o -name '*.config.ts' \) \
-	2>/dev/null || true)
+	-print0 2>/dev/null || true)
 
-if [ -n "$CONFIG_FILES" ]; then
+if [ ${#CONFIG_FILES[@]} -gt 0 ]; then
 	# Pattern: description
 	PATTERNS=(
 		'eval\('                    # Direct code execution
@@ -68,8 +105,9 @@ if [ -n "$CONFIG_FILES" ]; then
 		"btoa()"
 	)
 
+	UNREADABLE=0
 	for i in "${!PATTERNS[@]}"; do
-		MATCHES=$(echo "$CONFIG_FILES" | xargs grep -lE "${PATTERNS[$i]}" 2>/dev/null || true)
+		MATCHES=$(grep_files "${PATTERNS[$i]}" "${CONFIG_FILES[@]}" 2>/dev/null) || UNREADABLE=1
 		if [ -n "$MATCHES" ]; then
 			echo -e "${RED}FAIL: ${PATTERN_NAMES[$i]} found in config files:${NC}"
 			echo "$MATCHES" | sed 's/^/  /'
@@ -77,15 +115,21 @@ if [ -n "$CONFIG_FILES" ]; then
 		fi
 	done
 
+	if [ "$UNREADABLE" -ne 0 ]; then
+		echo -e "${RED}FAIL: some config files could not be read, so they were not scanned:${NC}"
+		grep_files 'x' "${CONFIG_FILES[@]}" 2>&1 >/dev/null | sed 's/^/  /' || true
+		FAILED=1
+	fi
+
 	# Check for suspiciously long lines (code hidden beyond viewport)
-	while IFS= read -r file; do
+	for file in "${CONFIG_FILES[@]}"; do
 		LONG_LINES=$(awk -v max="${DEVKIT_MAX_CONFIG_LINE:-200}" 'length > max { print NR": "length" chars" }' "$file" 2>/dev/null || true)
 		if [ -n "$LONG_LINES" ]; then
 			echo -e "${RED}FAIL: Lines exceeding ${DEVKIT_MAX_CONFIG_LINE:-200} chars in $file:${NC}"
 			echo "$LONG_LINES" | sed 's/^/  /'
 			FAILED=1
 		fi
-	done <<< "$CONFIG_FILES"
+	done
 fi
 
 if [ "$FAILED" -eq 0 ]; then
@@ -131,23 +175,31 @@ if [ "${PRE_COMMIT:-0}" = "1" ]; then
 	echo "--- Check C: Scanning staged files for obfuscation ---"
 
 	STAGED_CHECK_FAILED=0
-	STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null | grep -E '\.(js|mjs|ts|tsx)$' || true)
+	STAGED_FILES=()
+	while IFS= read -r -d '' file; do
+		case "$file" in
+			*.js | *.mjs | *.ts | *.tsx) STAGED_FILES+=("$file") ;;
+		esac
+	done < <(git diff --cached --name-only -z --diff-filter=ACMR 2>/dev/null || true)
 
-	if [ -n "$STAGED_FILES" ]; then
-		# C2 identifier pattern: global['...']
-		MATCHES=$(echo "$STAGED_FILES" | xargs grep -lE "global\['" 2>/dev/null || true)
-		if [ -n "$MATCHES" ]; then
-			echo -e "${RED}FAIL: Suspicious global['...'] pattern in staged files:${NC}"
-			echo "$MATCHES" | sed 's/^/  /'
-			STAGED_CHECK_FAILED=1
-			FAILED=1
-		fi
+	if [ ${#STAGED_FILES[@]} -gt 0 ]; then
+		STAGED_PATTERNS=("global\\['" '(\\x[0-9a-fA-F]{2}){3,}')
+		STAGED_NAMES=("Suspicious global['...'] pattern" "Consecutive hex escapes")
 
-		# Consecutive hex escapes (3+ on one line)
-		MATCHES=$(echo "$STAGED_FILES" | xargs grep -lE '(\\x[0-9a-fA-F]{2}){3,}' 2>/dev/null || true)
-		if [ -n "$MATCHES" ]; then
-			echo -e "${RED}FAIL: Consecutive hex escapes in staged files:${NC}"
-			echo "$MATCHES" | sed 's/^/  /'
+		UNREADABLE=0
+		for i in "${!STAGED_PATTERNS[@]}"; do
+			MATCHES=$(grep_staged "${STAGED_PATTERNS[$i]}" "${STAGED_FILES[@]}" 2>/dev/null) || UNREADABLE=1
+			if [ -n "$MATCHES" ]; then
+				echo -e "${RED}FAIL: ${STAGED_NAMES[$i]} in staged files:${NC}"
+				echo "$MATCHES" | sed 's/^/  /'
+				STAGED_CHECK_FAILED=1
+				FAILED=1
+			fi
+		done
+
+		if [ "$UNREADABLE" -ne 0 ]; then
+			echo -e "${RED}FAIL: git could not search the staged files:${NC}"
+			grep_staged 'x' "${STAGED_FILES[@]}" 2>&1 >/dev/null | sed 's/^/  /' || true
 			STAGED_CHECK_FAILED=1
 			FAILED=1
 		fi

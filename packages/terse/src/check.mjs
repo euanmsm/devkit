@@ -12,14 +12,41 @@ import { config, newFindings, governs } from './scanner.mjs';
 // A missed rename reads a moved file's existing debt as new.
 const RENAMES = '--find-renames=20%';
 
+const tops = new Map();
+
 /**
- * Runs git, throwing an error carrying its stderr.
+ * Finds the top of the working tree holding the current directory.
+ *
+ * @returns The worktree root, or the current directory outside a repository
+ */
+function top() {
+  const cwd = process.cwd();
+  if (!tops.has(cwd)) {
+    let dir = cwd;
+    try {
+      dir =
+        execFileSync('git', ['rev-parse', '--show-toplevel'], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim() || cwd;
+    } catch {}
+    tops.set(cwd, dir);
+  }
+  return tops.get(cwd);
+}
+
+/**
+ * Runs git from the worktree root, throwing an error carrying its stderr.
+ *
+ * Diff output names files from the root, so pathspecs fed back in must resolve
+ * from there too, wherever the check was started.
  *
  * @param args - Arguments after `git`
  * @returns What the command wrote to stdout
  */
 function run(args) {
   return execFileSync('git', args, {
+    cwd: top(),
     encoding: 'utf8',
     maxBuffer: 1 << 28,
     stdio: ['ignore', 'pipe', 'pipe'],

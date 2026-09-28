@@ -16,6 +16,35 @@ export const DEFAULT_BASES = ['origin/main', 'origin/master', 'main', 'master'];
 // A low similarity bar, and no cap on how many files are compared.
 const RENAMES = ['--find-renames=20%', '-l0'];
 
+// From `git rev-parse --local-env-vars`, less the config ones.
+const LOCAL_ENV = [
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_IMPLICIT_WORK_TREE',
+  'GIT_GRAFT_FILE',
+  'GIT_INDEX_FILE',
+  'GIT_NO_REPLACE_OBJECTS',
+  'GIT_REPLACE_REF_BASE',
+  'GIT_PREFIX',
+  'GIT_SHALLOW_FILE',
+  'GIT_COMMON_DIR',
+];
+
+/**
+ * Builds a child's environment without the repository-local variables a git
+ * hook inherits, such as the index being committed.
+ *
+ * @param extra - Variables to set on top
+ * @returns The environment
+ */
+export function childEnv(extra = {}) {
+  const env = { ...process.env };
+  for (const name of LOCAL_ENV) delete env[name];
+  return { ...env, ...extra };
+}
+
 /**
  * Runs git, throwing an error carrying its stderr.
  *
@@ -30,7 +59,7 @@ export function run(cwd, args, env) {
     encoding: 'utf8',
     maxBuffer: 1 << 28,
     stdio: ['ignore', 'pipe', 'pipe'],
-    ...(env ? { env: { ...process.env, ...env } } : {}),
+    env: childEnv(env),
   });
 }
 

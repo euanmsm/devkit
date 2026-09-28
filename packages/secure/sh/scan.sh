@@ -31,7 +31,12 @@ while IFS= read -r c; do
 done <<< "${DEVKIT_SEMGREP_CONFIGS:-p/supply-chain
 p/javascript}"
 
-LOCKFILE_HOSTS="${DEVKIT_LOCKFILE_HOSTS:-npm}"
+# lockfile-lint takes each allowed host as its own argument
+LOCKFILE_HOST_ARGS=()
+while IFS= read -r h; do
+	[ -n "$h" ] && LOCKFILE_HOST_ARGS+=("$h")
+done <<< "$(printf '%s\n' "${DEVKIT_LOCKFILE_HOSTS:-npm}" | tr ',' '\n' | tr -d '[:blank:]')"
+[ ${#LOCKFILE_HOST_ARGS[@]} -eq 0 ] && LOCKFILE_HOST_ARGS=(npm)
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -141,44 +146,32 @@ fi
 echo ""
 echo "--- Check C: lockfile-lint — verifying package-lock.json integrity ---"
 
+LOCKFILES=()
 if [ "${PRE_COMMIT:-0}" = "1" ]; then
-	# Only run if package-lock.json is staged
-	LOCKFILE_STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null \
-		| grep -E 'package-lock\.json$' || true)
-
-	if [ -z "$LOCKFILE_STAGED" ]; then
-		echo -e "${GREEN}PASS: No lockfile changes staged — skipping${NC}"
-	else
-		HAS_LOCKFILE_LINT=0
-		if npx --no-install lockfile-lint --help &>/dev/null 2>&1; then
-			HAS_LOCKFILE_LINT=1
-		fi
-
-		if [ "$HAS_LOCKFILE_LINT" -eq 1 ]; then
-			for lockfile in $LOCKFILE_STAGED; do
-				if ! npx --no-install lockfile-lint \
-					--path "$lockfile" \
-					--type npm \
-					--allowed-hosts "$LOCKFILE_HOSTS" \
-					--validate-https 2>/dev/null; then
-					echo -e "${RED}FAIL: lockfile-lint detected issues in $lockfile${NC}"
-					FAILED=1
-				else
-					echo -e "${GREEN}PASS: $lockfile integrity verified${NC}"
-				fi
-			done
-		else
-			echo -e "${YELLOW}SKIP: lockfile-lint not installed${NC}"
-		fi
-	fi
+	# Only the staged lockfiles
+	while IFS= read -r -d '' file; do
+		case "$file" in
+			package-lock.json | */package-lock.json) LOCKFILES+=("$file") ;;
+		esac
+	done < <(git diff --cached --name-only -z --diff-filter=ACM 2>/dev/null || true)
 else
-	# CI mode — check all lockfiles
-	for lockfile in $(find . -name 'package-lock.json' -not -path '*/node_modules/*' 2>/dev/null); do
+	# CI mode — every lockfile in the tree
+	while IFS= read -r -d '' file; do
+		LOCKFILES+=("$file")
+	done < <(find . -name 'package-lock.json' -not -path '*/node_modules/*' -print0 2>/dev/null || true)
+fi
+
+if [ ${#LOCKFILES[@]} -eq 0 ]; then
+	echo -e "${GREEN}PASS: No lockfiles to check — skipping${NC}"
+elif ! npx --no-install lockfile-lint --help &>/dev/null; then
+	echo -e "${YELLOW}SKIP: lockfile-lint not installed (npm i -D lockfile-lint)${NC}"
+else
+	for lockfile in "${LOCKFILES[@]}"; do
 		if npx --no-install lockfile-lint \
 			--path "$lockfile" \
 			--type npm \
-			--allowed-hosts "$LOCKFILE_HOSTS" \
-			--validate-https 2>/dev/null; then
+			--allowed-hosts "${LOCKFILE_HOST_ARGS[@]}" \
+			--validate-https; then
 			echo -e "${GREEN}PASS: $lockfile integrity verified${NC}"
 		else
 			echo -e "${RED}FAIL: lockfile-lint detected issues in $lockfile${NC}"

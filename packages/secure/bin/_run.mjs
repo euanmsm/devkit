@@ -30,7 +30,9 @@ export function runScript(script) {
       ...process.env,
       DEVKIT_GITIGNORE_REQUIRED: (config.gitignoreRequired ?? []).join('\n'),
       DEVKIT_SEMGREP_CONFIGS: (config.semgrepConfigs ?? []).join('\n'),
-      DEVKIT_LOCKFILE_HOSTS: (config.lockfileAllowedHosts ?? ['npm']).join(','),
+      DEVKIT_LOCKFILE_HOSTS: (config.lockfileAllowedHosts ?? ['npm']).join(
+        '\n',
+      ),
       DEVKIT_MAX_CONFIG_LINE: String(config.maxConfigLineLength ?? 200),
       DEVKIT_DOCS_URL: config.docsUrl ?? '',
     },

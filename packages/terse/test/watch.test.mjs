@@ -134,6 +134,16 @@ describe('unreported', () => {
     assert.equal(unreported(root, 'session-b').length, 2);
   });
 
+  test('reports from a linked worktree, where .git is a file', () => {
+    const main = fixture();
+    const linked = `${main}-linked`;
+    git(main, 'worktree', 'add', '-q', '-b', 'side', linked);
+    append(linked, '// We previously did this so that it worked.');
+
+    assert.equal(unreported(linked, 'session-a').length, 3);
+    assert.deepEqual(unreported(linked, 'session-a'), []);
+  });
+
   test('says nothing about a clean tree', () => {
     assert.deepEqual(unreported(fixture(), 'session-a'), []);
   });

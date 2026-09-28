@@ -154,6 +154,19 @@ describe('changedFiles', () => {
     ]);
   });
 
+  test('reads the same ranges when started from a subdirectory', () => {
+    process.chdir(join(root, 'apps/main'));
+    try {
+      const from = mergeBase('base-marker');
+      const spans = addedRangesByFile(from, changedFiles(from));
+
+      assert.deepEqual(spans.get('apps/main/src/b.tsx'), [{ from: 1, to: 1 }]);
+      assert.deepEqual(spans.get('scripts/ci/tool.mjs'), [{ from: 1, to: 1 }]);
+    } finally {
+      process.chdir(root);
+    }
+  });
+
   test('holds nothing for a path outside the set it was given', () => {
     const from = mergeBase('base-marker');
 

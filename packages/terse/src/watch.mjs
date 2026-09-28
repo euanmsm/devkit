@@ -8,7 +8,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { repoRoot } from '@euanmsm/devkit-core';
 
@@ -89,12 +89,17 @@ function key(file, f) {
 /**
  * Says where the set of already-reported findings lives.
  *
+ * In a linked worktree or a submodule `.git` is a file pointing elsewhere, so
+ * git is asked for the real directory.
+ *
  * @param root - The repository
  * @param session - The Claude Code session id
  * @returns An absolute path
  */
 function seenPath(root, session) {
-  return join(root, '.git', 'terse', `seen-${session ?? 'default'}.json`);
+  const gitDir =
+    git(root, 'rev-parse', '--absolute-git-dir')?.trim() || join(root, '.git');
+  return join(gitDir, 'terse', `seen-${session ?? 'default'}.json`);
 }
 
 /**
@@ -133,9 +138,12 @@ export function unreported(root, session) {
     }
   }
 
+  // Failing to save only risks reporting a finding twice, never hiding one.
   if (fresh.length > 0) {
-    mkdirSync(join(root, '.git', 'terse'), { recursive: true });
-    writeFileSync(path, JSON.stringify([...seen]));
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, JSON.stringify([...seen]));
+    } catch {}
   }
 
   return fresh;

@@ -11,6 +11,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   renameSync,
   symlinkSync,
@@ -581,5 +582,76 @@ describe('dead-code branch and the checkout', () => {
     assert.equal(worktrees(root), 1);
     assert.equal(existsSync(tree), false);
     assert.ok(!readdirSync(tmpdir()).some((d) => d === tmp.split('/').pop()));
+  });
+});
+
+describe('dead-code branch inside a pre-commit hook', () => {
+  /**
+   * Installs a pre-commit hook that runs branch mode and records its exit.
+   *
+   * @param root - The repo's root
+   * @returns The file the hook writes dead-code's exit status to
+   */
+  function hook(root) {
+    const status = join(tempDir(), 'status');
+    const path = join(root, '.git/hooks/pre-commit');
+    writeFileSync(
+      path,
+      `#!/bin/sh\n'${process.execPath}' '${BIN}' branch main >/dev/null 2>&1\necho $? > '${status}'\nexit 0\n`,
+    );
+    chmodSync(path, 0o755);
+    return status;
+  }
+
+  test('leaves the staged files of a plain commit alone', (t) => {
+    if (process.platform === 'win32') return t.skip('hooks need a shell');
+    const root = onBranch();
+    const status = hook(root);
+    write(join(root, 'src/added.ts'), 'export const added = 1;\n');
+    git(root, 'add', 'src/added.ts');
+
+    git(root, 'commit', '-q', '-m', 'add');
+
+    assert.equal(readFileSync(status, 'utf8').trim(), '1');
+    assert.match(
+      git(root, 'ls-tree', '-r', '--name-only', 'HEAD'),
+      /src\/added\.ts/,
+    );
+    assert.equal(git(root, 'status', '--porcelain'), '');
+  });
+
+  test('leaves the index of commit -a alone', (t) => {
+    if (process.platform === 'win32') return t.skip('hooks need a shell');
+    const root = onBranch();
+    const status = hook(root);
+    write(join(root, 'src/index.ts'), WITHOUT_ALSO_USED);
+
+    git(root, 'commit', '-a', '-q', '-m', 'edit');
+
+    assert.equal(readFileSync(status, 'utf8').trim(), '1');
+    assert.equal(
+      git(root, 'show', 'HEAD:src/index.ts'),
+      WITHOUT_ALSO_USED.trim(),
+    );
+    assert.equal(git(root, 'status', '--porcelain'), '');
+  });
+
+  test('leaves the staged files alone in a linked worktree', (t) => {
+    if (process.platform === 'win32') return t.skip('hooks need a shell');
+    const root = makeRepo();
+    const status = hook(root);
+    const linked = join(tempDir(), 'linked');
+    git(root, 'worktree', 'add', '-q', '-b', 'feat', linked);
+    write(join(linked, 'src/added.ts'), 'export const added = 1;\n');
+    git(linked, 'add', 'src/added.ts');
+
+    git(linked, 'commit', '-q', '-m', 'add');
+
+    assert.equal(readFileSync(status, 'utf8').trim(), '1');
+    assert.match(
+      git(linked, 'ls-tree', '-r', '--name-only', 'HEAD'),
+      /src\/added\.ts/,
+    );
+    assert.equal(git(linked, 'status', '--porcelain'), '');
   });
 });
