@@ -13,6 +13,7 @@ does and its options:
 - [clean-commit-history.md](clean-commit-history.md)
 - [clean-comments.md](clean-comments.md)
 - [code-review.md](code-review.md)
+- [dead-code.md](dead-code.md)
 - [pr.md](pr.md)
 
 ## The config file
@@ -92,7 +93,10 @@ A typo never silently does nothing.
    for files it wrote on an earlier run that the config no longer asks for — a
    skill taken out of `skills`, say — and deletes them. A skill folder left
    empty is removed too.
-6. Prints what it wrote and removed.
+6. Prints what it wrote and removed. Then, on stderr, a warning for each enabled
+   skill whose package the repository does not depend on — today, the
+   `dead-code` skill without `@euanmsm/dead-code`. The skill is still written.
+   `skills check` never prints these warnings.
 
 ### How `sync` knows its own files
 

@@ -734,10 +734,21 @@ ${OUTPUT_SPEC}`;
 function buildVerifierPrompt(file, findings, recon, input) {
   const isDiff = input.mode === 'diff';
 
+  // A report run against the base names what the branch caused in files it never touched.
+  const branchReports = isDiff
+    ? CONFIG.prepass.tools
+        .filter((tool) => tool.baseCommand && input.toolReports?.[tool.key])
+        .map((tool) => `   - ${tool.label}: \`${input.toolReports[tool.key]}\``)
+    : [];
+  const branchWide = branchReports.length
+    ? ` A finding in code the diff left alone is
+   also the branch's when one of these reports, run against the base,
+   lists it under \`findings\` — read it before refuting:\n${branchReports.join('\n')}`
+    : '';
   const branchCheck = isDiff
     ? `2. **Check the claim is about THIS BRANCH.** If the cited code is unchanged by
    the diff, refute it as pre-existing — unless the finding explains why the
-   branch is what makes it bite.\n`
+   branch is what makes it bite.${branchWide}\n`
     : '';
 
   const coverageBlock = `## Coverage findings

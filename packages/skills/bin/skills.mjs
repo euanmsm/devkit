@@ -31,7 +31,7 @@ try {
   if (command === 'qa-gate') {
     process.exitCode = await qaGate(rest);
   } else if (command === 'sync') {
-    const { written, removed, unchanged } = await sync(root, {
+    const { written, removed, unchanged, warnings } = await sync(root, {
       force: rest.includes('--force'),
     });
 
@@ -40,6 +40,7 @@ try {
     console.log(
       `${written.length} written, ${removed.length} removed, ${unchanged.length} already up to date.`,
     );
+    for (const warning of warnings) console.error(`warning: ${warning}`);
   } else if (command === 'check') {
     const problems = await check(root);
 

@@ -119,7 +119,8 @@ fi
 ```
 
 When `DIRTY` is above zero, tell the user before going on: the review covers
-the last commit, and the uncommitted files are not in the diff. Pass
+the last commit, and the uncommitted files are not in the diff. A dead-code
+report run against the base reads the working tree, so it does count them. Pass
 `TREE_STATE` to the workflow, which prints it in the report header.
 
 ### Target mode
@@ -179,8 +180,14 @@ find "$SCRATCH_DIR" -maxdepth 1 -name '_*.tmp.*' -delete
 # CHANGED_FILES in diff mode, TARGETS in target mode
 printf '%s\n' "${FILES[@]}" > "$SCRATCH_DIR/_files.tmp.txt"
 
-npx --no-install skills prepass tools --scratch "$SCRATCH_DIR" --files-from "$SCRATCH_DIR/_files.tmp.txt"
+npx --no-install skills prepass tools --scratch "$SCRATCH_DIR" --files-from "$SCRATCH_DIR/_files.tmp.txt" ${BASE:+--base "$BASE"}
 ```
+
+Run that line as it is in both modes: `--base` goes in only when `BASE` is
+set, which it never is in target mode. In diff mode it lets a dead-code check
+report what the branch newly left dead anywhere in the repository, not only in
+the files it touched. A file the diff deleted is dropped from the list before
+any tool sees it.
 
 Use `run_in_background: true`. Then go straight to step 4 — **do not poll for
 it, and do not read its output.** The review agents wait on it themselves.
@@ -193,9 +200,15 @@ that is the sentinel the reviewers block on, and it is why nothing here needs a
 
 A tool exiting non-zero because it **found** something is the normal case, and
 counts as `ok`. It is `failed` when the shell could not find or run it (exit
-126 or 127) or npm has no such script, and `timedOut` when it ran past 170
+126 or 127), npm has no such script or package, it exits with a code the tool
+reserves for its own errors, or a JSON tool exits non-zero without printing
+JSON, and `timedOut` when it ran past 170
 seconds — it is stopped and its report says so, so the sentinel always lands
 before the reviewers' three-minute wait runs out.
+
+A JSON tool's report is the JSON on its stdout, kept even when the tool failed,
+so its own account of what went wrong reaches the reviewers. Its stderr goes in
+its sentinel entry as `stderr`.
 
 ## 4. Run the Workflow
 

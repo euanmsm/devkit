@@ -15,6 +15,7 @@ Full documentation — exactly how each skill works and every option it takes:
 - [clean-commit-history](docs/clean-commit-history.md)
 - [clean-comments](docs/clean-comments.md)
 - [code-review](docs/code-review.md)
+- [dead-code](docs/dead-code.md)
 - [pr](docs/pr.md)
 
 ## Installing
@@ -38,6 +39,15 @@ cp node_modules/@euanmsm/skills/pr.example.mjs .devkit/pr.mjs
 `pr` also needs a PR template with a summary line; [docs/pr.md](docs/pr.md)
 covers it.
 
+`dead-code` runs [`@euanmsm/dead-code`](../dead-code), so install that too and
+write its config. `sync` warns, and still writes the skill, when the repository
+does not depend on it:
+
+```sh
+npm i -D @euanmsm/dead-code
+npx --no-install dead-code init
+```
+
 Commit what `sync` writes. The skills then work for anyone who clones the
 repository, with nothing to run first.
 
@@ -58,6 +68,7 @@ Reformatting a generated file makes `skills check` report it as edited.
 | `clean-commit-history` | Regroups a branch's commits into a clean, layered sequence without changing a byte of the final tree, after backing the branch up |
 | `clean-comments`       | Fixes comment debt found by [`@euanmsm/terse`](../terse), fanning out to parallel agents on a big change. Needs terse             |
 | `code-review`          | Deep multi-agent review of a branch or named files, every finding checked by a second agent trying to disprove it                 |
+| `dead-code`            | Finds, verifies and removes dead code with [`@euanmsm/dead-code`](../dead-code), keeping recorded false positives out. Needs it   |
 | `pr`                   | Opens the PR with a summary and a Manual QA checklist whose every step is checked against the code                                |
 
 `clean-comments` also writes the `comments-specialist` agent it hands each batch
@@ -137,8 +148,12 @@ all, the review runs on the built-ins below. Start from
   [`src/review/defaults.mjs`](src/review/defaults.mjs).
 - **`prepass.tools`** — commands run in the background before the reviewers
   start, typically the typecheck and lint, so no reviewer runs them itself. The
-  terse comment check and the knip dead-code check are added automatically when
-  the repository has them installed, limited to the files under review.
+  terse comment check and a dead-code check are added automatically when the
+  repository has them installed. The dead-code check runs
+  [`@euanmsm/dead-code`](../dead-code), which in diff mode reports only what the
+  branch newly left dead, or raw knip, limited to the files under review, when
+  only knip is installed. A check declared but not yet installed is reported as
+  failed, not as findings.
 - **`files`**, **`splitOrder`**, **`rosterNotes`** — what counts as code, docs
   and tests; which fat bundles split first when there are spare agents; and
   notes appended to the skill's roster section.
@@ -146,6 +161,17 @@ all, the review runs on the built-ins below. Start from
 The skill runs its prework through `npx --no-install skills prepass`, so that
 part improves with a package upgrade rather than a regenerated file. The import
 graph it builds needs [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`).
+
+### `dead-code`
+
+No options. `sync` writes `<skillsDir>/dead-code/SKILL.md`, which runs every
+command as `npx --no-install dead-code …` and stops at its first step, with the
+install command, when the package is missing. The false positives the repository
+keeps on purpose live in `.devkit/dead-code.json`, each with its reason. A file
+`sync` generates, such as a `.workflow.js`, is loaded by its path, so dead-code
+lists it as known rather than unused, and the skill never deletes one. When the
+skill is enabled, the code review's `dead-code` lens loads it.
+[docs/dead-code.md](docs/dead-code.md) covers the rest.
 
 ### `pr`
 

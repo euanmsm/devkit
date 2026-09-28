@@ -23,11 +23,6 @@ export default {
         label: 'ESLint output',
         command: 'npm run lint',
       },
-      // Knip is a dependency of apps/main, so it runs as that workspace.
-      {
-        key: 'knip',
-        command: 'npx --no-install knip --workspace apps/main --reporter json',
-      },
     ],
     graph: {
       sources: /\.tsx?$/,
@@ -138,7 +133,7 @@ export default {
         always: 'code',
       },
       judges:
-        'Unreachable branches, unused params, orphaned exports, stale barrel entries. A knip report is in the tool reports — treat it as evidence, not a verdict, and apply the standing false positives from the skill. The generated import graph lists every export with no call site outside its own file; that is a lead, not a verdict.',
+        'Unreachable branches, unused params, orphaned exports, stale barrel entries. A dead-code report is in the tool reports: its `known` list is the standing false positives from `.devkit/dead-code.json`, already set aside with their reasons, so never report one. In diff mode its findings are what this branch newly left dead, even in files the branch did not touch, and those are in scope. Treat each finding as evidence, not a verdict, and trace it as the skill says. The generated import graph lists every export with no call site outside its own file; that is a lead, not a verdict.',
     },
     'api-routes': {
       skill: 'api-routes',
