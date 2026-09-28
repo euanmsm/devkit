@@ -30,6 +30,7 @@ export const DEFAULT_PREPASS = {
   },
   comments: 'auto',
   knip: 'auto',
+  deadCode: 'auto',
 };
 
 /**
@@ -40,7 +41,8 @@ export const DEFAULT_TOOL_PACKAGES = { tsc: 'typescript' };
 
 /**
  * The checks the prepass adds on its own when the repository has the tool
- * installed, keyed by the `prepass` setting that switches each one.
+ * installed, keyed by the `prepass` setting that switches each one. A check
+ * that `replaces` another leaves that one out while both are on `auto`.
  */
 export const BUILT_IN_TOOLS = {
   comments: {
@@ -61,6 +63,20 @@ export const BUILT_IN_TOOLS = {
       command: 'npx --no-install knip --reporter json',
       json: true,
       onlyFilesUnderReview: true,
+    },
+  },
+  deadCode: {
+    package: '@euanmsm/dead-code',
+    replaces: 'knip',
+    tool: {
+      key: 'deadCode',
+      label:
+        'Dead-code report (JSON): new findings, with known false positives set apart and explained',
+      command: 'npx --no-install dead-code --json',
+      appendFiles: true,
+      baseCommand: 'npx --no-install dead-code branch --json',
+      json: true,
+      errorExitCodes: [2],
     },
   },
 };
@@ -119,7 +135,7 @@ export const BUILT_IN_LENSES = {
     skill: null,
     route: { always: 'code' },
     judges:
-      'Unreachable branches, unused parameters, exports with no caller, stale re-exports. The generated import graph lists every export with no call site outside its own file — a lead, never a verdict. When a knip report is among the tool reports, treat it as evidence, not a verdict: knip misses code reached by name or by a framework convention.',
+      'Unreachable branches, unused parameters, exports with no caller, stale re-exports. The generated import graph lists every export with no call site outside its own file — a lead, never a verdict. When a dead-code report is among the tool reports, its `known` list holds the repository’s recorded false positives, each with its reason: never report one of them. In diff mode its `findings` are only what this branch newly left dead, and they may sit in files the branch did not touch: those are still in scope, because the branch is what made them dead. In target mode they are limited to the targets. A raw knip report, when there is one instead, is limited to the files under review. Either way a finding is evidence, not a verdict: knip misses code reached by name or by a framework convention, so trace it and search for the name before reporting it.',
   },
   database: {
     skill: null,

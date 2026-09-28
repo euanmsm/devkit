@@ -16,7 +16,7 @@ import { buildImportGraph, runTools, splitPatches } from './prepass.mjs';
 
 const USAGE = `Usage:
   skills prepass split --base <sha> --target <ref> --out <patchDir>
-  skills prepass tools --scratch <dir> --files-from <listfile>
+  skills prepass tools --scratch <dir> --files-from <listfile> [--base <sha>]
   skills prepass graph --files-from <listfile>`;
 
 /**
@@ -51,6 +51,7 @@ export async function prepass(argv, root) {
     const status = await runTools(root, await reviewConfig(root), {
       scratch: need('scratch'),
       files: readFileList(root, need('files-from')),
+      base: flags.base === undefined ? null : need('base'),
     });
     console.log(JSON.stringify(status));
     return 0;

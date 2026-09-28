@@ -30,7 +30,8 @@ function rulesDocFor(root) {
  * setting (none for the repository root) and path; `engine` names the value
  * holding a workflow's config, and `seed` marks a file written only once.
  * `patterns` holds string options that must also match a pattern, with what
- * the pattern asks for.
+ * the pattern asks for. `requires` names a package the skill runs, which sync
+ * warns about when the repository does not depend on it.
  */
 export const SKILLS = {
   'clean-commit-history': {
@@ -130,6 +131,19 @@ export const SKILLS = {
       const review = await loadReviewConfig(root, options, shared);
       return { ...skillValues(review, options, shared), review };
     },
+  },
+
+  'dead-code': {
+    defaults: {},
+    requires: '@euanmsm/dead-code',
+    files: [
+      {
+        template: 'dead-code/SKILL.md',
+        dir: 'skillsDir',
+        path: 'dead-code/SKILL.md',
+      },
+    ],
+    values: () => ({}),
   },
 
   pr: {

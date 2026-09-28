@@ -39,6 +39,8 @@ const TOOL_KEYS = [
   'json',
   'appendFiles',
   'onlyFilesUnderReview',
+  'baseCommand',
+  'errorExitCodes',
 ];
 const PREPASS_KEYS = ['tools', 'graph', ...Object.keys(BUILT_IN_TOOLS)];
 const MODELS = ['opus', 'sonnet', 'haiku'];
@@ -65,14 +67,16 @@ export async function loadReviewConfig(root, options, shared) {
     raw = (await import(url)).default ?? {};
   }
 
+  const skills = new Set(Object.keys(shared.skills ?? {}));
   const resolved = resolveReviewConfig(raw, {
     name: options.name,
     skillsDir: shared.skillsDir,
     source: options.config,
     installed: installedPackages(root),
+    skills,
   });
 
-  checkSkillsExist(resolved, root);
+  checkSkillsExist(resolved, root, skills);
 
   return resolved;
 }
@@ -81,13 +85,13 @@ export async function loadReviewConfig(root, options, shared) {
  * Lays a raw config over the defaults and validates the result.
  *
  * @param raw - The object the repository's module exports
- * @param context - The skill `name`, the `skillsDir`, the config's `source` path for messages, and the `installed` package names
+ * @param context - The skill `name`, the `skillsDir`, the config's `source` path for messages, the `installed` package names, and the `skills` enabled in `skills.json`
  * @returns The resolved config
  * @throws When anything in the config is unknown, mistyped or inconsistent
  */
 export function resolveReviewConfig(
   raw,
-  { name, skillsDir, source, installed = new Set() },
+  { name, skillsDir, source, installed = new Set(), skills = new Set() },
 ) {
   const fail = (message) => {
     throw new Error(`${source}: ${message}`);
@@ -98,7 +102,7 @@ export function resolveReviewConfig(
 
   const files = resolveFiles(raw.files, fail);
   const prepass = resolvePrepass(raw.prepass, installed, fail);
-  const lenses = resolveLenses(raw.lenses, files, fail);
+  const lenses = resolveLenses(raw.lenses, files, skills, fail);
   const bundles = resolveBundles(raw.bundles, raw.lenses, lenses, fail);
   const splitOrder = resolveSplitOrder(raw.splitOrder, bundles, fail);
   const prompts = resolvePrompts(raw.prompts, fail);
@@ -178,11 +182,12 @@ function readManifest(path) {
  *
  * @param resolved - The resolved config
  * @param root - The repository root
+ * @param enabled - Skills this package writes on the same sync, which count as present
  * @throws When a lens's skill has no `SKILL.md` under `skillsDir`
  */
-function checkSkillsExist(resolved, root) {
+function checkSkillsExist(resolved, root, enabled) {
   const missing = Object.entries(resolved.lenses)
-    .filter(([, lens]) => lens.skill)
+    .filter(([, lens]) => lens.skill && !enabled.has(lens.skill))
     .filter(
       ([, lens]) =>
         !existsSync(join(root, resolved.skillsDir, lens.skill, 'SKILL.md')),
@@ -246,19 +251,31 @@ function resolvePrepass(raw = {}, installed, fail) {
       : tool,
   );
 
+  const wanted = {};
   for (const [key, builtIn] of Object.entries(BUILT_IN_TOOLS)) {
     const setting = raw[key] ?? DEFAULT_PREPASS[key];
     if (setting !== 'auto' && typeof setting !== 'boolean') {
       fail(`prepass.${key} must be "auto", true or false`);
     }
-
-    const index = tools.findIndex((tool) => tool?.key === key);
-    const wanted =
+    wanted[key] =
       setting === true ||
-      (setting === 'auto' && (index !== -1 || installed.has(builtIn.package)));
+      (setting === 'auto' &&
+        (tools.some((tool) => tool?.key === key) ||
+          installed.has(builtIn.package)));
+  }
 
-    if (!wanted && index !== -1) tools.splice(index, 1);
-    if (wanted && index === -1) tools.push({ ...builtIn.tool });
+  // Two checks covering the same ground would give reviewers two reports to reconcile.
+  for (const [key, builtIn] of Object.entries(BUILT_IN_TOOLS)) {
+    const replaced = builtIn.replaces;
+    if (wanted[key] && replaced && (raw[replaced] ?? 'auto') === 'auto') {
+      wanted[replaced] = false;
+    }
+  }
+
+  for (const [key, builtIn] of Object.entries(BUILT_IN_TOOLS)) {
+    const index = tools.findIndex((tool) => tool?.key === key);
+    if (!wanted[key] && index !== -1) tools.splice(index, 1);
+    if (wanted[key] && index === -1) tools.push({ ...builtIn.tool });
   }
 
   const seen = new Set();
@@ -272,6 +289,20 @@ function resolvePrepass(raw = {}, installed, fail) {
     }
     if (typeof tool.label !== 'string' || typeof tool.command !== 'string') {
       fail(`prepass tool "${tool.key}" needs a label and a command`);
+    }
+    if (tool.baseCommand != null && typeof tool.baseCommand !== 'string') {
+      fail(`prepass tool "${tool.key}" baseCommand must be a command string`);
+    }
+    if (
+      tool.errorExitCodes !== undefined &&
+      !(
+        Array.isArray(tool.errorExitCodes) &&
+        tool.errorExitCodes.every(Number.isInteger)
+      )
+    ) {
+      fail(
+        `prepass tool "${tool.key}" errorExitCodes must be a list of exit codes`,
+      );
     }
     seen.add(tool.key);
   }
@@ -296,6 +327,8 @@ function resolvePrepass(raw = {}, installed, fail) {
       json: false,
       appendFiles: false,
       onlyFilesUnderReview: false,
+      baseCommand: null,
+      errorExitCodes: [],
       ...tool,
     })),
     graph,
@@ -307,11 +340,13 @@ function resolvePrepass(raw = {}, installed, fail) {
  *
  * @param raw - The repository's `lenses`, or undefined
  * @param files - The resolved file patterns, for the `code` and `tests` shorthands
+ * @param skills - The skills enabled in `skills.json`
  * @param fail - Throws with the config's path prefixed
  * @returns Every lens by key, with its route patterns resolved
  */
-function resolveLenses(raw = {}, files, fail) {
+function resolveLenses(raw = {}, files, skills, fail) {
   const builtIns = structuredClone(BUILT_IN_LENSES);
+  if (skills.has('dead-code')) builtIns['dead-code'].skill = 'dead-code';
   const lenses = {};
 
   // The repository's own order first, so its lists read the way it wrote them.

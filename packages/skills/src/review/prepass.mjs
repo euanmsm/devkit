@@ -217,13 +217,13 @@ function unquote(quoted) {
  *
  * @param root - The repository root
  * @param config - The resolved review config
- * @param options - `scratch` relative to the root, the `files` under review, and `timeoutMs` per tool
+ * @param options - `scratch` relative to the root, the `files` under review, the diff's `base` commit in diff mode, and `timeoutMs` per tool
  * @returns The sentinel's contents: each tool's `{ status, exitCode }`, the graph's status, and the file count
  */
 export async function runTools(
   root,
   config,
-  { scratch, files, timeoutMs = TOOL_TIMEOUT_MS },
+  { scratch, files, base = null, timeoutMs = TOOL_TIMEOUT_MS },
 ) {
   const scratchDir = path.resolve(root, scratch);
   mkdirSync(scratchDir, { recursive: true });
@@ -261,7 +261,9 @@ export async function runTools(
   const present = files.filter((file) => existsSync(path.join(root, file)));
 
   const results = await Promise.all([
-    ...tools.map((tool) => runTool(root, tool, present, scratchDir, timeoutMs)),
+    ...tools.map((tool) =>
+      runTool(root, tool, { files: present, base }, scratchDir, timeoutMs),
+    ),
     graphJob,
   ]);
 
@@ -282,22 +284,25 @@ export async function runTools(
  *
  * @param root - The repository root
  * @param tool - The resolved tool
- * @param files - The files under review that still exist
+ * @param review - The `files` under review that still exist, and the diff's `base` commit or null
  * @param scratchDir - Absolute path of the scratch directory
  * @param timeoutMs - How long the tool may run before it is stopped
  * @returns The tool's `{ status, exitCode }`
  */
-function runTool(root, tool, files, scratchDir, timeoutMs) {
+function runTool(root, tool, { files, base }, scratchDir, timeoutMs) {
   const finalPath = path.join(scratchDir, reportName(tool));
+  const againstBase = Boolean(base && tool.baseCommand);
 
-  if (tool.appendFiles && files.length === 0) {
+  if (!againstBase && tool.appendFiles && files.length === 0) {
     landAtomically(finalPath, '(no files under review for this tool)\n');
     return Promise.resolve({ status: 'ok', exitCode: null });
   }
 
-  const command = tool.appendFiles
-    ? `${tool.command} ${files.map(shellQuote).join(' ')}`
-    : tool.command;
+  const command = againstBase
+    ? `${tool.baseCommand} ${shellQuote(base)}`
+    : tool.appendFiles
+      ? `${tool.command} ${files.map(shellQuote).join(' ')}`
+      : tool.command;
 
   const transform = tool.onlyFilesUnderReview
     ? (raw) => keepFilesUnderReview(extractJson(raw), files)
@@ -305,14 +310,18 @@ function runTool(root, tool, files, scratchDir, timeoutMs) {
       ? extractJson
       : null;
 
-  return runCommand(root, command, finalPath, transform, timeoutMs);
+  return runCommand(root, command, finalPath, {
+    transform,
+    errorExitCodes: tool.errorExitCodes ?? [],
+    timeoutMs,
+  });
 }
 
 /**
- * Quotes a path for a POSIX shell.
+ * Quotes a path or ref for a POSIX shell.
  *
- * @param value - The path
- * @returns The path in single quotes, with any single quote escaped
+ * @param value - The path or ref
+ * @returns The value in single quotes, with any single quote escaped
  */
 function shellQuote(value) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -356,17 +365,22 @@ export function keepFilesUnderReview(text, files) {
  * Runs a shell command and lands its combined output at the given path.
  *
  * A tool exiting non-zero because it found something is `ok`. It is `failed`
- * when the shell could not find or execute it, or npm has no such script, and
- * `timedOut` when it ran past the timeout and was stopped.
+ * when the shell could not find or execute it, npm has no such script, or it
+ * exits with a code the tool names as its own error, and `timedOut` when it
+ * ran past the timeout and was stopped.
  *
  * @param root - The repository root, used as the working directory
  * @param command - The shell command line
  * @param finalPath - The report file's path
- * @param transform - Rewrites the raw output before it lands, or null
- * @param timeoutMs - How long the command may run before it is stopped
+ * @param options - `transform` rewriting the raw output before it lands, or null; the tool's `errorExitCodes`; and `timeoutMs` before it is stopped
  * @returns The tool's `{ status, exitCode }`, once its report has landed
  */
-function runCommand(root, command, finalPath, transform, timeoutMs) {
+function runCommand(
+  root,
+  command,
+  finalPath,
+  { transform, errorExitCodes, timeoutMs },
+) {
   return new Promise((resolve) => {
     const chunks = [];
     let settled = false;
@@ -416,7 +430,9 @@ function runCommand(root, command, finalPath, transform, timeoutMs) {
     child.on('close', (code) => {
       const raw = output();
       const failed =
-        COULD_NOT_RUN.has(code) || (code !== 0 && /Missing script:/.test(raw));
+        COULD_NOT_RUN.has(code) ||
+        errorExitCodes.includes(code) ||
+        (code !== 0 && /Missing script:/.test(raw));
 
       // A failure's own message is the report, never cut down to JSON.
       const body = !failed && transform ? transform(raw) : raw;

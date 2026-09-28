@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 import { CONFIG_NAME, readConfig } from './config.mjs';
 import { render } from './render.mjs';
+import { installedPackages } from './review/config.mjs';
 import { toSource } from './review/serialise.mjs';
 import { SKILLS } from './skills.mjs';
 
@@ -195,7 +196,7 @@ function listDir(dir) {
  *
  * @param root - The repository root
  * @param options - `force` overwrites files that were not generated
- * @returns Repo-relative paths `written`, `unchanged` and `removed`
+ * @returns Repo-relative paths `written`, `unchanged` and `removed`, and `warnings` about packages an enabled skill needs
  * @throws When a planned path holds a hand-written file and `force` is off
  */
 export async function sync(root, { force = false } = {}) {
@@ -214,7 +215,12 @@ export async function sync(root, { force = false } = {}) {
     );
   }
 
-  const result = { written: [], unchanged: [], removed: [] };
+  const result = {
+    written: [],
+    unchanged: [],
+    removed: [],
+    warnings: missingPackages(root, config),
+  };
 
   for (const { path, content, seed } of files) {
     const target = join(root, path);
@@ -250,4 +256,27 @@ export async function sync(root, { force = false } = {}) {
   }
 
   return result;
+}
+
+/**
+ * Warns about each enabled skill whose package the repository does not depend on.
+ *
+ * @param root - The repository root
+ * @param config - The config from `readConfig`
+ * @returns One message per skill, empty when every package is there
+ */
+function missingPackages(root, config) {
+  const needs = Object.keys(config.skills)
+    .map((name) => [name, SKILLS[name].requires])
+    .filter(([, pkg]) => pkg);
+  if (needs.length === 0) return [];
+
+  const installed = installedPackages(root);
+
+  return needs
+    .filter(([, pkg]) => !installed.has(pkg))
+    .map(
+      ([name, pkg]) =>
+        `The ${name} skill runs ${pkg}, which this repository does not depend on. The skill is written, but stops at its first step until you run: npm i -D ${pkg}`,
+    );
 }

@@ -179,8 +179,12 @@ find "$SCRATCH_DIR" -maxdepth 1 -name '_*.tmp.*' -delete
 # CHANGED_FILES in diff mode, TARGETS in target mode
 printf '%s\n' "${FILES[@]}" > "$SCRATCH_DIR/_files.tmp.txt"
 
-npx --no-install skills prepass tools --scratch "$SCRATCH_DIR" --files-from "$SCRATCH_DIR/_files.tmp.txt"
+npx --no-install skills prepass tools --scratch "$SCRATCH_DIR" --files-from "$SCRATCH_DIR/_files.tmp.txt" --base "$BASE"
 ```
+
+In target mode, leave `--base` out: there is no base. In diff mode it lets a
+dead-code check report what the branch newly left dead anywhere in the
+repository, not only in the files it touched.
 
 Use `run_in_background: true`. Then go straight to step 4 — **do not poll for
 it, and do not read its output.** The review agents wait on it themselves.
@@ -193,7 +197,8 @@ that is the sentinel the reviewers block on, and it is why nothing here needs a
 
 A tool exiting non-zero because it **found** something is the normal case, and
 counts as `ok`. It is `failed` when the shell could not find or run it (exit
-126 or 127) or npm has no such script, and `timedOut` when it ran past 170
+126 or 127), npm has no such script, or it exits with a code the tool reserves
+for its own errors, and `timedOut` when it ran past 170
 seconds — it is stopped and its report says so, so the sentinel always lands
 before the reviewers' three-minute wait runs out.
 

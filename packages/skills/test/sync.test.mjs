@@ -5,6 +5,7 @@
 // Runs sync and check against throwaway repositories.
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
@@ -27,6 +28,7 @@ const EVERYTHING = {
   skills: {
     ...BOTH.skills,
     'code-review': { githubReview: true },
+    'dead-code': {},
     pr: { qaGate: true },
   },
 };
@@ -718,5 +720,105 @@ describe('sync and check', () => {
 
     assert.ok((await sync(root)).written.length > 0);
     assert.deepEqual(await check(root), []);
+  });
+});
+
+describe('the dead-code skill', () => {
+  /** The skills CLI, run as a repository would run it. */
+  const BIN = fileURLToPath(new URL('../bin/skills.mjs', import.meta.url));
+
+  /**
+   * Makes a repository with the dead-code skill enabled.
+   *
+   * @param devDependencies - The root package.json's devDependencies, or none for no package.json
+   * @returns The repository root
+   */
+  function deadCodeRepo(devDependencies) {
+    const root = makeRepo({ 'skills.json': { skills: { 'dead-code': {} } } });
+    if (devDependencies) {
+      write(root, 'package.json', JSON.stringify({ devDependencies }));
+    }
+    return root;
+  }
+
+  /**
+   * Runs the skills CLI in a repository.
+   *
+   * @param root - The repository root
+   * @param args - The CLI arguments
+   * @returns The exit status, stdout and stderr
+   */
+  function cli(root, ...args) {
+    const { status, stdout, stderr } = spawnSync(
+      process.execPath,
+      [BIN, ...args],
+      { cwd: root, encoding: 'utf8' },
+    );
+    return { status, stdout, stderr };
+  }
+
+  test('runs every command through the installed dead-code CLI', async () => {
+    const skill = await planned(deadCodeRepo(), 'dead-code/SKILL.md');
+
+    assert.match(skill, /^name: dead-code$/m);
+    assert.match(skill, /npx --no-install dead-code --help/);
+    assert.match(skill, /npm i -D @euanmsm\/dead-code/);
+    assert.match(skill, /npx --no-install dead-code branch origin\/main/);
+    assert.match(skill, /npx --no-install dead-code why /);
+    assert.match(skill, /\.devkit\/dead-code\.json/);
+    assert.doesNotMatch(skill, /npx (?!--no-install )[^\n]*dead-code/);
+    assert.doesNotMatch(skill, /npx knip/);
+  });
+
+  test('takes the branch base from baseBranch', async () => {
+    const root = makeRepo({
+      'skills.json': { baseBranch: 'dev', skills: { 'dead-code': {} } },
+    });
+
+    assert.match(
+      await planned(root, 'dead-code/SKILL.md'),
+      /npx --no-install dead-code branch origin\/dev/,
+    );
+  });
+
+  test('sync warns when @euanmsm/dead-code is not installed, and still writes the skill', async () => {
+    const root = deadCodeRepo({ knip: '^6.0.0' });
+
+    const { written, warnings } = await sync(root);
+
+    assert.deepEqual(written, ['.claude/skills/dead-code/SKILL.md']);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /dead-code/);
+    assert.match(warnings[0], /npm i -D @euanmsm\/dead-code/);
+  });
+
+  test('sync does not warn once @euanmsm/dead-code is installed', async () => {
+    const root = deadCodeRepo({ '@euanmsm/dead-code': '^0.1.0' });
+
+    assert.deepEqual((await sync(root)).warnings, []);
+  });
+
+  test('sync does not warn about a skill that is not enabled', async () => {
+    assert.deepEqual(
+      (await sync(makeRepo({ 'skills.json': BOTH }))).warnings,
+      [],
+    );
+  });
+
+  test('the CLI prints the warning on stderr for sync, and never for check', () => {
+    const root = deadCodeRepo();
+
+    const synced = cli(root, 'sync');
+    assert.equal(synced.status, 0);
+    assert.match(synced.stderr, /@euanmsm\/dead-code/);
+    assert.doesNotMatch(synced.stdout, /@euanmsm\/dead-code/);
+
+    const checked = cli(root, 'check');
+    assert.equal(checked.status, 0);
+    assert.equal(checked.stderr, '');
+    assert.equal(
+      checked.stdout,
+      'Skills are in step with .devkit/skills.json.\n',
+    );
   });
 });

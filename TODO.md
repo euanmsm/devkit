@@ -28,20 +28,14 @@ them from `.devkit/skills.json` instead of keeping a hand-written copy.
       script prepass and publish step run from the package, and the QA gate is
       optional (`qaGate`). See [`plans/pr-skill.md`](plans/pr-skill.md) and
       [`packages/skills/docs/pr.md`](packages/skills/docs/pr.md)
+- [x] **A dead-code package** — [`@euanmsm/dead-code`](packages/dead-code) wraps
+      knip: a whole-repo check, a check of named paths, and `dead-code branch`,
+      which reports only what a branch newly left dead. The standing false
+      positives live in `.devkit/dead-code.json`, each with its reason. The
+      review prepass runs it in place of raw knip, and the skills package ships
+      a generic `dead-code` skill
 
 ## Next
-
-- [ ] **A dead-code package** — `@euanmsm/dead-code`, owning the dead-code
-      checks the way terse owns the comment checks
-  - Commands wrapping knip with a repo's settings: a whole-repo check, a check
-    of named files, and a branch check that fails only on newly dead code, as
-    `terse` does for comments
-  - A `.devkit/dead-code.json` for the standing false positives Curricular's
-    `dead-code` skill lists by hand today
-  - The review prepass then runs it instead of calling knip directly, and the
-    report explains which findings are known false positives
-  - Comes before publishing, so the first `@euanmsm/skills` release already runs
-    it
 
 - [ ] **Publish `@euanmsm/skills`** — adoption waits on this
   - Push `euanmadhar/skills-package` and open a pull request into `main`
@@ -61,8 +55,14 @@ them from `.devkit/skills.json` instead of keeping a hand-written copy.
   - Delete the hand-written copies, then run `npx skills sync`
   - Add `skills check` to CI, and the generated paths to `.prettierignore`
   - Install ripgrep in any CI job that runs the review prepass
-  - Install `@euanmsm/dead-code` and write each repo's `.devkit/dead-code.json`;
-    Curricular moves its `dead-code` skill's false-positive list into it
+  - Install `@euanmsm/dead-code` and write each repo's `.devkit/dead-code.json`
+    with `npx --no-install dead-code init`
+  - Curricular: move the false-positive list its `dead-code` skill keeps by hand
+    (the vendored primitives, the deprecated tree, the deliberate keepers) into
+    `.devkit/dead-code.json` `known`, each with its reason
+  - Enable the `dead-code` skill in both repos' `.devkit/skills.json`
+  - Curricular: delete the hand-written `dead-code` skill and its
+    `_CONVENTIONS/best-practices/dead-code` docs before running `sync`
   - Curricular: upgrade `@euanmsm/terse` to 0.3.0 or newer. The review's comment
     check runs `terse scan`, which 0.2.0 does not have
   - PR skill, both repos: copy the matching fixture from
