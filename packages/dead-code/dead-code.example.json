@@ -1,0 +1,16 @@
+{
+  "_readme": "Settings for dead-code. `workspaces` narrows knip to those workspaces (empty means all of them). `include` is knip's issue types. Every `known` entry is a false positive kept on purpose: `path` is a regex matched against repo-root paths, `names` (optional) limits it to those exports, and `reason` is required.",
+  "workspaces": [],
+  "include": ["files", "exports", "types"],
+  "known": [
+    {
+      "path": "^src/components/ui/",
+      "reason": "shadcn primitives, kept whole so `shadcn add` does not fight them"
+    },
+    {
+      "path": "^src/lib/legacy\\.ts$",
+      "names": ["formatDate"],
+      "reason": "called from a script outside the module graph"
+    }
+  ]
+}

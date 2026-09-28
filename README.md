@@ -19,6 +19,7 @@ nothing here ends up in a production bundle.
 | [`@euanmsm/wt`](packages/wt)               | Runs git worktrees side by side, each with its own ports, env files and database        |
 | [`@euanmsm/crib`](packages/crib)           | Terminal cheat sheets for everyday CLIs, plus short courses with practice               |
 | [`@euanmsm/skills`](packages/skills)       | Writes shared Claude Code skills into a repository from one config file                 |
+| [`@euanmsm/dead-code`](packages/dead-code) | Finds dead code with knip, sets known false positives apart, and checks just a branch   |
 | [`@euanmsm/devkit-core`](packages/core)    | Config loading the others share. Not useful on its own                                  |
 
 ## Installing one
