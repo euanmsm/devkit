@@ -152,7 +152,8 @@ all, the review runs on the built-ins below. Start from
   repository has them installed. The dead-code check runs
   [`@euanmsm/dead-code`](../dead-code), which in diff mode reports only what the
   branch newly left dead, or raw knip, limited to the files under review, when
-  only knip is installed.
+  only knip is installed. A check declared but not yet installed is reported as
+  failed, not as findings.
 - **`files`**, **`splitOrder`**, **`rosterNotes`** — what counts as code, docs
   and tests; which fat bundles split first when there are spare agents; and
   notes appended to the skill's roster section.
@@ -166,8 +167,10 @@ graph it builds needs [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`).
 No options. `sync` writes `<skillsDir>/dead-code/SKILL.md`, which runs every
 command as `npx --no-install dead-code …` and stops at its first step, with the
 install command, when the package is missing. The false positives the repository
-keeps on purpose live in `.devkit/dead-code.json`, each with its reason. When
-the skill is enabled, the code review's `dead-code` lens loads it.
+keeps on purpose live in `.devkit/dead-code.json`, each with its reason. A file
+`sync` generates, such as a `.workflow.js`, is loaded by its path, so dead-code
+lists it as known rather than unused, and the skill never deletes one. When the
+skill is enabled, the code review's `dead-code` lens loads it.
 [docs/dead-code.md](docs/dead-code.md) covers the rest.
 
 ### `pr`

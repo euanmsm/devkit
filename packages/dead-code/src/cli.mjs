@@ -13,6 +13,7 @@ import { parseArgs } from 'node:util';
 import { branchFindings } from './branch.mjs';
 import {
   CONFIG_NAME,
+  applyGenerated,
   applyKnown,
   checkInclude,
   readConfig,
@@ -51,7 +52,8 @@ Usage
   dead-code init [--force]        Write a starter .devkit/${CONFIG_NAME}
 
 Paths are tried against the current folder, then against the repository root.
-Every path printed is relative to the repository root.
+Every path printed is relative to the repository root. After --, every argument
+is a path, even one named branch, why, init or help.
 
 Options
   --json                 Print a machine-readable report
@@ -287,9 +289,10 @@ function warningsFor({ warnings = [], hints, unresolved }) {
  * @throws When the arguments or config are unusable, or knip fails
  */
 async function dispatch(argv, cwd) {
-  const { values, positionals } = parseArgs({
+  const { values, positionals, tokens } = parseArgs({
     args: argv,
     allowPositionals: true,
+    tokens: true,
     options: {
       json: { type: 'boolean' },
       include: { type: 'string' },
@@ -299,7 +302,12 @@ async function dispatch(argv, cwd) {
     },
   });
 
-  const [command, ...rest] = positionals;
+  // After `--` every argument is a path, even one named like a command.
+  const end = tokens.find((t) => t.kind === 'option-terminator')?.index;
+  const named = tokens.some(
+    (t) => t.kind === 'positional' && (end === undefined || t.index < end),
+  );
+  const [command, ...rest] = named ? positionals : [];
   if (values.help || command === 'help') {
     console.log(USAGE);
     return 0;
@@ -372,7 +380,8 @@ async function dispatch(argv, cwd) {
     };
   }
 
-  const sorted = applyKnown(result.findings, config.known);
+  const generated = applyGenerated(result.findings, root);
+  const sorted = applyKnown(generated.findings, config.known);
   // Only an unfiltered, error-free run sees everything a known entry could match.
   const complete =
     result.mode === 'repo' &&
@@ -382,7 +391,7 @@ async function dispatch(argv, cwd) {
   const report = {
     ...result,
     findings: sorted.findings,
-    known: sorted.known,
+    known: [...generated.known, ...sorted.known],
     stale: complete ? sorted.stale : [],
     warnings: warningsFor(result),
     directory: prefix || '.',

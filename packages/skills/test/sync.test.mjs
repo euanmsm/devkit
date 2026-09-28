@@ -5,7 +5,7 @@
 // Runs sync and check against throwaway repositories.
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
@@ -763,22 +763,62 @@ describe('the dead-code skill', () => {
     assert.match(skill, /^name: dead-code$/m);
     assert.match(skill, /npx --no-install dead-code --help/);
     assert.match(skill, /npm i -D @euanmsm\/dead-code/);
-    assert.match(skill, /npx --no-install dead-code branch origin\/main/);
+    assert.match(
+      skill,
+      /npx --no-install dead-code branch "\$BASE_REF" --json/,
+    );
     assert.match(skill, /npx --no-install dead-code why /);
     assert.match(skill, /\.devkit\/dead-code\.json/);
     assert.doesNotMatch(skill, /npx (?!--no-install )[^\n]*dead-code/);
     assert.doesNotMatch(skill, /npx knip/);
   });
 
-  test('takes the branch base from baseBranch', async () => {
+  test('takes the branch base from baseBranch, the origin copy first, else the local branch', async () => {
     const root = makeRepo({
       'skills.json': { baseBranch: 'dev', skills: { 'dead-code': {} } },
     });
+    const lines = (await planned(root, 'dead-code/SKILL.md')).split('\n');
+    const at = lines.findIndex((line) => line.startsWith('BASE_REF='));
+    const resolveBase = lines.slice(at, at + 2).join('\n');
 
-    assert.match(
-      await planned(root, 'dead-code/SKILL.md'),
-      /npx --no-install dead-code branch origin\/dev/,
-    );
+    // A repository with a dev branch, and origin/dev only when asked.
+    const baseIn = (remote) => {
+      const repo = makeRepo();
+      const git = (...args) =>
+        execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+      execFileSync('rm', ['-r', join(repo, '.git')]);
+      git('init', '-q', '-b', 'dev');
+      git(
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'x',
+      );
+      if (remote) git('update-ref', 'refs/remotes/origin/dev', 'HEAD');
+      return execFileSync('bash', ['-c', `${resolveBase}\necho "$BASE_REF"`], {
+        cwd: repo,
+        encoding: 'utf8',
+      }).trim();
+    };
+
+    assert.equal(baseIn(true), 'origin/dev');
+    assert.equal(baseIn(false), 'dev');
+  });
+
+  test('never has a generated skill file deleted, and says where report paths work', async () => {
+    const skill = await planned(deadCodeRepo(), 'dead-code/SKILL.md');
+
+    assert.match(skill, new RegExp(MARKER_TAG));
+    assert.match(skill, /never delete it/i);
+    assert.match(skill, /pnpm-workspace\.yaml/);
+    assert.match(skill, /from any folder/);
+    assert.match(skill, /`errors`/);
+    assert.match(skill, /namespaceMember/);
   });
 
   test('sync warns when @euanmsm/dead-code is not installed, and still writes the skill', async () => {

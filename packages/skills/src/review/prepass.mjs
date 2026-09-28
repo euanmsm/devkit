@@ -32,6 +32,13 @@ export const TOOL_TIMEOUT_MS = 170_000;
 // Exit codes a shell gives a command it could not find or could not execute.
 const COULD_NOT_RUN = new Set([126, 127]);
 
+// What npm prints when a script or an npx package is not there to run.
+const NPM_COULD_NOT_RUN =
+  /Missing script:|could not determine executable to run|npm (?:error|ERR!) code E404|npx canceled due to missing packages/;
+
+// The most stderr a sentinel entry carries.
+const STDERR_LIMIT = 2000;
+
 /** Name of the import graph report. */
 export const GRAPH_REPORT = '_import-graph.tmp.md';
 
@@ -305,12 +312,11 @@ function runTool(root, tool, { files, base }, scratchDir, timeoutMs) {
       : tool.command;
 
   const transform = tool.onlyFilesUnderReview
-    ? (raw) => keepFilesUnderReview(extractJson(raw), files)
-    : tool.json
-      ? extractJson
-      : null;
+    ? (json) => keepFilesUnderReview(json, files)
+    : null;
 
   return runCommand(root, command, finalPath, {
+    json: tool.json || tool.onlyFilesUnderReview,
     transform,
     errorExitCodes: tool.errorExitCodes ?? [],
     timeoutMs,
@@ -362,27 +368,34 @@ export function keepFilesUnderReview(text, files) {
 }
 
 /**
- * Runs a shell command and lands its combined output at the given path.
+ * Runs a shell command and lands its report at the given path.
  *
  * A tool exiting non-zero because it found something is `ok`. It is `failed`
- * when the shell could not find or execute it, npm has no such script, or it
- * exits with a code the tool names as its own error, and `timedOut` when it
- * ran past the timeout and was stopped.
+ * when the shell could not find or execute it, npm has no such script or
+ * package, it exits with a code the tool names as its own error, or a JSON tool
+ * exits non-zero without printing JSON; and `timedOut` when it ran past the
+ * timeout and was stopped.
+ *
+ * A JSON tool's report is the JSON on its stdout, even when it failed, so its
+ * own account of the failure is kept; its stderr goes in the sentinel entry.
+ * Any other report is stdout and stderr as they arrived.
  *
  * @param root - The repository root, used as the working directory
  * @param command - The shell command line
  * @param finalPath - The report file's path
- * @param options - `transform` rewriting the raw output before it lands, or null; the tool's `errorExitCodes`; and `timeoutMs` before it is stopped
- * @returns The tool's `{ status, exitCode }`, once its report has landed
+ * @param options - `json` when the tool prints a JSON report; `transform` rewriting that JSON before it lands, or null; the tool's `errorExitCodes`; and `timeoutMs` before it is stopped
+ * @returns The tool's `{ status, exitCode }`, with `stderr` for a JSON report, once its report has landed
  */
 function runCommand(
   root,
   command,
   finalPath,
-  { transform, errorExitCodes, timeoutMs },
+  { json, transform, errorExitCodes, timeoutMs },
 ) {
   return new Promise((resolve) => {
     const chunks = [];
+    const stdoutChunks = [];
+    const stderrChunks = [];
     let settled = false;
 
     const settle = (contents, result) => {
@@ -403,7 +416,7 @@ function runCommand(
       env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
     });
 
-    const output = () => Buffer.concat(chunks).toString('utf8');
+    const text = (list) => Buffer.concat(list).toString('utf8');
 
     const timer = setTimeout(() => {
       try {
@@ -412,13 +425,19 @@ function runCommand(
         // The group had already exited.
       }
       settle(
-        `prepass stopped \`${command}\`: it timed out after ${timeoutMs / 1000}s.\n\nOutput before it was stopped:\n${output() || '(none)\n'}`,
+        `prepass stopped \`${command}\`: it timed out after ${timeoutMs / 1000}s.\n\nOutput before it was stopped:\n${text(chunks) || '(none)\n'}`,
         { status: 'timedOut', exitCode: null },
       );
     }, timeoutMs);
 
-    child.stdout.on('data', (chunk) => chunks.push(chunk));
-    child.stderr.on('data', (chunk) => chunks.push(chunk));
+    child.stdout.on('data', (chunk) => {
+      chunks.push(chunk);
+      stdoutChunks.push(chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      chunks.push(chunk);
+      stderrChunks.push(chunk);
+    });
 
     child.on('error', (err) => {
       settle(`prepass could not run: ${command}\n${err.message}\n`, {
@@ -428,31 +447,41 @@ function runCommand(
     });
 
     child.on('close', (code) => {
-      const raw = output();
+      const raw = text(chunks);
+      const report = json ? findJson(text(stdoutChunks)) : null;
       const failed =
         COULD_NOT_RUN.has(code) ||
         errorExitCodes.includes(code) ||
-        (code !== 0 && /Missing script:/.test(raw));
+        (code !== 0 && NPM_COULD_NOT_RUN.test(raw)) ||
+        (json && code !== 0 && report === null);
 
-      // A failure's own message is the report, never cut down to JSON.
-      const body = !failed && transform ? transform(raw) : raw;
-      settle(body || `(no output; exit ${code})\n`, {
+      if (report === null) {
+        settle(raw || `(no output; exit ${code})\n`, {
+          status: failed ? 'failed' : 'ok',
+          exitCode: code,
+        });
+        return;
+      }
+
+      const stderr = text(stderrChunks).trim().slice(0, STDERR_LIMIT);
+      settle(transform ? transform(report) : report, {
         status: failed ? 'failed' : 'ok',
         exitCode: code,
+        ...(stderr ? { stderr } : {}),
       });
     });
   });
 }
 
 /**
- * Recovers a JSON document from output that has other lines around it.
+ * Finds the JSON document in output that has other lines around it.
  *
- * @param raw - The tool's combined output
- * @returns The JSON document on its own, or the raw output when none parses
+ * @param raw - The tool's output
+ * @returns The document with a trailing newline, or null when none parses
  */
-export function extractJson(raw) {
+function findJson(raw) {
   const start = raw.indexOf('{');
-  if (start === -1) return raw;
+  if (start === -1) return null;
 
   let end = raw.lastIndexOf('}');
 
@@ -467,7 +496,7 @@ export function extractJson(raw) {
     }
   }
 
-  return raw;
+  return null;
 }
 
 /**

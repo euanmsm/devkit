@@ -95,11 +95,13 @@ which case Recon works through it file by file.
 the built-in comment and dead-code checks when terse and `@euanmsm/dead-code`
 (or knip) are installed, and the import graph, all at once. In diff mode the
 skill passes the merge base as `--base`, so the dead-code check reports what the
-branch newly left dead. The skill first deletes the last run's reports and
-sentinel, so nothing reads them as this run's, and then does not wait. Recon
-never waits for them: it uses the import graph only if it has already landed.
-The reviewers wait for them only when they start, several minutes later. See
-[The prepass](#the-prepass) and [`prepass`](#prepass).
+branch newly left dead. The skill's one command line adds `--base` only when the
+base is set, so it runs unchanged in target mode, and an empty `--base` counts
+as none. The skill first deletes the last run's reports and sentinel, so nothing
+reads them as this run's, and then does not wait. Recon never waits for them: it
+uses the import graph only if it has already landed. The reviewers wait for them
+only when they start, several minutes later. See [The prepass](#the-prepass) and
+[`prepass`](#prepass).
 
 ### 4. Routing decides which lenses fire
 
@@ -343,16 +345,16 @@ default two (the built-in checks below are added on top either way). The default
 `tsc` runs only when `typescript` is a dependency, so a JavaScript-only
 repository gets no typecheck report rather than a wrong one. Each tool has:
 
-| Field                  | Required | What it is                                                                                                                                                       |
-| ---------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `key`                  | yes      | A plain name. The report is written to `_<key>.tmp.txt`, and the reviewers see it under this name                                                                |
-| `label`                | yes      | How the report is described to reviewers, for example `ESLint output, including the import law`                                                                  |
-| `command`              | yes      | A shell command, run from the repository root                                                                                                                    |
-| `json`                 | no       | `true` when the tool prints JSON with other lines around it (npm banners, say). Keeps only the JSON, and names the report `_<key>.tmp.json`                      |
-| `appendFiles`          | no       | `true` to add the files under review to the end of the command, each quoted. Files the diff deleted are left out. With no files left, the tool is not run        |
-| `onlyFilesUnderReview` | no       | `true` for a JSON report shaped like knip's. Keeps only the entries for files under review, and records how many other files had entries as `filesOutsideReview` |
-| `baseCommand`          | no       | A command to run instead in diff mode, with the diff's base commit added to the end, quoted. The files are not added. Without a base, `command` runs as usual    |
-| `errorExitCodes`       | no       | Exit codes the tool keeps for its own errors, such as `[2]`. The tool is then `failed` rather than `ok`, and its report is the error message                     |
+| Field                  | Required | What it is                                                                                                                                                             |
+| ---------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `key`                  | yes      | A plain name. The report is written to `_<key>.tmp.txt`, and the reviewers see it under this name                                                                      |
+| `label`                | yes      | How the report is described to reviewers, for example `ESLint output, including the import law`                                                                        |
+| `command`              | yes      | A shell command, run from the repository root                                                                                                                          |
+| `json`                 | no       | `true` when the tool prints JSON with other lines around it (npm banners, say). Keeps only the JSON on stdout, and names the report `_<key>.tmp.json`                  |
+| `appendFiles`          | no       | `true` to add the files under review to the end of the command, each quoted. Files the diff deleted are left out. With no files left, the tool is not run              |
+| `onlyFilesUnderReview` | no       | `true` for a JSON report shaped like knip's. Keeps only the entries for files under review, and records how many other files had entries as `filesOutsideReview`       |
+| `baseCommand`          | no       | A command to run instead in diff mode, with the diff's base commit added to the end, quoted. The files are not added. Without a base, `command` runs as usual          |
+| `errorExitCodes`       | no       | Exit codes the tool keeps for its own errors, such as `[2]`. The tool is then `failed` rather than `ok`, and its report is its JSON if it printed any, else its output |
 
 The keys `importGraph`, `sentinel` and `files` are taken, and each key may
 appear once.
@@ -360,14 +362,16 @@ appear once.
 **The built-in checks: `comments`, `deadCode` and `knip`.** These checks are
 added to the tool list without you listing them, whenever the repository has the
 tool installed. "Installed" means the package is in `dependencies` or
-`devDependencies` of the root `package.json` or of any workspace it lists, so
-the answer is the same on every machine.
+`devDependencies` of the root `package.json` or of any workspace it or
+`pnpm-workspace.yaml` lists, so the answer is the same on every machine. A
+package declared but not yet installed, as in a fresh CI checkout, makes the
+check `failed` rather than a report of npm's error.
 
-| Setting    | Installed when                       | Report               | What it runs                                                                                                                                                                                          |
-| ---------- | ------------------------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `comments` | `@euanmsm/terse` is a dependency     | `_comments.tmp.txt`  | `npx --no-install terse scan <files under review>` — every line of those files against the comment rules (terse 0.3.0 or newer)                                                                       |
-| `deadCode` | `@euanmsm/dead-code` is a dependency | `_deadCode.tmp.json` | Diff mode: `npx --no-install dead-code branch --json <base>`, only what the branch newly left dead, anywhere in the repository. Target mode: `npx --no-install dead-code --json <files under review>` |
-| `knip`     | `knip` is a dependency               | `_knip.tmp.json`     | `npx --no-install knip --reporter json`, then keeps only the files under review. Left out when `deadCode` runs                                                                                        |
+| Setting    | Installed when                       | Report               | What it runs                                                                                                                                                                                             |
+| ---------- | ------------------------------------ | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `comments` | `@euanmsm/terse` is a dependency     | `_comments.tmp.txt`  | `npx --no-install terse scan <files under review>` — every line of those files against the comment rules (terse 0.3.0 or newer)                                                                          |
+| `deadCode` | `@euanmsm/dead-code` is a dependency | `_deadCode.tmp.json` | Diff mode: `npx --no-install dead-code branch --json <base>`, only what the branch newly left dead, anywhere in the repository. Target mode: `npx --no-install dead-code --json -- <files under review>` |
+| `knip`     | `knip` is a dependency               | `_knip.tmp.json`     | `npx --no-install knip --reporter json`, then keeps only the files under review. Left out when `deadCode` runs                                                                                           |
 
 Each setting takes:
 
@@ -383,15 +387,23 @@ Each setting takes:
 The dead-code report sets the repository's known false positives apart, each
 with the reason recorded in `.devkit/dead-code.json`, and the `dead-code` lens
 tells reviewers never to report those. Its workspaces and issue types come from
-that file too, so a monorepo does not need to override the command. Exit `1`
-means it found something and is `ok`; exit `2` means it could not run (a bad
-config, or knip failing) and is `failed`. See
+that file too, so a monorepo does not need to override the command: put
+`workspaces` in `.devkit/dead-code.json` instead. Exit `1` means it found
+something and is `ok`; exit `2` means it could not run (a bad config, a missing
+base, or knip failing) and is `failed`. When knip failed part of the way, the
+report is still dead-code's JSON, whose `errors` say what went wrong. The branch
+report reads the working tree, so uncommitted edits count in it although the
+diff leaves them out; the lens tells reviewers so. Files `@euanmsm/skills`
+generates, such as this skill's `review.workflow.js`, are loaded by path, and
+dead-code lists them as known rather than unused. See
 [`@euanmsm/dead-code`](../../dead-code/README.md).
 
 To change how a built-in check runs, list a tool with its key in `tools`. The
 fields you give replace the built-in's, and the rest — including `appendFiles`,
-`baseCommand` or `onlyFilesUnderReview` — are kept. For example, a monorepo
-where knip belongs to one workspace:
+`baseCommand` or `onlyFilesUnderReview` — are kept. Replacing the `command` of a
+check that has a `baseCommand` is an error unless you give `baseCommand` too, or
+`null` to run `command` in both modes, since diff mode would otherwise still run
+the built-in's. For example, a monorepo where knip belongs to one workspace:
 
 ```js
 prepass: {
@@ -638,20 +650,25 @@ new one, and a binary file from its header.
    the import graph at the same time. Each tool runs through the shell from the
    repository root, with colour output switched off and no input, so nothing can
    wait on a prompt. A tool with `appendFiles` gets the files under review added
-   to its command. With `--base`, a tool with a `baseCommand` runs that instead,
-   with the base added. The skill passes `--base` in diff mode only.
+   to its command, leaving out any the diff deleted. With `--base`, a tool with
+   a `baseCommand` runs that instead, with the base added. The skill passes
+   `--base` in diff mode only, and an empty one counts as none.
 3. Writes each report as it finishes — to a temporary file first, then renamed
    into place, so **a report that exists is complete**.
 4. Writes `_prepass.done.json` last. It gives each tool's
-   `{ status, exitCode }`, plus `importGraph` and the file count. Reviewers wait
-   up to three minutes for this file before reading any report.
+   `{ status, exitCode }`, plus `importGraph` and the file count. A JSON tool's
+   report is the JSON on its stdout alone, and anything it wrote to stderr is in
+   its entry as `stderr`. Reviewers wait up to three minutes for this file
+   before reading any report.
 
 A tool's `status` is one of:
 
 - `ok` — it ran. Exiting with an error because it **found** problems is the
   normal case, and still `ok`.
 - `failed` — the shell could not find or run it (exit 127 or 126), npm has no
-  such script, or it exited with one of its `errorExitCodes`.
+  such script, npx found no such package it may use (`--no-install`), it exited
+  with one of its `errorExitCodes`, or a `json` tool exited non-zero without
+  printing JSON.
 - `timedOut` — it ran for 170 seconds, just under the reviewers' wait, and was
   stopped along with everything it started. Its report says so and keeps the
   output so far, so the sentinel always lands in time.

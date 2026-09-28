@@ -102,36 +102,57 @@ filters the result. A run takes seconds, so re-run after every edit rather than
 reusing an old report.
 
 ```bash
-npx --no-install dead-code --json                              # the whole repository
-npx --no-install dead-code --json src/features/billing         # only findings under these paths
-npx --no-install dead-code branch origin/{{baseBranch}} --json  # only what this branch left dead
+npx --no-install dead-code --json                           # the whole repository
+npx --no-install dead-code --json -- src/features/billing   # only findings under these paths
 ```
 
-- Paths are relative to the current folder. A path named `branch`, `why` or
-  `init` needs a `./` in front of it
+Only what this branch left dead, against `origin/{{baseBranch}}`, or the local
+`{{baseBranch}}` when there is no origin copy:
+
+```bash
+BASE_REF="origin/{{baseBranch}}"
+git rev-parse --verify --quiet "refs/remotes/$BASE_REF" >/dev/null || BASE_REF="{{baseBranch}}"
+npx --no-install dead-code branch "$BASE_REF" --json
+```
+
+- A path you type is tried against the current folder, then against the
+  repository root, so a `file` copied out of a report works from any folder.
+  Every path the report prints is from the repository root
+- Put `--` before the paths, as above: after it a path named `branch`, `why` or
+  `init` is still a path, not a command
 - `branch` compares the point where the branch left the base with the working
-  tree, so uncommitted changes count. Debt that was already there is not
-  reported, and neither is old debt carried across a rename
+  tree, so uncommitted and untracked changes count. Debt that was already there
+  is not reported, and neither is old debt carried across a rename. When
+  neither base exists it exits 2 and says so: fetch the base, or name another
 - `--include <types>` swaps the issue types for this run, comma-separated.
   `enumMembers` for a constants module, `duplicates` for a barrel,
   `dependencies` for `package.json`
 - `--workspace <ws>` narrows the run to one workspace. Repeat it for more
 
 Exit codes: `0` nothing beyond the known false positives, `1` findings, `2` the
-command or the config is wrong, or knip could not run. **Exit 1 is the normal
-case**, not a failure. Only exit 2 means there is no report to read.
+command or the config is wrong, knip could not run, or knip reported errors.
+**Exit 1 is the normal case**, not a failure. On exit 2, read what it printed:
+
+- A message on stderr and no report means the command, the base or the config
+  is wrong. Fix that and run it again
+- A JSON report with entries in `errors` means knip ran but failed part of the
+  way, such as a plugin config that would not load. The findings cannot be
+  trusted until that is fixed, so report the errors, not the findings
 
 ### Reading the report
 
 `--json` prints one object:
 
-| Key        | What it holds                                                                                                                                  |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `findings` | `{ type, file, name, line }` each. `type` is `file`, `export`, `type`, `enumMember`, `duplicate` or `dependency`. `file` is repo-root-relative |
-| `known`    | The same shape plus the `reason` of the `.devkit/dead-code.json` entry it matched. Never a finding                                             |
-| `stale`    | Known entries that matched nothing in a whole-repo run. Offer to remove them: the thing they excused has gone                                  |
-| `hints`    | Knip saying its own config has drifted, such as an entry point a plugin now finds by itself. A finding about the config, not the code          |
-| `mode`     | `repo`, `paths` or `branch`, with `base` in `branch` mode                                                                                      |
+| Key          | What it holds                                                                                                                                                                                                               |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `findings`   | `{ type, file, name, line }` each. `type` is `file`, `export`, `type`, `enumMember`, `namespaceMember`, `duplicate` or `dependency`. `file` is repo-root-relative. A member's `name` is `Enum.Member` or `Namespace.member` |
+| `known`      | The same shape plus a `reason`: the `.devkit/dead-code.json` entry's, or that the file is generated (step 5). Never a finding                                                                                               |
+| `stale`      | Known entries that matched nothing in a whole-repo run. Offer to remove them: the thing they excused has gone                                                                                                               |
+| `hints`      | Knip saying its own config has drifted, such as an entry point a plugin now finds by itself. A finding about the config, not the code                                                                                       |
+| `unresolved` | Imports knip could not resolve, in the findings' shape with the specifier as `name`. Not counted, but a broken path alias makes the files behind it look unused                                                             |
+| `errors`     | What knip failed on part of the way. Any entry means exit 2 and findings that cannot be trusted                                                                                                                             |
+| `warnings`   | Sentences on why the findings may be off, such as unresolved imports or an unconfigured knip. Read them before the findings                                                                                                 |
+| `mode`       | `repo`, `paths` or `branch`. `directory` is the project folder knip ran in, from the repository root. In `branch` mode, `base` is the base used and `fork` the fork point's commit                                          |
 
 A `file` finding means the whole file is unreachable, so its exports are not
 listed again one by one.
@@ -143,8 +164,10 @@ npx --no-install dead-code why src/lib/dates.ts               # who imports each
 npx --no-install dead-code why src/lib/dates.ts formatDate    # one export, through every re-export
 ```
 
-"Nothing reaches <file>" is the answer, not an error: no entry point imports the
-file, directly or through other files.
+Pass a finding's `file` as it is, from any folder. "Nothing reaches <file>" is
+the answer, not an error: no entry point imports the file, directly or through
+other files. `why` takes one file, never a folder, and exits 2 when the export
+is not in the file: check the name against the report.
 
 ## 4. Barrel entries are not the definition
 
@@ -174,6 +197,7 @@ and only a search finds them:
 | A registry keyed by string            | A handler, tool or renderer looked up by name at runtime         |
 | A name in SQL, YAML or JSON           | A function named in a migration, a path in a CI workflow         |
 | A file a framework loads by its name  | A route or config file the framework's knip plugin does not know |
+| A file a tool loads by its path       | A `*.workflow.js` in a skill's folder, run by the Workflow tool  |
 | A reference only in a gitignored file | Knip respects `.gitignore`, so scratch notes do not count        |
 
 So search the whole repository, not only the source folder, before believing a
@@ -185,6 +209,12 @@ rg -n --hidden -g '!.git' -g '!node_modules' 'formatDate'
 
 The last row cuts the other way in a review: a scratch note is not a consumer,
 and code kept alive only by one is dead.
+
+**A generated file is never dead code.** A file whose first line, or first line
+after its frontmatter, says `Generated by @euanmsm/skills` is written by
+`skills sync` and loaded by a tool, so never delete it. dead-code lists its
+findings under `known` without an entry. A raw knip run does not, so check the
+head of any unused file before calling it dead.
 
 **A file header naming its consumer is not evidence the consumer exists.**
 Search for the importer rather than taking the comment's word.
@@ -203,7 +233,9 @@ kept dark on purpose, and knip reaches it because its imports are real.
 Read the repository's `knip.json` or `knip.jsonc` when a finding surprises you.
 It is the fastest way to see why something was or was not reported.
 
-- **Workspaces** come from the root `package.json`
+- **Workspaces** come from the root `package.json` `workspaces`, or from
+  `pnpm-workspace.yaml` in a pnpm repository. Knip runs in the project folder,
+  the report's `directory`
 - **Plugins** switch on from each workspace's dependencies and add entry points,
   such as a framework's route files or a test runner's specs. Most of the
   framework knowledge lives here, not in the config
@@ -222,7 +254,7 @@ Delete only when deleting is the task.
 
 | Finding                          | Fix                                                                |
 | -------------------------------- | ------------------------------------------------------------------ |
-| Unused file                      | Delete the file, with its story and test files                     |
+| Unused file                      | Delete the file, with its story and test files. Never a generated one (step 5) |
 | Unused export, used in its file  | Drop the `export` keyword. The symbol stays; it stops being public |
 | Unused export, used nowhere      | Delete the symbol                                                  |
 | Unused export in a module barrel | Delete the re-export line only (step 4)                            |
@@ -304,4 +336,5 @@ orphan.
 - [ ] Anything kept on purpose is a `known` entry with a reason, never a file
       header
 - [ ] Deletions were followed by a re-run and the typecheck
+- [ ] No generated file was deleted
 - [ ] Nobody ran `--fix`

@@ -27,8 +27,9 @@ useful without it:
 
 - **`skills sync`** prints a warning on stderr when `@euanmsm/dead-code` is not
   in the `dependencies` or `devDependencies` of the root `package.json` or of
-  any workspace it lists. It still writes the skill. `skills check` never prints
-  the warning, so its output stays the list of drifted files.
+  any workspace it or `pnpm-workspace.yaml` lists. It still writes the skill.
+  `skills check` never prints the warning, so its output stays the list of
+  drifted files.
 - **The skill's first step** runs `npx --no-install dead-code --help`. When that
   fails, it stops and tells you to install the package, rather than running knip
   by hand without the known list.
@@ -50,9 +51,14 @@ delete dead code, or run knip.
 It works in one loop, the same for one file or a whole branch:
 
 1. **Runs the CLI once, as JSON.** `npx --no-install dead-code --json`, with
-   paths to filter the result, or `dead-code branch origin/<baseBranch> --json`
-   for what the branch newly left dead. Knip always analyses the whole
-   workspace; paths only filter what comes back.
+   paths after `--` to filter the result, or `dead-code branch <base> --json`
+   for what the branch newly left dead. The base is `origin/<baseBranch>`, or
+   the local `<baseBranch>` when there is no origin copy. Knip always analyses
+   the whole workspace; paths only filter what comes back. Every path in the
+   report is from the repository root, and a path typed from any folder is tried
+   against the current folder, then the root, so a report's `file` works
+   anywhere. An exit 2 with a JSON report means knip failed part of the way: the
+   skill reports its `errors` rather than findings it cannot trust.
 2. **Keeps to the targets.** A finding outside what it was asked about is not
    reported. `branch` findings are the exception: an export the branch left dead
    in a file it never touched is still the branch's doing.
@@ -68,8 +74,10 @@ Along the way it covers:
 
 - **What knip cannot see**: dynamic imports with a computed path, registries
   looked up by a string key, names in SQL, YAML or JSON, files a framework loads
-  by name, and references only in gitignored files. Tests and stories count as
-  entry points, so code only they reach is never reported.
+  by name or a tool loads by path, and references only in gitignored files. A
+  file `skills sync` generated, such as a skill's `.workflow.js`, is never
+  deleted; dead-code lists it as known without an entry. Tests and stories count
+  as entry points, so code only they reach is never reported.
 - **Barrel entries against definitions**: an unused export in an `index.ts`
   means the module publishes something nobody outside wants, not that the
   definition is dead. `dead-code why <barrel> <export>` tells them apart.
@@ -114,7 +122,11 @@ loads it by default, so the reviewer works from these rules. Set
 With `@euanmsm/dead-code` installed, the review's prepass runs it in place of
 raw knip. In diff mode it runs `dead-code branch --json <merge base>`, so the
 reviewer sees what the branch newly left dead in any file, with the known false
-positives already set apart. See [the built-in checks](code-review.md#prepass).
+positives already set apart. That report reads the working tree, so uncommitted
+edits count in it although the review's diff leaves them out. A finding it lists
+in a file the diff did not touch is the branch's: the verifier checks the report
+before refuting one as pre-existing. See
+[the built-in checks](code-review.md#prepass).
 
 ## Options
 

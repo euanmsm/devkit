@@ -72,7 +72,8 @@ export const BUILT_IN_TOOLS = {
       key: 'deadCode',
       label:
         'Dead-code report (JSON): new findings, with known false positives set apart and explained',
-      command: 'npx --no-install dead-code --json',
+      // After `--`, a file named `init` or `branch` is still a path.
+      command: 'npx --no-install dead-code --json --',
       appendFiles: true,
       baseCommand: 'npx --no-install dead-code branch --json',
       json: true,
@@ -135,7 +136,7 @@ export const BUILT_IN_LENSES = {
     skill: null,
     route: { always: 'code' },
     judges:
-      'Unreachable branches, unused parameters, exports with no caller, stale re-exports. The generated import graph lists every export with no call site outside its own file — a lead, never a verdict. When a dead-code report is among the tool reports, its `known` list holds the repository’s recorded false positives, each with its reason: never report one of them. In diff mode its `findings` are only what this branch newly left dead, and they may sit in files the branch did not touch: those are still in scope, because the branch is what made them dead. In target mode they are limited to the targets. A raw knip report, when there is one instead, is limited to the files under review. Either way a finding is evidence, not a verdict: knip misses code reached by name or by a framework convention, so trace it and search for the name before reporting it.',
+      'Unreachable branches, unused parameters, exports with no caller, stale re-exports. The generated import graph lists every export with no call site outside its own file — a lead, never a verdict. When a dead-code report is among the tool reports, its `known` list holds the repository’s recorded false positives, each with its reason: never report one of them. In diff mode its `findings` are only what this branch newly left dead, and they may sit in files the branch did not touch: those are still in scope, because the branch is what made them dead, so cite the change that removed its last importer (file and patch line) as evidence. That report compares the fork point with the working tree, so uncommitted edits count in it although the diff leaves them out: a finding only an uncommitted edit caused is not the branch’s. In target mode they are limited to the targets. A generated file a tool loads by its path, such as a `.workflow.js` beside a skill, is not dead however the report lists it. A raw knip report, when there is one instead, is limited to the files under review. Either way a finding is evidence, not a verdict: knip misses code reached by name or by a framework convention, so trace it and search for the name before reporting it.',
   },
   database: {
     skill: null,

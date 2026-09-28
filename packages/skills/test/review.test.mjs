@@ -13,10 +13,12 @@ import { describe, test } from 'node:test';
 
 import { check } from '../src/check.mjs';
 import { prepass } from '../src/review/cli.mjs';
-import { resolveReviewConfig } from '../src/review/config.mjs';
+import {
+  installedPackages,
+  resolveReviewConfig,
+} from '../src/review/config.mjs';
 import {
   buildImportGraph,
-  extractJson,
   keepFilesUnderReview,
   runTools,
   splitPatches,
@@ -392,7 +394,7 @@ describe('resolveReviewConfig', () => {
       },
     ).prepass.tools.find((t) => t.key === 'deadCode');
 
-    assert.equal(tool.command, 'npx --no-install dead-code --json');
+    assert.equal(tool.command, 'npx --no-install dead-code --json --');
     assert.equal(tool.appendFiles, true);
     assert.equal(tool.baseCommand, 'npx --no-install dead-code branch --json');
     assert.equal(tool.json, true);
@@ -414,6 +416,67 @@ describe('resolveReviewConfig', () => {
       () => resolve(tool({ errorExitCodes: ['2'] })),
       /prepass tool "x" errorExitCodes must be a list of exit codes/,
     );
+  });
+
+  test('overriding a built-in command without its baseCommand is an error naming both', () => {
+    const withTools = (tools) =>
+      resolveReviewConfig(
+        { prepass: { tools } },
+        {
+          name: 'r',
+          skillsDir: 's',
+          source: 't',
+          installed: new Set(['@euanmsm/dead-code']),
+        },
+      ).prepass.tools.find((t) => t.key === 'deadCode');
+
+    assert.throws(
+      () => withTools([{ key: 'deadCode', command: 'dead-code --json -W a' }]),
+      /prepass tool "deadCode" sets command but not baseCommand/,
+    );
+    assert.equal(
+      withTools([
+        {
+          key: 'deadCode',
+          command: 'dead-code --json -W a',
+          baseCommand: null,
+        },
+      ]).baseCommand,
+      null,
+    );
+    assert.equal(
+      withTools([
+        {
+          key: 'deadCode',
+          command: 'dead-code --json -W a',
+          baseCommand: 'dead-code branch --json -W a',
+        },
+      ]).baseCommand,
+      'dead-code branch --json -W a',
+    );
+  });
+
+  test('finds packages declared in pnpm workspaces', () => {
+    const root = makeRepo();
+    write(root, 'package.json', '{"name":"root"}\n');
+    write(
+      root,
+      'pnpm-workspace.yaml',
+      "packages:\n  - 'apps/*'\n  - \"tools/lint\"\n  - '!apps/skip'\ncatalog:\n  - nope\n",
+    );
+    write(
+      root,
+      'apps/web/package.json',
+      '{"devDependencies":{"@euanmsm/dead-code":"*"}}\n',
+    );
+    write(root, 'tools/lint/package.json', '{"dependencies":{"eslint":"*"}}\n');
+    write(root, 'apps/skip/package.json', '{"dependencies":{"skipped":"*"}}\n');
+
+    const names = installedPackages(root);
+
+    assert.ok(names.has('@euanmsm/dead-code'));
+    assert.ok(names.has('eslint'));
+    assert.equal(names.has('skipped'), false);
   });
 
   test('the dead-code lens loads the dead-code skill when that skill is enabled', () => {
@@ -441,6 +504,8 @@ describe('resolveReviewConfig', () => {
     assert.match(judges, /`known`/);
     assert.match(judges, /never report/i);
     assert.match(judges, /files the branch did not touch/);
+    assert.match(judges, /uncommitted/);
+    assert.match(judges, /the change that removed its last importer/);
   });
 
   test('runs the default typecheck only when typescript is installed, and never fetches it', () => {
@@ -607,6 +672,41 @@ describe('the generated workflow', () => {
     });
 
     assert.match(calls[0].prompt, /- Knip report: `t\/_knip\.tmp\.json`/);
+  });
+
+  test('the verifier keeps a finding a branch-wide report lists, in a file the diff left alone', async () => {
+    const source = renderEngine(
+      ENGINE,
+      resolveReviewConfig(
+        {},
+        {
+          name: 'code-review',
+          skillsDir: '.claude/skills',
+          source: 'test',
+          installed: new Set(['@euanmsm/dead-code']),
+        },
+      ),
+    );
+    const verifier = async (toolReports) =>
+      (
+        await runWorkflow(source, {
+          ...DIFF_ARGS,
+          changedFiles: ['src/a.ts'],
+          toolReports,
+        })
+      ).calls.find((call) => call.label.startsWith('verify:')).prompt;
+
+    const withReport = await verifier({
+      deadCode: 't/_deadCode.tmp.json',
+      sentinel: 't/done.json',
+    });
+    assert.match(withReport, /`t\/_deadCode\.tmp\.json`/);
+    assert.match(withReport, /lists it under `findings`/);
+
+    assert.doesNotMatch(
+      await verifier({ sentinel: 't/done.json' }),
+      /lists it under `findings`/,
+    );
   });
 });
 
@@ -1001,16 +1101,30 @@ describe('sync with code-review', () => {
     );
   });
 
-  test('passes the review base to the prepass tools in diff mode only', async () => {
+  test('the prepass command passes --base in diff mode and leaves it out in target mode', async () => {
     const skill = (await plan(reviewRepo())).find((file) =>
       file.path.endsWith('SKILL.md'),
     ).content;
+    const line = skill
+      .split('\n')
+      .find((one) => one.startsWith('npx --no-install skills prepass tools'));
 
-    assert.match(
-      skill,
-      /prepass tools --scratch "\$SCRATCH_DIR" --files-from "\$SCRATCH_DIR\/_files\.tmp\.txt" --base "\$BASE"/,
+    // A stand-in npx prints the arguments the skill's line hands it.
+    const run = (base) =>
+      execFileSync(
+        'bash',
+        ['-c', `npx() { printf '[%s]' "$@"; }\n${base}\n${line}`],
+        { encoding: 'utf8' },
+      );
+
+    assert.equal(
+      run('SCRATCH_DIR=t'),
+      '[--no-install][skills][prepass][tools][--scratch][t][--files-from][t/_files.tmp.txt]',
     );
-    assert.match(skill, /In target mode, leave `--base` out/);
+    assert.equal(
+      run('SCRATCH_DIR=t BASE=abc123'),
+      '[--no-install][skills][prepass][tools][--scratch][t][--files-from][t/_files.tmp.txt][--base][abc123]',
+    );
   });
 
   test('the dead-code lens loads the shipped dead-code skill when both are enabled', async () => {
@@ -1510,6 +1624,120 @@ describe('prepass', () => {
     );
   });
 
+  test('prepass tools reads an empty --base as no base, and still lands the sentinel', async () => {
+    const root = makeRepo({
+      'skills.json': { skills: { 'code-review': {} } },
+      'code-review.mjs': `export default ${JSON.stringify({
+        prepass: {
+          tools: [
+            {
+              key: 'args',
+              label: 'Args',
+              command: 'printf "%s\\n" files',
+              appendFiles: true,
+              baseCommand: 'printf "%s\\n" branch',
+            },
+          ],
+        },
+      })};`,
+    });
+    write(root, 'src/a.ts', 'x\n');
+    write(root, 'tmp/list.txt', 'src/a.ts\n');
+
+    const log = console.log;
+    console.log = () => {};
+    try {
+      await prepass(
+        [
+          'tools',
+          '--scratch',
+          'tmp',
+          '--files-from',
+          'tmp/list.txt',
+          '--base',
+          '',
+        ],
+        root,
+      );
+    } finally {
+      console.log = log;
+    }
+
+    assert.equal(
+      readFileSync(join(root, 'tmp/_args.tmp.txt'), 'utf8'),
+      'files\nsrc/a.ts\n',
+    );
+    assert.ok(existsSync(join(root, 'tmp/_prepass.done.json')));
+  });
+
+  /**
+   * Runs one JSON tool through the prepass and reads back what it landed.
+   *
+   * @param command - The tool's shell command
+   * @returns The tool's sentinel entry and its report text
+   */
+  async function runJson(command) {
+    const root = makeRepo();
+    const config = resolve({
+      prepass: {
+        tools: [
+          { key: 'js', label: 'JS', command, json: true, errorExitCodes: [2] },
+        ],
+      },
+    });
+    const status = await runTools(root, config, { scratch: 'tmp', files: [] });
+
+    return {
+      entry: status.js,
+      report: readFileSync(join(root, 'tmp/_js.tmp.json'), 'utf8'),
+    };
+  }
+
+  test('a JSON tool’s report is its stdout, with stderr kept in the sentinel', async () => {
+    const { entry, report } = await runJson(
+      `echo 'knip reported errors: {"issues":[]} and {x}' >&2; echo '{"findings":[1]}'; exit 1`,
+    );
+
+    assert.equal(report, '{"findings":[1]}\n');
+    assert.deepEqual(entry, {
+      status: 'ok',
+      exitCode: 1,
+      stderr: 'knip reported errors: {"issues":[]} and {x}',
+    });
+  });
+
+  test('a JSON tool failing with a JSON report keeps the JSON as its report', async () => {
+    const { entry, report } = await runJson(
+      `echo '{"findings":[],"errors":["plugin failed"]}'; echo 'knip reported errors' >&2; exit 2`,
+    );
+
+    assert.equal(entry.status, 'failed');
+    assert.equal(entry.exitCode, 2);
+    assert.deepEqual(JSON.parse(report).errors, ['plugin failed']);
+  });
+
+  test('a JSON tool exiting non-zero with no JSON is failed, its output kept', async () => {
+    const { entry, report } = await runJson('echo "it broke"; exit 1');
+
+    assert.deepEqual(entry, { status: 'failed', exitCode: 1 });
+    assert.match(report, /it broke/);
+  });
+
+  test('npx failing to find a package it may not install is failed', async () => {
+    for (const noise of [
+      'npm error code E404\nnpm error 404 Not Found - GET https://registry.npmjs.org/dead-code',
+      'npm error could not determine executable to run',
+      'npm error npx canceled due to missing packages and no YES option: ["x@1"]',
+    ]) {
+      const { entry, report } = await runOne(
+        `printf '%s\\n' '${noise.replace(/\n/g, "' '")}' >&2; exit 1`,
+      );
+
+      assert.deepEqual(entry, { status: 'failed', exitCode: 1 }, noise);
+      assert.match(report, /npm error/);
+    }
+  });
+
   test('keepFilesUnderReview trims a knip report to the files under review', () => {
     const report = JSON.stringify({
       issues: [
@@ -1528,10 +1756,6 @@ describe('prepass', () => {
 
   test('keepFilesUnderReview leaves output that is not JSON alone', () => {
     assert.equal(keepFilesUnderReview('knip crashed', ['a']), 'knip crashed');
-  });
-
-  test('extractJson leaves output with no JSON in it alone', () => {
-    assert.equal(extractJson('no json here'), 'no json here');
   });
 
   const hasRipgrep = (() => {

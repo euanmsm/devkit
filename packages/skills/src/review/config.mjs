@@ -139,11 +139,15 @@ export function installedPackages(root) {
   const rootManifest = readManifest(join(root, 'package.json'));
   if (!rootManifest) return names;
 
-  const workspaces = Array.isArray(rootManifest.workspaces)
-    ? rootManifest.workspaces
-    : (rootManifest.workspaces?.packages ?? []);
+  const workspaces = workspacePatterns(root, rootManifest);
+  const excluded = new Set(
+    workspaces
+      .filter((pattern) => pattern.startsWith('!'))
+      .map((pattern) => join(root, pattern.slice(1))),
+  );
 
   const dirs = workspaces.flatMap((pattern) => {
+    if (pattern.startsWith('!')) return [];
     if (!pattern.endsWith('/*')) return [join(root, pattern)];
     const parent = join(root, pattern.slice(0, -2));
     return existsSync(parent)
@@ -153,7 +157,9 @@ export function installedPackages(root) {
 
   for (const manifest of [
     rootManifest,
-    ...dirs.map((dir) => readManifest(join(dir, 'package.json'))),
+    ...dirs
+      .filter((dir) => !excluded.has(dir))
+      .map((dir) => readManifest(join(dir, 'package.json'))),
   ]) {
     for (const field of ['dependencies', 'devDependencies']) {
       for (const dep of Object.keys(manifest?.[field] ?? {})) names.add(dep);
@@ -161,6 +167,36 @@ export function installedPackages(root) {
   }
 
   return names;
+}
+
+/**
+ * Reads the workspace patterns from package.json `workspaces` and pnpm-workspace.yaml.
+ *
+ * @param root - The repository root
+ * @param manifest - The root package.json
+ * @returns The patterns, a leading `!` marking an exclusion
+ */
+function workspacePatterns(root, manifest) {
+  const patterns = Array.isArray(manifest.workspaces)
+    ? [...manifest.workspaces]
+    : [...(manifest.workspaces?.packages ?? [])];
+
+  let yaml = '';
+  try {
+    yaml = readFileSync(join(root, 'pnpm-workspace.yaml'), 'utf8');
+  } catch {
+    return patterns;
+  }
+
+  // Only the `packages:` list, one quoted or bare item per line.
+  let inPackages = false;
+  for (const line of yaml.split(/\r?\n/)) {
+    if (/^\S/.test(line)) inPackages = /^packages\s*:/.test(line);
+    const item = inPackages && line.match(/^\s+-\s*(['"]?)(.+?)\1\s*$/);
+    if (item) patterns.push(item[2]);
+  }
+
+  return patterns;
 }
 
 /**
@@ -245,11 +281,18 @@ function resolvePrepass(raw = {}, installed, fail) {
   if (!Array.isArray(listed)) fail('prepass.tools must be a list');
 
   // A listed tool sharing a built-in's key keeps the built-in's behaviour.
-  const tools = listed.map((tool) =>
-    BUILT_IN_TOOLS[tool?.key]
-      ? { ...BUILT_IN_TOOLS[tool.key].tool, ...tool }
-      : tool,
-  );
+  const tools = listed.map((tool) => {
+    const builtIn = BUILT_IN_TOOLS[tool?.key]?.tool;
+    if (!builtIn) return tool;
+
+    // Diff mode would run the built-in's baseCommand, never the new command.
+    if (builtIn.baseCommand && 'command' in tool && !('baseCommand' in tool)) {
+      fail(
+        `prepass tool "${tool.key}" sets command but not baseCommand, so diff mode would still run "${builtIn.baseCommand}". Set baseCommand too, or null to run command in both modes`,
+      );
+    }
+    return { ...builtIn, ...tool };
+  });
 
   const wanted = {};
   for (const [key, builtIn] of Object.entries(BUILT_IN_TOOLS)) {

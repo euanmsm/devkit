@@ -51,7 +51,8 @@ export async function prepass(argv, root) {
     const status = await runTools(root, await reviewConfig(root), {
       scratch: need('scratch'),
       files: readFileList(root, need('files-from')),
-      base: flags.base === undefined ? null : need('base'),
+      // An empty --base is target mode's unset variable, not a mistake.
+      base: typeof flags.base === 'string' && flags.base ? flags.base : null,
     });
     console.log(JSON.stringify(status));
     return 0;
