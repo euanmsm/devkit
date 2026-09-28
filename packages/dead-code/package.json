@@ -1,6 +1,6 @@
 {
   "name": "@euanmsm/dead-code",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Finds dead code with knip, sets known false positives apart, and reports only what a branch newly left dead",
   "type": "module",
   "license": "MIT",
