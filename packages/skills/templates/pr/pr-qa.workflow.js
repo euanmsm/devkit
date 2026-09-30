@@ -115,6 +115,16 @@ const STEP = {
   },
 };
 
+/** Who runs a step in a section split into an agent half and a human half. */
+const RUNNERS = ['agent', 'human'];
+
+/** A step in a split section, which must say who runs it. */
+const SPLIT_STEP = {
+  ...STEP,
+  required: [...STEP.required, 'runner'],
+  properties: { ...STEP.properties, runner: { enum: RUNNERS } },
+};
+
 const SECTION_SCHEMA = {
   type: 'object',
   required: ['steps', 'coveredByTests', 'gaps'],
@@ -165,6 +175,15 @@ const TEXT_SCHEMA = {
   properties: { markdown: str },
 };
 
+/** A split section's draft, whose steps each say who runs them. */
+const SPLIT_SECTION_SCHEMA = {
+  ...SECTION_SCHEMA,
+  properties: {
+    ...SECTION_SCHEMA.properties,
+    steps: { type: 'array', items: SPLIT_STEP },
+  },
+};
+
 const VERDICTS_SCHEMA = {
   type: 'object',
   required: ['verdicts'],
@@ -179,6 +198,7 @@ const VERDICTS_SCHEMA = {
           verdict: { enum: ['PASS', 'FAIL', 'DELETE'] },
           findings: str,
           rewrite: { type: ['string', 'null'] },
+          runner: { enum: [...RUNNERS, null] },
         },
       },
     },
@@ -303,6 +323,26 @@ const EIGHT_CHECKS = `
 A claimed result that does not reproduce from the code is a FAIL.
 Verification is CODE-READING ONLY. Never execute a step, never start or touch
 the local stack — running the checks is the manual tester's job.`;
+
+const RUNNER_RULES = `
+- agent — an agent can do every action and check every result itself: open
+  a page, click and type, read the page's text, URL, headings and toasts, read
+  network requests and the console, run JavaScript in the page, and run SQL or
+  shell commands in a terminal. Its Expect lines are things read off the page,
+  the network log, the console or a command's output.
+- human — the step needs a person's judgement: whether it looks right, whether
+  a flow feels right, visual design and taste, a real screen reader or other
+  assistive technology, a real device.
+- A step that mixes both is two steps: the mechanical checks go in an agent
+  step, and only the judgement goes in a human step. Prefer agent whenever no
+  judgement is needed.`;
+
+const RUNNER_CHECK = `
+9. RUNNER — a unit with a \`runner\` is in a section split between an agent
+   and a person. Check it against these rules:
+${RUNNER_RULES}
+   Set \`runner\` in your verdict to the one the unit should have. A wrong
+   runner alone is not a FAIL. For a unit with no runner, set it to null.`;
 
 // =============================================================================
 // Prompt builders
@@ -558,6 +598,15 @@ blocking before if-time. Give each step the minutes a tester needs for it.`;
  */
 function humanDraftPrompt(input, key, entries, surfaces, testFiles) {
   const section = SECTIONS[key];
+  const split = section.agent
+    ? `
+
+## Who runs each step
+This section is published as two headings: ${section.agent.title}, which an
+agent runs, then ${section.title}, which a person runs. Give every step a
+\`runner\`:
+${RUNNER_RULES}`
+    : '';
 
   return `
 Draft the ${section.title.toUpperCase()} section of a Manual QA checklist —
@@ -593,7 +642,7 @@ Step 1 is ${section.firstStep}. Read the seed and env files the facts file
 lists for the real values. Each step names ${section.stepNames}. Judgement
 steps keep their framing as ${section.audience} would read it — that IS the
 instruction — with no coverage justification paragraphs. Order cheapest-signal first, blocking
-before if-time. Give each step the minutes a tester needs for it.`;
+before if-time. Give each step the minutes a tester needs for it.${split}`;
 }
 
 /**
@@ -712,6 +761,7 @@ function unitsBlock(units, withFindings) {
     id: unit.id,
     name: unit.label,
     kind: unit.kind,
+    ...(unit.runner ? { runner: unit.runner } : {}),
     ...(unit.storyFile ? { storyFile: unit.storyFile } : {}),
     ...(withFindings ? { previousFindings: unit.findings } : {}),
     body: unit.body,
@@ -746,6 +796,8 @@ or env caveat for the touched code is stated (and none invented), and nothing
 here belongs in a step (no step-specific state).`);
   }
 
+  const runnerCheck = units.some((unit) => unit.runner) ? RUNNER_CHECK : '';
+
   return `
 Verify ${units.length === 1 ? 'ONE unit' : `${units.length} units`} of a Manual QA checklist against the actual code.
 Prove each would genuinely observe what it claims. Be adversarial — assume each
@@ -763,7 +815,7 @@ ${kinds.has('boot') ? '(the boot block is one of the units below)' : input.bootM
 Read \`${CONFIG.traps}\` in full before judging.
 
 ## Checks — run all that apply, to every unit
-${EIGHT_CHECKS}
+${EIGHT_CHECKS}${runnerCheck}
 ${reduced.join('\n')}
 ${VERDICT_OUTPUT}
 
@@ -788,7 +840,7 @@ Traps: \`${CONFIG.traps}\`.
 PASS a unit only when every problem in its \`previousFindings\` is fixed from
 the code, not by assertion, and the rewrite introduces no new identifier,
 command or expected value you have not confirmed in the repo. Verification is
-CODE-READING ONLY — never run anything.
+CODE-READING ONLY — never run anything.${units.some((unit) => unit.runner) ? RUNNER_CHECK : ''}
 ${VERDICT_OUTPUT}
 
 ${unitsBlock(units, true)}`;
@@ -984,8 +1036,12 @@ async function verifyUnits(input, group, units, model = DEEP) {
         if (!verdicts.has(verdict.id)) verdicts.set(verdict.id, verdict);
       }
 
-      for (const unit of batch) {
-        const verdict = verdicts.get(unit.id);
+      for (const batchUnit of batch) {
+        const verdict = verdicts.get(batchUnit.id);
+        const unit =
+          batchUnit.runner && RUNNERS.includes(verdict?.runner)
+            ? { ...batchUnit, runner: verdict.runner }
+            : batchUnit;
 
         if (!verdict) {
           outcomes.push({
@@ -1117,9 +1173,14 @@ function chunkEntries(entries) {
  * @returns The unit
  */
 function stepUnit(kind, step, origin = kind) {
+  const split = Boolean(SECTIONS[kind]?.agent);
+
   return {
     kind: kind === 'backend' ? 'backend' : 'human',
     section: kind,
+    ...(split
+      ? { runner: RUNNERS.includes(step.runner) ? step.runner : 'human' }
+      : {}),
     label: `${origin}:${step.title.slice(0, 40)}`,
     body: `**[${step.priority}] ${step.title}**\n\n${step.body}`,
     step,
@@ -1131,9 +1192,10 @@ function stepUnit(kind, step, origin = kind) {
  *
  * @param steps - The steps to render
  * @param prefix - The section name leading each step number
+ * @param start - How many steps of the same name came before, in an earlier half
  * @returns The list markdown
  */
-function numberSteps(steps, prefix) {
+function numberSteps(steps, prefix, start = 0) {
   const ordered = [
     ...steps.filter((step) => step.priority === 'blocking'),
     ...steps.filter((step) => step.priority !== 'blocking'),
@@ -1142,7 +1204,7 @@ function numberSteps(steps, prefix) {
   return ordered
     .map(
       (step, i) =>
-        `- [ ] **[${step.priority}] ${prefix} ${i + 1} — ${step.title}**\n\n${step.body.trim()}\n`,
+        `- [ ] **[${step.priority}] ${prefix} ${start + i + 1} — ${step.title}**\n\n${step.body.trim()}\n`,
     )
     .join('\n');
 }
@@ -1152,15 +1214,54 @@ function numberSteps(steps, prefix) {
  *
  * @param steps - The section's steps
  * @param paste - Whether the tester pastes what they observed
+ * @param runs - Who runs the steps, opening the line
  * @returns The timing line
  */
-function timingLine(steps, paste) {
+function timingLine(steps, paste, runs = '') {
   const minutes = steps.reduce((sum, step) => sum + (Number(step.minutes) || 0), 0);
   const blocking = steps.filter((step) => step.priority === 'blocking').length;
   const time = minutes > 0 ? `About ${Math.max(1, Math.round(minutes))} minutes` : 'Time not estimated';
   const note = paste ? ' Paste what you observed under each step.' : '';
 
-  return `_${time}; ${blocking} of ${steps.length} steps are blocking.${note}_`;
+  const lead = runs ? `${runs}. ${time}` : time;
+
+  return `_${lead}; ${blocking} of ${steps.length} steps are blocking.${note}_`;
+}
+
+/**
+ * Renders a split section as its agent half, then its human half.
+ *
+ * Numbering runs on from one half into the next, so every step keeps a label
+ * of its own.
+ *
+ * @param section - The section, with its `agent` half
+ * @param steps - Every verified step, each with its `runner`
+ * @returns The two halves' markdown, each opening with `---`
+ */
+function splitSectionMarkdown(section, steps) {
+  const agentSteps = steps.filter((step) => step.runner === 'agent');
+  const humanSteps = steps.filter((step) => step.runner !== 'agent');
+  const note = section.agent.note
+    ? `\n\n> [!NOTE]\n${section.agent.note
+        .trim()
+        .split('\n')
+        .map((line) => `> ${line}`.trimEnd())
+        .join('\n')}`
+    : '';
+
+  const agentBody =
+    agentSteps.length > 0
+      ? `${timingLine(agentSteps, true, section.agent.runs)}${note}\n\n${numberSteps(agentSteps, section.label)}`
+      : '_No step here can be run by an agent._';
+  const humanBody =
+    humanSteps.length > 0
+      ? `${timingLine(humanSteps, false)}\n\n${numberSteps(humanSteps, section.label, agentSteps.length)}`
+      : "_Every check above can be run by an agent; nothing here needs a person's judgement._";
+
+  return [
+    `---\n\n## ${section.agent.title}\n\n${agentBody}`,
+    `---\n\n## ${section.title}\n\n${humanBody}`,
+  ];
 }
 
 /**
@@ -1220,6 +1321,7 @@ function readStep(unit) {
 
   return {
     ...unit.step,
+    ...(unit.runner ? { runner: unit.runner } : {}),
     ...(line ? { priority: line[1], title: line[2].trim() } : {}),
     body: stripTitle(unit.body.trimStart()),
   };
@@ -1476,7 +1578,7 @@ async function draftAndVerifyHuman(key) {
     {
       label: `draft:${key}`,
       phase: 'Draft and verify',
-      schema: SECTION_SCHEMA,
+      schema: SECTIONS[key].agent ? SPLIT_SECTION_SCHEMA : SECTION_SCHEMA,
       model: DEEP,
     },
   );
@@ -1622,7 +1724,9 @@ for (const key of HUMAN_KEYS.filter((k) => input.sections[k])) {
   const steps = keep(key);
   stepCount += steps.length;
 
-  if (steps.length > 0) {
+  if (section.agent && humanKeys.includes(key)) {
+    sectionsMd.push(...splitSectionMarkdown(section, steps));
+  } else if (steps.length > 0) {
     sectionsMd.push(
       `---\n\n## ${section.title}\n\n${timingLine(steps, false)}\n\n${numberSteps(steps, section.label)}`,
     );

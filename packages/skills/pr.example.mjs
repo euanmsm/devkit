@@ -38,6 +38,10 @@ export default {
       firstStep: 'signing in as the one seeded account that reaches every page',
       stepNames: 'the page and route',
       coveredBy: 'a Playwright spec',
+      // Optional: splits the section in two. Steps an agent can run with
+      // Claude in Chrome go under this heading; only steps that need a
+      // person's judgement stay under the title above.
+      // agent: { title: 'Agent-Runnable Frontend Checks' },
     },
   },
 

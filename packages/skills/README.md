@@ -195,8 +195,10 @@ once, when the repository has none; and, with `qaGate`,
 
 `.devkit/pr.mjs` names the repository's **layers** — path patterns, each
 belonging to a checklist section — and its **human sections**, such as Frontend
-or TUI, beside the built-in backend section. Everything else has a default: the
-boot commands, who acts in the system, the cross-cutting questions every
+or TUI, beside the built-in backend section. A human section's `agent` option
+splits it in two: steps Claude in Chrome can run under one heading, and only
+what needs a person's judgement under the other. Everything else has a default:
+the boot commands, who acts in the system, the cross-cutting questions every
 behaviour is checked against, the Local CI boxes, and the wording of each prompt
 passage that depends on the repository. Start from
 [`pr.example.mjs`](pr.example.mjs); [docs/pr.md](docs/pr.md) has every key.

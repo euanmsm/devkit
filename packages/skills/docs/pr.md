@@ -33,7 +33,9 @@ skill is called `pr` unless the `name` option says otherwise; this page writes
 - **Section** — one part of the checklist. Every repository has the **backend**
   section: terminal checks an agent could run, such as SQL and curl. A
   repository adds **human** sections for what needs a person, such as Frontend
-  (a browser) or TUI (a terminal UI).
+  (a browser) or TUI (a terminal UI). A human section can be **split**: steps an
+  agent can run in a browser go under one heading, and only the steps that need
+  a person's judgement stay under the other.
 - **Layer** — a group of paths, such as migrations or API routes. Each layer
   belongs to one section; a changed file in that layer switches the section on.
 - **Entry** — one behaviour the branch changes, found by the inventory. Every
@@ -131,11 +133,10 @@ its claims, one human section, the Storybook items, and the boot block on its
 own. Before a group starts, the workflow logs how many units it has and how many
 checkers it will use. Round 1 hands each checker up to 8 units with the full
 checks. The checker answers with a verdict per unit id: `PASS`, `FAIL` with a
-rewrite in the same shape, or `DELETE` when there is no accurate version. Rounds
-2 to 4 take only the units that failed, batch them again up to 8 at a time, and
-use a narrower prompt: is every problem the last round found fixed, and is
-nothing new unconfirmed? Storybook items are checked on Sonnet; the rest on
-Opus.
+rewrite in the same shape, or `DELETE` when there is no accurate version. Round
+2 takes only the units that failed, batch them again up to 8 at a time, and use
+a narrower prompt: is every problem the last round found fixed, and is nothing
+new unconfirmed? Storybook items are checked on Sonnet; the rest on Opus.
 
 A unit's fate is one of:
 
@@ -163,6 +164,30 @@ checklist is laid out as: the boot block, the backend section, each human
 section, Storybook items, how to stop the stack, the gaps, and the Local CI
 boxes. Each section opens with a timing line built from the drafters' minute
 estimates.
+
+#### Split sections
+
+A human section with an `agent` half is still drafted and verified as one
+section, but it is published under two headings. The drafter marks each step
+`agent` or `human`:
+
+- **agent** — every action and result is something an agent can do and read for
+  itself. That means opening pages, clicking and typing, reading the page, its
+  toasts and URL, and reading network requests and the console. It also covers
+  running JavaScript in the page, and SQL or shell commands.
+- **human** — the step needs a person's judgement: how it looks, how a flow
+  feels, a real screen reader or device.
+
+A step that needs both is split into two steps. The checker also checks each
+step's runner, and it can move a step to the other half without failing it. A
+step that comes back with no runner stays with the person.
+
+The agent half comes first, with a timing line that opens with its `runs` text
+(`_Claude in Chrome runs these. About 40 minutes; 14 of 16 steps are blocking. Paste what you observed under each step._`),
+and then its `note`, when one is given, as a `> [!NOTE]` block. The human half
+follows. Numbering runs on across the two headings, so with 14 agent steps the
+first human step is `Frontend 15`. When one half has no steps, it says so in a
+line rather than disappearing.
 
 ### 3. Publishing — `npx --no-install skills pr publish --result <file> --base <branch> --head <sha> [--set-base]`
 
@@ -306,6 +331,18 @@ section. Every human section needs a layer pointing at it.
 | `firstStep`      | getting to the product as one seeded user               | What step 1 of the section does                                 |
 | `stepNames`      | where it happens and how to get there                   | What every step must name                                       |
 | `coveredBy`      | `an end-to-end test`                                    | The automated tests that make a step `if-time`                  |
+| `agent`          | none                                                    | Splits the section in two, below                                |
+
+`agent` is an object:
+
+| Field   | Default                       | What it is                                                                               |
+| ------- | ----------------------------- | ---------------------------------------------------------------------------------------- |
+| `title` | required                      | The agent half's heading, e.g. `Agent-Runnable Frontend Checks`                          |
+| `runs`  | `Claude in Chrome runs these` | Opens the agent half's timing line                                                       |
+| `note`  | none                          | Shown as a `> [!NOTE]` under that line: how an agent runs these steps in this repository |
+
+With `agent` set, `title` names the human half, e.g. `Human UI / UX Checks`.
+[Split sections](#split-sections) covers how steps are divided.
 
 The backend section's fields are `title`, `label`, `tools` (what its checks may
 use), `scope` (its inventory scope) and `gapExamples` (why an entry may be out

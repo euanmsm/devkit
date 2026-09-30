@@ -136,7 +136,11 @@ Give the PR URL, and say:
 {{/qaGate}}{{^qaGate}}- **There is no reset gate** in this repository, so the tester has to notice a
   stale commit stamp on the checklist themselves.
 {{/qaGate}}
-## Edge cases
+{{#splitSections}}## Who runs the checklist
+
+{{splitSections}}
+
+{{/splitSections}}## Edge cases
 
 - **Merge conflicts with the base**: warn the user, but carry on. The PR can
   still be opened.

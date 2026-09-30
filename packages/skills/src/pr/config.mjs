@@ -18,6 +18,7 @@ import {
   unknownKeys,
 } from '../review/config.mjs';
 import {
+  AGENT_HALF_DEFAULTS,
   BACKEND_SECTION,
   BUILT_IN_DIMENSIONS,
   DEFAULT_EXPERIMENTS,
@@ -210,18 +211,36 @@ function resolveSections(raw = {}, fail) {
       continue;
     }
 
-    unknownKeys(value, Object.keys(HUMAN_SECTION_DEFAULTS), where, fail);
-    checkStrings(value, where, fail);
-    if (!value.title) fail(`${where} needs a title`);
+    const { agent, ...fields } = value;
+    unknownKeys(fields, Object.keys(HUMAN_SECTION_DEFAULTS), where, fail);
+    checkStrings(fields, where, fail);
+    if (!fields.title) fail(`${where} needs a title`);
 
     sections[key] = {
       ...HUMAN_SECTION_DEFAULTS,
       label: key.charAt(0).toUpperCase() + key.slice(1),
-      ...value,
+      ...fields,
+      agent: resolveAgentHalf(agent, `${where}.agent`, fail),
     };
   }
 
   return sections;
+}
+
+/**
+ * Resolves the agent-runnable half of a human section.
+ *
+ * @param raw - The section's `agent`, or undefined when it has none
+ * @param where - Its location, for the message
+ * @param fail - Throws with the config's path
+ * @returns The half with its defaults, or null when the section is not split
+ */
+function resolveAgentHalf(raw, where, fail) {
+  if (raw === undefined) return null;
+  unknownKeys(raw, Object.keys(AGENT_HALF_DEFAULTS), where, fail);
+  checkStrings(raw, where, fail);
+  if (!raw.title) fail(`${where} needs a title`);
+  return { ...AGENT_HALF_DEFAULTS, ...raw };
 }
 
 /**

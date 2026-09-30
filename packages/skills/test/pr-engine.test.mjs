@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import webapp from './fixtures/pr/webapp.mjs';
 import {
   prArgs,
   prReplies,
@@ -692,6 +693,127 @@ describe('pr workflow — the assembled checklist', () => {
       (e) => e.id,
     );
     assert.ok(covered.includes('aud-1'));
+  });
+});
+
+describe('pr workflow — a section split between an agent and a person', () => {
+  const split = (agent) => ({
+    sections: {
+      ...webapp.sections,
+      frontend: {
+        ...webapp.sections.frontend,
+        title: 'Human UI / UX Checks',
+        agent: { title: 'Agent-Runnable Frontend Checks', ...agent },
+      },
+    },
+  });
+
+  it('writes the agent half, then the human half, numbering on from one to the next', async () => {
+    const source = await prWorkflow(
+      'webapp',
+      split({ note: 'Console snippets run through `javascript_tool`.' }),
+    );
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }, { storyCount: 1 }),
+      {
+        reply: prReplies({
+          human: 3,
+          runner: (entry) => (entry.id === 'frontend-2' ? 'human' : 'agent'),
+        }),
+      },
+    );
+    const text = result.checklist;
+
+    const order = [
+      '## Agent-Runnable Backend Checks',
+      '## Agent-Runnable Frontend Checks',
+      '## Human UI / UX Checks',
+      '## Storybook Review Checks',
+    ].map((part) => text.indexOf(part));
+    assert.ok(
+      order.every((index) => index !== -1),
+      String(order),
+    );
+    assert.deepEqual(
+      order,
+      [...order].sort((a, b) => a - b),
+    );
+
+    assert.match(
+      text,
+      /## Agent-Runnable Frontend Checks\n\n_Claude in Chrome runs these\. About 6 minutes; 1 of 2 steps are blocking\. Paste what you observed under each step\._\n\n> \[!NOTE\]\n> Console snippets run through `javascript_tool`\.\n\n- \[ \] \*\*\[blocking\] Frontend 1 — See frontend-1\*\*/,
+    );
+    assert.match(text, /\*\*\[if-time\] Frontend 2 — See frontend-3\*\*/);
+    assert.match(
+      text,
+      /## Human UI \/ UX Checks\n\n_About 3 minutes; 0 of 1 steps are blocking\._\n\n- \[ \] \*\*\[if-time\] Frontend 3 — See frontend-2\*\*/,
+    );
+
+    assert.match(find(calls, 'draft:frontend').prompt, /## Who runs each step/);
+    assert.doesNotMatch(find(calls, 'draft:backend').prompt, /Who runs/);
+    assert.match(find(calls, 'verify:frontend').prompt, /9\. RUNNER/);
+    assert.deepEqual(
+      promptUnits(find(calls, 'verify:frontend').prompt).map((u) => u.runner),
+      ['agent', 'human', 'agent'],
+    );
+    assert.equal(result.stats.steps, 7);
+  });
+
+  it('moves a step to the half its checker names', async () => {
+    const source = await prWorkflow('webapp', split());
+    const { result } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      {
+        reply: prReplies({
+          runner: () => 'agent',
+          verify: (label, unit) => ({
+            verdict: 'PASS',
+            findings: 'holds',
+            ...(unit.body.includes('frontend-2') ? { runner: 'human' } : {}),
+          }),
+        }),
+      },
+    );
+
+    assert.match(
+      result.checklist,
+      /## Human UI \/ UX Checks\n\n_About 3 minutes; 0 of 1 steps are blocking\._\n\n- \[ \] \*\*\[if-time\] Frontend 2 — See frontend-2\*\*/,
+    );
+    assert.doesNotMatch(result.checklist, /> \[!NOTE\]/);
+  });
+
+  it('says so when either half is empty, and treats a step with no runner as a person’s', async () => {
+    const source = await prWorkflow(
+      'webapp',
+      split({ runs: 'An agent runs these' }),
+    );
+
+    const allAgent = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      { reply: prReplies({ runner: () => 'agent' }) },
+    );
+    assert.match(
+      allAgent.result.checklist,
+      /_An agent runs these\. About 6 minutes;/,
+    );
+    assert.match(
+      allAgent.result.checklist,
+      /## Human UI \/ UX Checks\n\n_Every check above can be run by an agent; nothing here needs a person's judgement\._/,
+    );
+
+    const noRunner = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      { reply: prReplies() },
+    );
+    assert.match(
+      noRunner.result.checklist,
+      /## Agent-Runnable Frontend Checks\n\n_No step here can be run by an agent\._/,
+    );
+    assert.match(noRunner.result.checklist, /Frontend 1 — See frontend-1/);
   });
 });
 
