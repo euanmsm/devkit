@@ -102,6 +102,36 @@ describe('dead-code — typecheck', () => {
   });
 });
 
+describe('reading-order — output folder', () => {
+  const path = '.claude/skills/reading-order/SKILL.md';
+
+  it('writes into tmp by default, or the folder given without its trailing slash', async () => {
+    const plain = await generated({ 'reading-order': {} }, path);
+    assert.match(plain, /`tmp\/<branch>\/reading-order\.tmp\.md`/);
+
+    const named = await generated(
+      { 'reading-order': { outputDir: '.scratch/review/' } },
+      path,
+    );
+    assert.match(
+      named,
+      /`\.scratch\/review\/<branch>\/reading-order\.tmp\.md`/,
+    );
+  });
+
+  it('rejects a folder outside the repository', async () => {
+    for (const outputDir of ['/tmp', '../tmp', 'a/../../b', 'my notes']) {
+      const root = makeRepo({
+        'skills.json': { skills: { 'reading-order': { outputDir } } },
+      });
+      await assert.rejects(
+        () => sync(root),
+        /Option "outputDir" for skill "reading-order".*must be a folder inside the repository/,
+      );
+    }
+  });
+});
+
 describe('pr — skill name', () => {
   it('writes the skill under its name and uses it everywhere', async () => {
     const root = prRepo('sales', {

@@ -17,6 +17,7 @@ Full documentation — exactly how each skill works and every option it takes:
 - [code-review](docs/code-review.md)
 - [dead-code](docs/dead-code.md)
 - [pr](docs/pr.md)
+- [reading-order](docs/reading-order.md)
 
 ## Installing
 
@@ -73,6 +74,7 @@ are never reported as edited. Without it, add the generated paths to
 | `code-review`          | Deep multi-agent review of a branch or named files, every finding checked by a second agent trying to disprove it                 |
 | `dead-code`            | Finds, verifies and removes dead code with [`@euanmsm/dead-code`](../dead-code), keeping recorded false positives out. Needs it   |
 | `pr`                   | Opens the PR with a summary and a Manual QA checklist whose every step is checked against the code                                |
+| `reading-order`        | Writes an ordered list of links to the branch's changed files, so a reviewer reads them in the order that explains the change     |
 
 `clean-comments` also writes the `comments-specialist` agent it hands each batch
 of files to.
@@ -203,6 +205,12 @@ The skill's shell work runs from the package:
 `npx --no-install skills pr prepass` gathers the branch's facts before the
 workflow, and `npx --no-install skills pr publish` opens the PR and posts the
 checklist after it.
+
+### `reading-order`
+
+One option, `outputDir` (default `tmp`): the folder the reading order is written
+in, as `<outputDir>/<branch>/reading-order.tmp.md`. Keep that folder
+git-ignored. [docs/reading-order.md](docs/reading-order.md) covers the rest.
 
 ## Commands
 
