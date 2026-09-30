@@ -118,7 +118,8 @@ export function promptUnits(prompt) {
  *
  * The scenario sets the `visible` sections, the `backend` and `human` entry
  * counts over `files`, the `claims` and `failClaims` ids, a `verify` verdict
- * function, `badFormat` human steps, and the number of `stories`.
+ * function, `badFormat` human steps, the number of `stories`, and a `runner`
+ * function naming who runs each human step, as `(entry, i) => 'agent' | 'human'`.
  *
  * `verify` is asked about one unit at a time, as `verify:<unit name>` with
  * `:r<round>` after the first round, and returns `{ verdict, findings,
@@ -138,6 +139,7 @@ export function prReplies(scenario = {}) {
     verify = () => ({ verdict: 'PASS', findings: 'holds' }),
     badFormat = false,
     stories = 1,
+    runner = null,
   } = scenario;
 
   return (label, prompt) => {
@@ -253,6 +255,7 @@ export function prReplies(scenario = {}) {
           body: badFormat ? 'Open the page and look.' : GOOD_HUMAN,
           coversEntryIds: [entry.id],
           minutes: 3,
+          ...(runner ? { runner: runner(entry, i) } : {}),
         })),
         coveredByTests: [],
         gaps: [{ gap: 'screen reader output', why: 'needs a screen reader' }],

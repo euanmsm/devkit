@@ -37,6 +37,17 @@ states, and interactions.`,
   coveredBy: 'an end-to-end test',
 };
 
+/**
+ * The fields of a human section's `agent` half, with their defaults. A section
+ * with one is written as two headings: steps an agent can run, then the ones
+ * that need a person's judgement.
+ */
+export const AGENT_HALF_DEFAULTS = {
+  title: '',
+  runs: 'Claude in Chrome runs these',
+  note: '',
+};
+
 /** The cross-cutting questions every inventory asks, by name. */
 export const BUILT_IN_DIMENSIONS = {
   authorisation: 'which callers must be REJECTED, not just allowed',

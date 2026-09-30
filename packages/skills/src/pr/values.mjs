@@ -89,7 +89,7 @@ export function prValues(pr, options, shared) {
   const skillDir = `${shared.skillsDir}/${pr.name}`;
   const humanTitles = Object.entries(pr.sections)
     .filter(([key]) => key !== 'backend')
-    .map(([, section]) => section.title);
+    .flatMap(([, section]) => sectionTitles(section));
 
   const gate = qaGateSettings(options.qaGate);
 
@@ -127,7 +127,35 @@ export function prValues(pr, options, shared) {
         : `The base is always \`${shared.baseBranch}\`.`,
     stackBase: pr.base === 'stack',
     layerTable: layerTable(pr),
+    splitSections: splitSectionsText(pr),
   };
+}
+
+/**
+ * Explains who runs each half of the checklist's split sections.
+ *
+ * @param pr - The resolved PR config
+ * @returns The paragraph, empty when no section is split
+ */
+function splitSectionsText(pr) {
+  const split = Object.values(pr.sections).filter((section) => section.agent);
+  if (split.length === 0) return '';
+
+  const halves = split
+    .map((section) => `**${section.agent.title}** before **${section.title}**`)
+    .join(', and ');
+
+  return `The checklist writes ${halves}. ${pr.sections.backend.title} and each agent half are for an agent to run, the browser steps with Claude in Chrome, pasting what it observed under each step. Each human half holds only what needs a person's judgement: how it looks, how a flow feels, a real screen reader. The workflow decides which half a step belongs in, and its checker confirms it; that is still only code reading, and nothing is run while the checklist is written.`;
+}
+
+/**
+ * Names the headings a section is written under.
+ *
+ * @param section - A resolved section
+ * @returns Its agent half's title first when it is split, then its own title
+ */
+function sectionTitles(section) {
+  return section.agent ? [section.agent.title, section.title] : [section.title];
 }
 
 /**
@@ -146,7 +174,8 @@ function layerTable(pr) {
         ),
       )
       .join(', ');
-    return `| ${layer.title} | ${pr.sections[layer.section].title} | ${paths} |`;
+    const titles = sectionTitles(pr.sections[layer.section]).join(' + ');
+    return `| ${layer.title} | ${titles} | ${paths} |`;
   });
 
   return ['| Layer | Section | Paths |', '| --- | --- | --- |', ...rows].join(

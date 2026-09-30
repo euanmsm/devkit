@@ -20,6 +20,7 @@ import {
   DEFAULT_VERIFY,
 } from '../src/pr/defaults.mjs';
 import { sync } from '../src/sync.mjs';
+import webapp from './fixtures/pr/webapp.mjs';
 import { FIXTURES, prRepo } from './pr-helpers.mjs';
 import { makeRepo, write } from './repo.mjs';
 
@@ -105,6 +106,36 @@ describe('pr config — defaults', () => {
       resolved.sections.frontend.audience,
       'a person using the product',
     );
+  });
+
+  it('fills an agent half’s defaults, and leaves an unsplit section with none', () => {
+    const layers = [
+      LAYER,
+      { key: 'ui', title: 'UI', paths: ['src/ui/'], section: 'frontend' },
+    ];
+    const split = resolvePrConfig(
+      minimal({
+        layers,
+        sections: {
+          frontend: {
+            title: 'Human UI / UX Checks',
+            agent: { title: 'Agent-Runnable Frontend Checks' },
+          },
+        },
+      }),
+      context,
+    );
+    assert.deepEqual(split.sections.frontend.agent, {
+      title: 'Agent-Runnable Frontend Checks',
+      runs: 'Claude in Chrome runs these',
+      note: '',
+    });
+
+    const plain = resolvePrConfig(
+      minimal({ layers, sections: { frontend: { title: 'Frontend' } } }),
+      context,
+    );
+    assert.equal(plain.sections.frontend.agent, null);
   });
 
   it('overrides the backend section field by field', () => {
@@ -242,6 +273,59 @@ describe('pr config — refusals', () => {
       /unknown key "where" in sections\.backend/,
     );
     rejects(minimal({ sections: 'nope' }), /sections must be an object/);
+  });
+
+  it('refuses a malformed agent half', () => {
+    const layers = [LAYER, { ...LAYER, key: 'ui', section: 'ui' }];
+    const ui = (agent) => ({
+      layers,
+      sections: { ui: { title: 'UI', agent } },
+    });
+    rejects(ui({}), /sections\.ui\.agent needs a title/);
+    rejects(ui('Agents'), /sections\.ui\.agent must be an object/);
+    rejects(
+      ui({ title: 'A', colour: 'red' }),
+      /unknown key "colour" in sections\.ui\.agent/,
+    );
+    rejects(
+      ui({ title: 'A', note: 3 }),
+      /sections\.ui\.agent\.note must be a string/,
+    );
+    rejects(
+      minimal({ sections: { backend: { agent: { title: 'A' } } } }),
+      /unknown key "agent" in sections\.backend/,
+    );
+  });
+
+  it('names both halves of a split section in the skill', async () => {
+    const root = prRepo('webapp', {
+      overrides: {
+        sections: {
+          ...webapp.sections,
+          frontend: {
+            ...webapp.sections.frontend,
+            title: 'Human UI / UX Checks',
+            agent: { title: 'Agent-Runnable Frontend Checks' },
+          },
+        },
+      },
+    });
+    await sync(root);
+    const skill = readFileSync(
+      join(root, '.claude/skills/pr/SKILL.md'),
+      'utf8',
+    );
+
+    assert.match(
+      skill,
+      /\(Agent-Runnable Backend Checks, Agent-Runnable Frontend Checks, Human UI \/ UX Checks, Storybook Review Checks\)/,
+    );
+    assert.match(
+      skill,
+      /\| Agent-Runnable Frontend Checks \+ Human UI \/ UX Checks \|/,
+    );
+    assert.match(skill, /## Who runs the checklist/);
+    assert.doesNotMatch(skill, /\{\{/);
   });
 
   it('refuses malformed dimensions', () => {
