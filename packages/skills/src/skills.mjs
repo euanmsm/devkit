@@ -193,4 +193,25 @@ export const SKILLS = {
     values: async (options, root, shared) =>
       prValues(await loadPrConfig(root, options, shared), options, shared),
   },
+
+  'reading-order': {
+    defaults: { outputDir: 'tmp' },
+    patterns: {
+      outputDir: {
+        test: /^(?!\/)(?!.*(^|\/)\.\.(\/|$))[^\s]+$/,
+        means:
+          'a folder inside the repository, relative to its root, with no spaces',
+      },
+    },
+    files: [
+      {
+        template: 'reading-order/SKILL.md',
+        dir: 'skillsDir',
+        path: 'reading-order/SKILL.md',
+      },
+    ],
+    values: (options) => ({
+      outputDir: options.outputDir.replace(/\/+$/, ''),
+    }),
+  },
 };

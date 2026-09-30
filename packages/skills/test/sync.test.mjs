@@ -31,6 +31,7 @@ const EVERYTHING = {
     'code-review': { githubReview: true },
     'dead-code': {},
     pr: { qaGate: true },
+    'reading-order': {},
   },
 };
 
