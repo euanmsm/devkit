@@ -15,6 +15,7 @@ does and its options:
 - [code-review.md](code-review.md)
 - [dead-code.md](dead-code.md)
 - [pr.md](pr.md)
+- [reading-order.md](reading-order.md)
 
 ## The config file
 
