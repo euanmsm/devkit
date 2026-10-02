@@ -21,6 +21,8 @@ import { runWorkflow } from './workflow.mjs';
 const labels = (calls) => calls.map((call) => call.label);
 const find = (calls, label) => calls.find((call) => call.label === label);
 const unitNames = (call) => promptUnits(call.prompt).map((unit) => unit.name);
+const gapText = (result) =>
+  result.gaps.map((g) => `- ${g.gap} — ${g.why}`).join('\n');
 
 describe('pr workflow — what runs', () => {
   it('writes only a summary when no section is touched', async () => {
@@ -100,13 +102,13 @@ describe('pr workflow — what runs', () => {
       'draft:frontend',
       'draft:boot',
       'verify:boot',
+      'verify:backend',
     ]) {
       assert.equal(find(calls, label).model, 'opus', label);
     }
-    for (const label of ['draft:summary', 'draft:storybook', 'claim:be-1']) {
+    for (const label of ['draft:summary', 'draft:storybook', 'verify:sb']) {
       assert.equal(find(calls, label).model, 'sonnet', label);
     }
-    assert.equal(find(calls, 'verify:sb').model, 'sonnet');
   });
 
   it('skips the human inventory and draft when the pack finds nothing a person could notice', async () => {
@@ -234,7 +236,16 @@ describe('pr workflow — verification', () => {
       },
     );
 
-    assert.ok(labels(calls).includes('claim:be-1'));
+    // The step checker confirms both claims; no agent checks a claim alone.
+    assert.ok(!labels(calls).some((label) => label.startsWith('claim:')));
+    assert.deepEqual(unitNames(find(calls, 'verify:backend')).slice(-2), [
+      'claim:be-1',
+      'claim:be-2',
+    ]);
+    assert.match(
+      find(calls, 'verify:backend').prompt,
+      /For a claim the checks reduce to/,
+    );
     assert.ok(labels(calls).includes('convert:be-2'));
     assert.ok(!labels(calls).includes('convert:be-1'));
     assert.deepEqual(unitNames(find(calls, 'verify:converted')), [
@@ -244,9 +255,10 @@ describe('pr workflow — verification', () => {
     assert.equal(result.stats.claimsChecked, 2);
     assert.equal(result.stats.claimsConverted, 1);
     assert.equal(find(calls, 'convert:be-2').model, 'opus');
+    assert.ok(!result.gaps.some((gap) => gap.gap.startsWith('claim:')));
   });
 
-  it('starts a conversion while other steps are still being verified', async () => {
+  it('starts a conversion while other steps are still being re-checked', async () => {
     const source = await prWorkflow('webapp');
     const slow = 'verify:backend:Check be-2';
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
@@ -326,7 +338,7 @@ describe('pr workflow — verification', () => {
 
     assert.doesNotMatch(result.checklist, /Check be-3\*\*/);
     assert.match(
-      result.checklist,
+      gapText(result),
       /backend:Check be-3 — no accurate manual version — unreachable by hand/,
     );
     assert.equal(result.stats.deleted, 1);
@@ -368,7 +380,7 @@ describe('pr workflow — verification', () => {
     assert.equal(result.stats.exhausted, 1);
     assert.doesNotMatch(result.checklist, /Backend \d — Check be-1/);
     assert.match(
-      result.checklist,
+      gapText(result),
       /- backend:Check be-1 — failed verification 2 times — still wrong/,
     );
     assert.ok(
@@ -407,10 +419,8 @@ describe('pr workflow — verification', () => {
     assert.ok(!calls.some((c) => c.label.startsWith('format:')));
   });
 
-  it('rechecks rewrites narrowly on Sonnet under its experiment', async () => {
-    const source = await prWorkflow('webapp', {
-      experiments: { narrowRounds: true },
-    });
+  it('rechecks rewrites narrowly on Sonnet', async () => {
+    const source = await prWorkflow('webapp');
     const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
       reply: prReplies({
         backend: 1,
@@ -429,53 +439,122 @@ describe('pr workflow — verification', () => {
     const second = find(calls, 'verify:backend:r2');
     assert.equal(first.model, 'opus');
     assert.equal(second.model, 'sonnet');
+    assert.doesNotMatch(second.prompt, /## Checks — run all that apply/);
     const [unit] = promptUnits(second.prompt);
     assert.equal(unit.previousFindings, 'wrong status code');
     assert.match(unit.body, /\*\*Expect:\*\* `404`/);
   });
 
-  it('rechecks rewrites narrowly on Opus without the experiment', async () => {
+  it('verifies the boot block before drafting, and drafts against the verified one', async () => {
     const source = await prWorkflow('webapp');
-    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
-      reply: prReplies({
-        backend: 1,
-        verify: (label) =>
-          label.endsWith(':r2')
-            ? { verdict: 'PASS', findings: 'fixed' }
-            : {
-                verdict: 'FAIL',
-                findings: 'wrong',
-                rewrite: '```bash\ncurl\n```\n\n**Expect:** `404`',
-              },
-      }),
-    });
+    const { calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      {
+        reply: prReplies({
+          verify: (label) =>
+            label === 'verify:boot'
+              ? {
+                  verdict: 'FAIL',
+                  findings: 'wrong script',
+                  rewrite: '```bash\nnpm run dev:all\n```',
+                }
+              : { verdict: 'PASS', findings: 'holds' },
+        }),
+      },
+    );
 
-    const second = find(calls, 'verify:backend:r2');
-    assert.equal(second.model, 'opus');
-    assert.doesNotMatch(second.prompt, /## Checks — run all that apply/);
-    assert.equal(promptUnits(second.prompt)[0].previousFindings, 'wrong');
+    const bootDone = find(calls, 'verify:boot:r2').ended;
+    for (const label of ['draft:backend', 'draft:frontend']) {
+      const draft = find(calls, label);
+      assert.ok(draft.started > bootDone, label);
+      assert.match(draft.prompt, /npm run dev:all/, label);
+      assert.match(
+        draft.prompt,
+        /Read `\.claude\/skills\/pr\/TRAPS\.md` in full before drafting/,
+        label,
+      );
+    }
+    assert.match(find(calls, 'verify:backend').prompt, /npm run dev:all/);
+  });
+
+  it('suggests the mistakes that broke three or more steps as traps', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({
+          backend: 3,
+          verify: (label) =>
+            label.endsWith(':r2')
+              ? { verdict: 'PASS', findings: 'fixed' }
+              : label.startsWith('verify:backend')
+                ? {
+                    verdict: 'FAIL',
+                    findings: '$DB_URL is not defined',
+                    rewrite: '```bash\ncurl\n```\n\n**Expect:** `200`',
+                  }
+                : { verdict: 'PASS', findings: 'holds' },
+        }),
+      },
+    );
+
+    const traps = find(calls, 'traps');
+    assert.equal(traps.model, 'sonnet');
+    assert.equal(
+      (traps.prompt.match(/\$DB_URL is not defined/g) ?? []).length,
+      4,
+    );
+    assert.deepEqual(
+      result.trapCandidates.map((trap) => trap.trap),
+      ['a repeated mistake'],
+    );
+  });
+
+  it('asks for no traps when fewer than three steps failed', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      { reply: prReplies() },
+    );
+
+    assert.ok(!find(calls, 'traps'));
+    assert.deepEqual(result.trapCandidates, []);
   });
 });
 
 describe('pr workflow — batched verification', () => {
   it('verifies a group up to eight units to a checker, logging the count first', async () => {
     const source = await prWorkflow('webapp');
+    const base = prReplies({
+      human: 5,
+      verify: (label) =>
+        /See frontend-(2|4) again$/.test(label)
+          ? {
+              verdict: 'FAIL',
+              findings: 'wrong copy',
+              rewrite: 'Open the page.\n\n**Expect:** "Done"',
+            }
+          : { verdict: 'PASS', findings: 'holds' },
+    });
+    // Two steps per entry, so one drafter hands its checkers ten units.
+    const reply = (label, prompt) => {
+      const answer = base(label, prompt);
+      if (label !== 'draft:frontend') return answer;
+      return {
+        ...answer,
+        steps: answer.steps.flatMap((step) => [
+          step,
+          { ...step, title: `${step.title} again` },
+        ]),
+      };
+    };
     const { calls, logs, result } = await runWorkflow(
       source,
       prArgs({ frontend: true }),
-      {
-        reply: prReplies({
-          human: 10,
-          verify: (label) =>
-            /See frontend-(2|9)$/.test(label)
-              ? {
-                  verdict: 'FAIL',
-                  findings: 'wrong copy',
-                  rewrite: 'Open the page.\n\n**Expect:** "Done"',
-                }
-              : { verdict: 'PASS', findings: 'holds' },
-        }),
-      },
+      { reply },
     );
 
     const checkers = calls
@@ -491,7 +570,36 @@ describe('pr workflow — batched verification', () => {
     assert.equal(result.stats.checkerAgents, 4);
     assert.match(
       result.checklist,
-      /Frontend \d+ — See frontend-9\*\*\n\nOpen the page\.\n\n\*\*Expect:\*\* "Done"/,
+      /Frontend \d+ — See frontend-4 again\*\*\n\nOpen the page\.\n\n\*\*Expect:\*\* "Done"/,
+    );
+  });
+
+  it('splits a human section across drafters, eight entries each, with one opening step', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls, result } = await runWorkflow(
+      source,
+      prArgs({ frontend: true }),
+      { reply: prReplies({ human: 10 }) },
+    );
+
+    const first = find(calls, 'draft:frontend:1');
+    const second = find(calls, 'draft:frontend:2');
+    assert.equal(promptEntries(first.prompt).length, 8);
+    assert.equal(promptEntries(second.prompt).length, 2);
+    assert.match(first.prompt, /Step 1 is signing in/);
+    assert.doesNotMatch(second.prompt, /Step 1 is/);
+    assert.match(
+      second.prompt,
+      /Another drafter writes the section's opening step/,
+    );
+    assert.match(second.prompt, /you are\nnumber 2/);
+    assert.ok(find(calls, 'verify:frontend:2'));
+    assert.equal(result.stats.humanDrafters, 2);
+    assert.equal(result.stats.steps, 10);
+    // Both drafters report the same gap; it is listed once.
+    assert.equal(
+      result.gaps.filter((gap) => gap.gap === 'screen reader output').length,
+      1,
     );
   });
 
@@ -609,7 +717,6 @@ describe('pr workflow — the assembled checklist', () => {
       '## Agent-Runnable Backend Checks',
       '## Human Browser Checks',
       "**When you're finished**, stop the stack: `npm run db:stop`",
-      '**Not covered by these checks**',
       '### Local CI',
     ].map((part) => text.indexOf(part));
     assert.ok(
@@ -635,7 +742,12 @@ describe('pr workflow — the assembled checklist', () => {
       text,
       /- \[ \] \*\*\[if-time\] Frontend 2 — See frontend-2\*\*/,
     );
-    assert.match(text, /- screen reader output — needs a screen reader/);
+    assert.match(
+      gapText(result),
+      /- screen reader output — needs a screen reader/,
+    );
+    // The published checklist holds only steps; gaps stay in the result.
+    assert.doesNotMatch(text, /Not covered|screen reader output/);
     assert.match(
       text,
       /- \[ \] Review agents \(run locally before merge\)\n- \[ \] Full test suite passes/,
@@ -888,7 +1000,7 @@ describe('pr workflow — config reaches the prompts', () => {
         call.label,
       );
     }
-    assert.match(find(calls, 'claim:be-1').prompt, /Never run the test/);
+    assert.match(find(calls, 'verify:backend').prompt, /Never run the test/);
   });
 });
 
@@ -951,7 +1063,7 @@ describe('pr workflow — edges', () => {
     );
 
     assert.match(
-      result.checklist,
+      gapText(result),
       /- a rejected caller \(src\/service\/file0\.ts:99\) — no checklist section drafts it, since the backend section is off/,
     );
     assert.ok(
@@ -990,7 +1102,7 @@ describe('pr workflow — edges', () => {
     assert.equal(result.stats.unverified, 1);
     assert.doesNotMatch(result.checklist, /Backend \d — Check be-1/);
     assert.match(
-      result.checklist,
+      gapText(result),
       /- backend:Check be-1 — never verified — the checker gave no verdict for it/,
     );
     assert.ok(
@@ -1014,7 +1126,7 @@ describe('pr workflow — edges', () => {
     ]);
     assert.doesNotMatch(result.checklist, /## Human Browser Checks/);
     assert.match(
-      result.checklist,
+      gapText(result),
       /- frontend:See frontend-2 — never verified — the checker returned nothing/,
     );
   });
@@ -1030,7 +1142,7 @@ describe('pr workflow — edges', () => {
     });
 
     assert.match(
-      result.checklist,
+      gapText(result),
       /- src\/ui\/Orphan\.tsx — a changed file no surface could be traced to/,
     );
   });
@@ -1138,7 +1250,7 @@ describe('pr workflow — edges', () => {
 
     assert.doesNotMatch(result.checklist, /## Human Browser Checks/);
     assert.match(
-      result.checklist,
+      gapText(result),
       /frontend:See frontend-1 — no accurate manual version/,
     );
   });

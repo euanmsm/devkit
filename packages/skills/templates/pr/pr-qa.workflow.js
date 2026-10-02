@@ -30,7 +30,10 @@ const BACKEND = SECTIONS.backend;
 const HUMAN_KEYS = Object.keys(SECTIONS).filter((key) => key !== 'backend');
 const PROMPTS = CONFIG.prompts;
 
-/** Opus for the work that decides what the checklist covers, Sonnet for narrow checks. */
+/**
+ * Opus for the work that decides what the checklist covers, Sonnet for narrow
+ * checks, including every re-check after the first round.
+ */
 const DEEP = 'opus';
 const LIGHT = 'sonnet';
 
@@ -40,8 +43,11 @@ const MAX_VERIFY_ROUNDS = 2;
 /** Units one checker verifies at once, the same cap code-review gives its verifiers. */
 const PER_VERIFIER_CAP = 8;
 
-/** Backend entries per drafting agent. */
-const BACKEND_CHUNK = 8;
+/** Inventory entries per drafting agent, in every section. */
+const DRAFT_CHUNK = 8;
+
+/** Steps one mistake must break before it is suggested as a trap. */
+const TRAP_MIN_UNITS = 3;
 
 // =============================================================================
 // Output shapes
@@ -205,10 +211,19 @@ const VERDICTS_SCHEMA = {
   },
 };
 
-const CLAIM_SCHEMA = {
+const TRAPS_SCHEMA = {
   type: 'object',
-  required: ['holds', 'evidence'],
-  properties: { holds: { type: 'boolean' }, evidence: str },
+  required: ['traps'],
+  properties: {
+    traps: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['trap', 'why', 'instead', 'units'],
+        properties: { trap: str, why: str, instead: str, units: { type: 'number' } },
+      },
+    },
+  },
 };
 
 // =============================================================================
@@ -299,6 +314,30 @@ function bootVariableNames(needsBackend) {
   return BOOT_VARIABLES.filter((variable) => needsBackend || !variable.backendOnly)
     .map((variable) => `$${variable.name}`)
     .join(', ');
+}
+
+/**
+ * Gives a drafter the verified boot block and the traps file, so a step uses
+ * what the environment really defines instead of guessing at it.
+ *
+ * @param input - Workflow args plus derived paths, with the verified `bootMarkdown`
+ * @param needsBackend - Whether the checklist has a backend section
+ * @returns The prompt fragment
+ */
+function draftEnvironment(input, needsBackend) {
+  return `
+## Boot block — already run before every section
+${input.bootMarkdown || '(none)'}
+
+It defines ${bootVariableNames(needsBackend)}. Use ONLY the variables, helpers,
+ports and commands it defines, exactly as it writes them — never a variant,
+never a shell helper of your own wrapping them. Anything else a step needs is
+defined inline in that step's own Setup, never in an earlier step, so every
+step runs on its own.
+
+## Known traps
+Read \`${CONFIG.traps}\` in full before drafting. Every step is checked against
+it, and a step that falls into a listed trap is sent back.`;
 }
 
 const EIGHT_CHECKS = `
@@ -580,10 +619,10 @@ out of reach — e.g. ${BACKEND.gapExamples}). Never silently drop one.
 
 ## Step shape
 ${STEP_FORMAT}
+${draftEnvironment(input, true)}
 
-Assume the boot block (written separately) has the stack up and has derived
-${bootVariableNames(true)}. Order steps cheapest-and-highest-signal first,
-blocking before if-time. Give each step the minutes a tester needs for it.`;
+Order steps cheapest-and-highest-signal first, blocking before if-time. Give
+each step the minutes a tester needs for it.`;
 }
 
 /**
@@ -594,10 +633,21 @@ blocking before if-time. Give each step the minutes a tester needs for it.`;
  * @param entries - The visible inventory entries for this section
  * @param surfaces - The section's surfaces
  * @param testFiles - The test files found by the explorer
+ * @param group - This drafter's position, as `{ index, count }`
  * @returns The prompt
  */
-function humanDraftPrompt(input, key, entries, surfaces, testFiles) {
+function humanDraftPrompt(input, key, entries, surfaces, testFiles, group) {
   const section = SECTIONS[key];
+  const opening =
+    group.index === 0
+      ? `Step 1 is ${section.firstStep}.`
+      : `Another drafter writes the section's opening step (${section.firstStep}); assume the tester has done it, and do not repeat it.`;
+  const shared =
+    group.count > 1
+      ? `\nThis section's entries are split across ${group.count} drafters; you are
+number ${group.index + 1}. Cover ONLY the entries below — the others are
+covered elsewhere.\n`
+      : '';
   const split = section.agent
     ? `
 
@@ -612,7 +662,7 @@ ${RUNNER_RULES}`
 Draft the ${section.title.toUpperCase()} section of a Manual QA checklist —
 everything that needs a person at ${section.where}.
 ${packRule(input)}
-
+${shared}
 ## Coverage rule
 This section covers EVERY change ${section.audience} could notice on the
 branch, with NO automated-test filter. A person uses the product before
@@ -637,8 +687,9 @@ a coveredByTests resolution in this section, and never silently dropped.
 
 ## Step shape
 ${STEP_FORMAT}
+${draftEnvironment(input, Boolean(input.sections.backend))}
 
-Step 1 is ${section.firstStep}. Read the seed and env files the facts file
+${opening} Read the seed and env files the facts file
 lists for the real values. Each step names ${section.stepNames}. Judgement
 steps keep their framing as ${section.audience} would read it — that IS the
 instruction — with no coverage justification paragraphs. Order cheapest-signal first, blocking
@@ -788,6 +839,15 @@ file's \`title:\` exactly (\`storyFile\` below), every listed export exists, the
 what-changed line matches what the story actually renders, and the format holds
 (title + exports + one line, nothing else).`);
   }
+  if (kinds.has('claim')) {
+    reduced.push(`
+For a claim the checks reduce to one question: does an assertion in the named
+test file GENUINELY cover the inventory entry — not the same function under
+different conditions, not a sibling case? Open the file and quote the test name
+and line in findings. PASS when it does. FAIL with rewrite null when the file
+is missing, or the assertion is absent or narrower than the claim; the entry
+then gets a manual step drafted for it. Never run the test.`);
+  }
   if (kinds.has('boot')) {
     reduced.push(`
 For the boot block the checks reduce to: every command is real and in the
@@ -871,25 +931,6 @@ Return the corrected step as markdown, keeping its bold title line.`;
 }
 
 /**
- * Builds the prompt verifying one covered-by-test claim.
- *
- * @param claim - The coverage claim
- * @returns The prompt
- */
-function claimPrompt(claim) {
-  return `
-Verify one "covered by automated test" claim for a PR QA checklist.
-
-Claim: \`${claim.testFile}\` asserts: ${claim.assertion}
-Inventory entry it discharges: ${claim.entryText}
-
-Open the file. Does an assertion in it GENUINELY cover this behaviour — not
-the same function under different conditions, not a sibling case? Quote the
-test name and line as evidence. If the file is missing or the assertion is
-not there or is narrower than the claim, holds = false. Never run the test.`;
-}
-
-/**
  * Builds the prompt drafting one backend step for a failed test-coverage claim.
  *
  * @param input - Workflow args plus derived paths
@@ -909,10 +950,37 @@ Tests that exist: ${JSON.stringify(testFiles.map((test) => test.file))}
 
 ## Step shape
 ${STEP_FORMAT}
+${draftEnvironment(input, true)}
 
-Assume the boot block has the stack up with ${bootVariableNames(true)}.
 Return it as a section with exactly one step (priority: your judgment) and
 empty coveredByTests and gaps.`;
+}
+
+/**
+ * Builds the prompt turning recurring checker findings into trap candidates.
+ *
+ * @param failures - Every first-round failure, as `{ unit, findings }`
+ * @returns The prompt
+ */
+function trapsPrompt(failures) {
+  return `
+Checkers sent back these Manual QA checklist steps on one PR. Find the
+mistakes that REPEAT: one fact about this repository's environment, seed data
+or tooling that broke several steps, and that a drafter told about it up front
+would never have made.
+
+Read \`${CONFIG.traps}\` first. Skip anything it already covers.
+
+Return only facts behind at least ${TRAP_MIN_UNITS} of the steps below. For each:
+  trap      the mistake, in one line
+  why       why the obvious step fails, citing file:line where the findings do
+  instead   what a step should do instead
+  units     how many of the steps below it broke
+Return an empty list when nothing repeats — a one-off mistake is not a trap.
+Never run a command.
+
+## The failures
+${JSON.stringify(failures, null, 1)}`;
 }
 
 // =============================================================================
@@ -928,7 +996,7 @@ const LABELS = ['**Setup:**', '**Expect:**', '**If wrong:**', '**Teardown:**'];
  * @returns One line per problem, empty when the format holds
  */
 function formatProblems(unit) {
-  if (unit.kind === 'boot' || unit.kind === 'storybook') return [];
+  if (!['backend', 'human'].includes(unit.kind)) return [];
 
   const problems = [];
   const body = unit.body;
@@ -978,6 +1046,9 @@ async function fixFormat(unit) {
 /** How many checker agents verification has started, for the stats. */
 let checkerAgents = 0;
 
+/** Every step a first-round checker sent back, for the trap suggestions. */
+const firstRoundFailures = [];
+
 /**
  * Splits units into checker batches of at most `PER_VERIFIER_CAP`.
  *
@@ -995,13 +1066,16 @@ function batchUnits(units) {
 /**
  * Verifies one group of units, several to a checker, then re-checks each failed rewrite.
  *
+ * Rounds after the first only confirm a rewrite fixed what its findings named,
+ * so they always run on Sonnet.
+ *
  * @param input - Workflow args plus derived paths
  * @param group - The group's name, used in the log and the checker labels
- * @param units - The group's units: one drafter's steps, a section, the Storybook items or the boot block
- * @param model - The model for round 1
+ * @param units - The group's units: one drafter's steps and claims, the Storybook items or the boot block
+ * @param options - The `model` for round 1, and `onRound`, handed each round's settled outcomes as soon as that round ends
  * @returns One outcome per unit, in order: the final `unit`, its `fate` (pass, deleted, exhausted or unverified) and the `reason`
  */
-async function verifyUnits(input, group, units, model = DEEP) {
+async function verifyUnits(input, group, units, { model = DEEP, onRound = () => {} } = {}) {
   if (units.length === 0) return [];
 
   const outcomes = [];
@@ -1023,12 +1097,13 @@ async function verifyUnits(input, group, units, model = DEEP) {
           label: `verify:${group}${round > 1 ? `:r${round}` : ''}${batches.length > 1 ? `:b${i + 1}` : ''}`,
           phase: 'Draft and verify',
           schema: VERDICTS_SCHEMA,
-          model: round > 1 && CONFIG.experiments.narrowRounds ? LIGHT : model,
+          model: round > 1 ? LIGHT : model,
         }),
       ),
     );
 
     const failed = [];
+    const settled = [];
 
     batches.forEach((batch, i) => {
       const verdicts = new Map();
@@ -1043,8 +1118,15 @@ async function verifyUnits(input, group, units, model = DEEP) {
             ? { ...batchUnit, runner: verdict.runner }
             : batchUnit;
 
+        if (round === 1 && verdict && verdict.verdict !== 'PASS' && unit.kind !== 'claim') {
+          firstRoundFailures.push({
+            unit: unit.label,
+            findings: String(verdict.findings ?? '').slice(0, 600),
+          });
+        }
+
         if (!verdict) {
-          outcomes.push({
+          settled.push({
             unit,
             fate: 'unverified',
             reason: answers[i]
@@ -1052,17 +1134,19 @@ async function verifyUnits(input, group, units, model = DEEP) {
               : 'the checker returned nothing',
           });
         } else if (verdict.verdict === 'PASS') {
-          outcomes.push({ unit, fate: 'pass' });
+          settled.push({ unit, fate: 'pass' });
         } else if (verdict.verdict === 'DELETE' || !verdict.rewrite) {
-          outcomes.push({ unit, fate: 'deleted', reason: verdict.findings });
+          settled.push({ unit, fate: 'deleted', reason: verdict.findings });
         } else if (round === MAX_VERIFY_ROUNDS) {
-          outcomes.push({ unit, fate: 'exhausted', reason: verdict.findings });
+          settled.push({ unit, fate: 'exhausted', reason: verdict.findings });
         } else {
           failed.push({ ...unit, body: verdict.rewrite, findings: verdict.findings });
         }
       }
     });
 
+    outcomes.push(...settled);
+    onRound(settled);
     pending = await Promise.all(failed.map(fixFormat));
   }
 
@@ -1070,29 +1154,21 @@ async function verifyUnits(input, group, units, model = DEEP) {
 }
 
 /**
- * Checks one coverage claim and, when it fails, drafts its step.
+ * Drafts the backend step for a coverage claim its checker did not uphold.
  *
  * @param input - Workflow args plus derived paths
- * @param claim - The claim, with the entry text it discharges
+ * @param outcome - The claim unit's outcome, whose `reason` says why it failed
  * @param testFiles - The test files found by the explorer
- * @returns The drafted steps, empty when the claim holds
+ * @returns The drafted steps
  */
-async function checkClaim(input, claim, testFiles) {
-  const check = await agent(claimPrompt(claim), {
-    label: `claim:${claim.entryId}`,
-    phase: 'Draft and verify',
-    schema: CLAIM_SCHEMA,
-    model: LIGHT,
-  });
-
-  if (check?.holds) return [];
-
+async function convertClaim(input, outcome, testFiles) {
+  const claim = outcome.unit.claim;
   log(`Coverage claim failed: ${claim.testFile} — converting to a step`);
 
   const drafted = await agent(
     convertPrompt(
       input,
-      { ...claim, evidence: check?.evidence ?? 'claim unverifiable' },
+      { ...claim, evidence: outcome.reason ?? 'claim unverifiable' },
       testFiles,
     ),
     {
@@ -1128,10 +1204,10 @@ function dedupeEntries(entries) {
 }
 
 /**
- * Splits backend entries into drafting groups, keeping each file's entries together.
+ * Splits entries into drafting groups, keeping each file's entries together.
  *
- * @param entries - The backend entries
- * @returns Groups of at most `BACKEND_CHUNK` entries
+ * @param entries - One section's entries
+ * @returns Groups of at most `DRAFT_CHUNK` entries
  */
 function chunkEntries(entries) {
   const byFile = new Map();
@@ -1147,12 +1223,12 @@ function chunkEntries(entries) {
 
   for (const group of byFile.values()) {
     // A file whose entries would overflow the group starts a fresh one.
-    if (current.length > 0 && current.length + group.length > BACKEND_CHUNK) {
+    if (current.length > 0 && current.length + group.length > DRAFT_CHUNK) {
       chunks.push(current);
       current = [];
     }
     for (const entry of group) {
-      if (current.length === BACKEND_CHUNK) {
+      if (current.length === DRAFT_CHUNK) {
         chunks.push(current);
         current = [];
       }
@@ -1366,6 +1442,7 @@ if (touched.length === 0) {
     checklist: `_No manual checks needed — no runtime surface touched._\n\n---\n\n${localCiBlock(input.branch)}`,
     gaps: [],
     unresolved: [],
+    trapCandidates: [],
     stats: { entries: 0, steps: 0, verified: 0 },
   };
 }
@@ -1414,13 +1491,20 @@ if (!explore) throw new Error('Context-pack explorer failed — cannot proceed')
 const testFiles = explore.testFiles ?? [];
 const visibleSections = new Set(explore.visibleSections ?? []);
 
-// The boot block needs only the pack, so it drafts while the inventory runs.
+// The boot block needs only the pack, so it drafts and is verified while the
+// inventory and audit run. Every drafter then writes against the verified one.
 const bootRun = agent(bootDraftPrompt(input), {
   label: 'draft:boot',
   phase: 'Inventory',
   schema: TEXT_SCHEMA,
   model: DEEP,
-});
+}).then((boot) =>
+  boot?.markdown
+    ? verifyUnits(input, 'boot', [
+        { kind: 'boot', label: 'boot', body: boot.markdown },
+      ]).then(([outcome]) => outcome)
+    : null,
+);
 
 phase('Inventory');
 
@@ -1501,15 +1585,33 @@ function entryText(id) {
   return entry ? `${entry.behaviour} (${entry.where})` : id;
 }
 
-// Steps are verified against the boot block as drafted, as soon as it exists.
-const boot = await bootRun;
-input.bootMarkdown = boot?.markdown ?? '';
+const BOOT_WARNINGS = {
+  deleted: 'the checker found no accurate version',
+  exhausted: `it still failed after ${MAX_VERIFY_ROUNDS} rounds`,
+  unverified: 'the checker returned no verdict',
+};
+
+// Every step assumes the boot block, so one that failed is kept, flagged.
+const bootVerified = await bootRun;
+input.bootMarkdown = bootVerified?.unit.body ?? '';
+let finalBoot = input.bootMarkdown;
+if (bootVerified && bootVerified.fate !== 'pass') {
+  log(`Boot block did not pass verification (${bootVerified.fate}) — published with a warning`);
+  const why = [BOOT_WARNINGS[bootVerified.fate], oneLine(bootVerified.reason)]
+    .filter(Boolean)
+    .join(': ');
+  finalBoot = `> [!WARNING]\n> **This boot block did not pass verification** — ${why}. Check each command against the repository before relying on it.\n\n${finalBoot.trim()}`;
+}
 
 const backendEntries = entries.filter((entry) => sectionFor(entry) === 'backend');
 const backendChunks = input.sections.backend ? chunkEntries(backendEntries) : [];
 
 /**
- * Drafts one backend group, then verifies its steps and checks its claims at once.
+ * Drafts one backend group, then verifies its steps and coverage claims together.
+ *
+ * The same checkers that read the code for the steps confirm each claim. A
+ * claim they do not uphold is drafted as a step as soon as its round ends,
+ * and that step is verified with the others converted in this group.
  *
  * @param chunk - The group's entries
  * @param index - The group's position
@@ -1530,53 +1632,59 @@ async function draftAndVerifyBackend(chunk, index) {
   );
 
   const claims = (section?.coveredByTests ?? []).map((claim) => ({
-    ...claim,
-    entryText: entryText(claim.entryId),
+    kind: 'claim',
+    label: `claim:${claim.entryId}`,
+    body: `Claim: \`${claim.testFile}\` asserts: ${claim.assertion}\nInventory entry it discharges: ${entryText(claim.entryId)}`,
+    claim: { ...claim, entryText: entryText(claim.entryId) },
   }));
   const suffix = backendChunks.length > 1 ? `:${index + 1}` : '';
+  const conversions = [];
 
-  // A failed claim's step is verified with the others converted in this group.
-  const [verified, converted] = await Promise.all([
-    verifyUnits(
-      input,
-      `backend${suffix}`,
-      (section?.steps ?? []).map((step) => stepUnit('backend', step)),
-    ),
-    Promise.all(claims.map((claim) => checkClaim(input, claim, testFiles))).then(
-      (drafted) =>
-        verifyUnits(
-          input,
-          `converted${suffix}`,
-          drafted.flat().map((step) => stepUnit('backend', step, 'converted')),
-        ),
-    ),
-  ]);
+  const outcomes = await verifyUnits(
+    input,
+    `backend${suffix}`,
+    [...(section?.steps ?? []).map((step) => stepUnit('backend', step)), ...claims],
+    {
+      onRound: (settled) => {
+        for (const outcome of settled) {
+          if (outcome.unit.kind === 'claim' && outcome.fate !== 'pass') {
+            conversions.push(convertClaim(input, outcome, testFiles));
+          }
+        }
+      },
+    },
+  );
+
+  const drafted = (await Promise.all(conversions)).flat();
+  const converted = await verifyUnits(
+    input,
+    `converted${suffix}`,
+    drafted.map((step) => stepUnit('backend', step, 'converted')),
+  );
 
   return {
     section,
     claims: claims.length,
-    verified: [...verified, ...converted],
+    verified: [...outcomes.filter((o) => o.unit.kind !== 'claim'), ...converted],
     converted: converted.length,
   };
 }
 
 /**
- * Drafts one human section, then verifies its steps.
+ * Drafts one group of a human section, then verifies its steps.
  *
- * @param key - The human section key
+ * @param group - The section `key`, the group's `entries`, its `index` and the section's group `count`
  * @returns The drafted section and its verified units
  */
-async function draftAndVerifyHuman(key) {
+async function draftAndVerifyHuman({ key, entries: chunk, index, count }) {
+  const suffix = count > 1 ? `:${index + 1}` : '';
   const section = await agent(
-    humanDraftPrompt(
-      input,
-      key,
-      entries.filter((entry) => sectionFor(entry) === key),
-      surfacesByKey[key] ?? [],
-      testFiles,
-    ),
+    humanDraftPrompt(input, key, chunk, surfacesByKey[key] ?? [], testFiles, {
+      index,
+      count,
+    }),
     {
-      label: `draft:${key}`,
+      label: `draft:${key}${suffix}`,
       phase: 'Draft and verify',
       schema: SECTIONS[key].agent ? SPLIT_SECTION_SCHEMA : SECTION_SCHEMA,
       model: DEEP,
@@ -1585,7 +1693,7 @@ async function draftAndVerifyHuman(key) {
 
   const verified = await verifyUnits(
     input,
-    key,
+    `${key}${suffix}`,
     (section?.steps ?? []).map((step) => stepUnit(key, step)),
   );
 
@@ -1599,6 +1707,18 @@ const humanKeys = HUMAN_KEYS.filter(
     (visibleSections.has(key) || entries.some((entry) => sectionFor(entry) === key)),
 );
 
+// A section drafted with no entries of its own still gets one drafter.
+const humanGroups = humanKeys.flatMap((key) => {
+  const chunks = chunkEntries(entries.filter((entry) => sectionFor(entry) === key));
+  const groups = chunks.length > 0 ? chunks : [[]];
+  return groups.map((chunk, index) => ({
+    key,
+    entries: chunk,
+    index,
+    count: groups.length,
+  }));
+});
+
 // Entries only the backend section could take, when it is off.
 const undrafted = input.sections.backend ? [] : backendEntries;
 if (undrafted.length > 0) {
@@ -1606,32 +1726,37 @@ if (undrafted.length > 0) {
 }
 
 log(
-  `Drafting ${backendChunks.length} backend group(s) and ${humanKeys.length} human section(s); each group's steps are verified up to ${PER_VERIFIER_CAP} to a checker`,
+  `Drafting ${backendChunks.length} backend group(s) and ${humanGroups.length} group(s) across ${humanKeys.length} human section(s); each group's steps are verified up to ${PER_VERIFIER_CAP} to a checker`,
 );
 
-const [backendResults, humanResults, storybookVerified, bootVerified] =
-  await Promise.all([
-    Promise.all(backendChunks.map(draftAndVerifyBackend)),
-    Promise.all(humanKeys.map(draftAndVerifyHuman)),
-    storybookRun.then((drafted) =>
-      verifyUnits(
-        input,
-        'sb',
-        (drafted?.items ?? []).map((item) => ({
-          kind: 'storybook',
-          label: `sb:${item.metaTitle.slice(0, 40)}`,
-          storyFile: item.storyFile,
-          body: `**${item.metaTitle}** — ${item.exports.join(', ')}\n${item.whatChanged}`,
-        })),
-        LIGHT,
-      ),
+const [backendResults, humanResults, storybookVerified] = await Promise.all([
+  Promise.all(backendChunks.map(draftAndVerifyBackend)),
+  Promise.all(humanGroups.map(draftAndVerifyHuman)),
+  storybookRun.then((drafted) =>
+    verifyUnits(
+      input,
+      'sb',
+      (drafted?.items ?? []).map((item) => ({
+        kind: 'storybook',
+        label: `sb:${item.metaTitle.slice(0, 40)}`,
+        storyFile: item.storyFile,
+        body: `**${item.metaTitle}** — ${item.exports.join(', ')}\n${item.whatChanged}`,
+      })),
+      { model: LIGHT },
     ),
-    boot?.markdown
-      ? verifyUnits(input, 'boot', [
-          { kind: 'boot', label: 'boot', body: boot.markdown },
-        ]).then(([outcome]) => outcome)
-      : Promise.resolve(null),
-  ]);
+  ),
+]);
+
+// The repeated mistakes behind this run's failures, for the author to add to the traps file.
+const trapRun =
+  firstRoundFailures.length >= TRAP_MIN_UNITS
+    ? agent(trapsPrompt(firstRoundFailures), {
+        label: 'traps',
+        phase: 'Draft and verify',
+        schema: TRAPS_SCHEMA,
+        model: LIGHT,
+      })
+    : Promise.resolve(null);
 
 const allVerified = [
   ...backendResults.flatMap((result) => result.verified),
@@ -1663,28 +1788,16 @@ function keep(section) {
     .map((v) => readStep(v.unit));
 }
 
-const BOOT_WARNINGS = {
-  deleted: 'the checker found no accurate version',
-  exhausted: `it still failed after ${MAX_VERIFY_ROUNDS} rounds`,
-  unverified: 'the checker returned no verdict',
-};
-
-// Every step assumes the boot block, so one that failed is kept, flagged.
-let finalBoot = input.bootMarkdown;
-if (bootVerified) {
-  finalBoot = bootVerified.unit.body;
-  if (bootVerified.fate !== 'pass') {
-    log(`Boot block did not pass verification (${bootVerified.fate}) — published with a warning`);
-    const why = [BOOT_WARNINGS[bootVerified.fate], oneLine(bootVerified.reason)]
-      .filter(Boolean)
-      .join(': ');
-    finalBoot = `> [!WARNING]\n> **This boot block did not pass verification** — ${why}. Check each command against the repository before relying on it.\n\n${finalBoot.trim()}`;
-  }
-}
-
-const gaps = [
+// Drafters splitting one section can each report the same gap.
+const draftedGaps = [
   ...backendResults.flatMap((result) => result.section?.gaps ?? []),
   ...humanResults.flatMap((result) => result.section?.gaps ?? []),
+].filter(
+  (gap, i, all) => all.findIndex((g) => g.gap === gap.gap && g.why === gap.why) === i,
+);
+
+const gaps = [
+  ...draftedGaps,
   ...unresolvedSurfaces.map((file) => ({
     gap: file,
     why: 'a changed file no surface could be traced to',
@@ -1753,12 +1866,6 @@ if (CONFIG.boot.stop) {
   );
 }
 
-if (gaps.length > 0) {
-  sectionsMd.push(
-    `**Not covered by these checks**\n\n${gaps.map((g) => `- ${g.gap} — ${g.why}`).join('\n')}`,
-  );
-}
-
 sectionsMd.push(`---\n\n${localCiBlock(input.branch)}`);
 
 return {
@@ -1766,11 +1873,15 @@ return {
   checklist: sectionsMd.join('\n\n'),
   gaps,
   unresolved: [...exhausted, ...unverified].map((v) => v.unit.label),
+  trapCandidates: ((await trapRun)?.traps ?? []).filter(
+    (trap) => trap.units >= TRAP_MIN_UNITS,
+  ),
   stats: {
     entries: entries.length,
     steps: stepCount,
     storybookItems: storybookItems.length,
     backendDrafters: backendChunks.length,
+    humanDrafters: humanGroups.length,
     claimsChecked: backendResults.reduce((sum, r) => sum + r.claims, 0),
     claimsConverted: backendResults.reduce((sum, r) => sum + r.converted, 0),
     checkerAgents,

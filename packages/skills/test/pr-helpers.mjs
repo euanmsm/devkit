@@ -121,7 +121,8 @@ export function promptUnits(prompt) {
  * function, `badFormat` human steps, the number of `stories`, and a `runner`
  * function naming who runs each human step, as `(entry, i) => 'agent' | 'human'`.
  *
- * `verify` is asked about one unit at a time, as `verify:<unit name>` with
+ * A claim's checker upholds it unless its entry id is in `failClaims`. `verify`
+ * is asked about every other unit one at a time, as `verify:<unit name>` with
  * `:r<round>` after the first round, and returns `{ verdict, findings,
  * rewrite }`, or null to leave that unit out of the checker's answer.
  *
@@ -266,6 +267,19 @@ export function prReplies(scenario = {}) {
       const round = /:r(\d+)(?::b\d+)?$/.exec(label)?.[1];
       return {
         verdicts: promptUnits(prompt).flatMap((unit) => {
+          if (unit.kind === 'claim') {
+            const failed = failClaims.includes(
+              unit.name.slice('claim:'.length),
+            );
+            return [
+              {
+                id: unit.id,
+                verdict: failed ? 'FAIL' : 'PASS',
+                findings: failed ? 'no such assertion' : 'line 12',
+                rewrite: null,
+              },
+            ];
+          }
           const verdict = verify(
             `verify:${unit.name}${round ? `:r${round}` : ''}`,
             unit,
@@ -275,9 +289,18 @@ export function prReplies(scenario = {}) {
       };
     }
 
-    if (label.startsWith('claim:')) {
-      const id = label.slice('claim:'.length);
-      return { holds: !failClaims.includes(id), evidence: 'line 12' };
+    if (label === 'traps') {
+      return {
+        traps: [
+          {
+            trap: 'a repeated mistake',
+            why: 'why',
+            instead: 'do this',
+            units: 3,
+          },
+          { trap: 'a one-off', why: 'why', instead: 'do that', units: 1 },
+        ],
+      };
     }
 
     if (label.startsWith('convert:')) {

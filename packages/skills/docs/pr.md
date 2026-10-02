@@ -40,7 +40,7 @@ skill is called `pr` unless the `name` option says otherwise; this page writes
   belongs to one section; a changed file in that layer switches the section on.
 - **Entry** — one behaviour the branch changes, found by the inventory. Every
   entry ends up as a step, as a claim that an automated test already covers it,
-  or as a listed gap. None are dropped.
+  or as a gap in the result's `gaps`. None are dropped silently.
 - **Unit** — anything that gets verified: a step, the boot block, or a Storybook
   item.
 - **Checker** — one verifying agent. It is handed up to 8 units at once and
@@ -104,66 +104,83 @@ A branch touching no section gets a summary and a checklist of the line
 boxes, and nothing else runs. The boxes are there so the gate's reset still
 leaves something to tick after a push. Otherwise:
 
-| Stage           | Agents                                                                                                 | Starts when                  |
-| --------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------- |
-| Summary         | one, Sonnet                                                                                            | at once                      |
-| Surfaces        | one per touched human section: every place a person can see the change                                 | at once                      |
-| Storybook draft | one, Sonnet, when Storybook is on and the branch has stories                                           | at once                      |
-| Context pack    | one: a map of the branch every later agent reads                                                       | at once                      |
-| Boot draft      | one: how to start the stack, and the variables the sections use                                        | the pack is written          |
-| Inventory       | one for the backend, one per human section with a visible change, one for cross-cutting dimensions     | the pack is written          |
-| Audit           | two: every hunk has an entry; every dimension is explored                                              | the inventory is in          |
-| Backend drafts  | one per group of up to 8 entries, grouped by file                                                      | the audit is in              |
-| Human drafts    | one per touched human section with a visible change or a visible entry                                 | the audit is in              |
-| Verify          | one checker per 8 units of a draft; later rounds re-check only the failures, in new batches of up to 8 | **that draft is in**         |
-| Claim check     | one per claim, Sonnet                                                                                  | **that claim's draft is in** |
-| Convert         | one per failed claim; a group's converted steps are then verified together                             | **that claim fails**         |
+| Stage           | Agents                                                                                                 | Starts when                 |
+| --------------- | ------------------------------------------------------------------------------------------------------ | --------------------------- |
+| Summary         | one, Sonnet                                                                                            | at once                     |
+| Surfaces        | one per touched human section: every place a person can see the change                                 | at once                     |
+| Storybook draft | one, Sonnet, when Storybook is on and the branch has stories                                           | at once                     |
+| Context pack    | one: a map of the branch every later agent reads                                                       | at once                     |
+| Boot draft      | one: how to start the stack, and the variables the sections use; verified as soon as it is drafted     | the pack is written         |
+| Inventory       | one for the backend, one per human section with a visible change, one for cross-cutting dimensions     | the pack is written         |
+| Audit           | two: every hunk has an entry; every dimension is explored                                              | the inventory is in         |
+| Backend drafts  | one per group of up to 8 entries, grouped by file                                                      | the audit is in             |
+| Human drafts    | one per group of up to 8 entries in each touched human section, grouped by file                        | the audit and boot are in   |
+| Verify          | one checker per 8 units of a draft, claims included; later rounds re-check only the failures on Sonnet | **that draft is in**        |
+| Convert         | one per failed claim; a group's converted steps are then verified together                             | **that claim's round ends** |
+| Traps           | one, Sonnet, when 3 or more steps failed round 1                                                       | every group is verified     |
 
 The bold column is what makes it fast. Nothing waits for an unrelated agent: a
 human section is verified while the backend is still being drafted, and a failed
-claim is converted while other steps are still being verified.
+claim is converted while other steps are still being re-checked.
+
+Every drafter is given the verified boot block and told to read the traps file.
+Most first-round failures in recorded runs were the same environment mistake
+repeated across steps — a variable the boot block never defines, a rate limiter,
+mail that never reaches the local inbox — so drafting against the real boot
+block and the known traps saves a rewrite and a re-check for each of them.
 
 Before a step reaches a checker, a script checks its format — an `Expect:` line,
 labels in order, a fenced command in a terminal step, no `Teardown: none`. A
 step that fails gets a quick Sonnet fix first, so an Opus round is not spent on
 formatting.
 
-Verification works in groups: one backend drafter's steps, the conversions from
-its claims, one human section, the Storybook items, and the boot block on its
-own. Before a group starts, the workflow logs how many units it has and how many
-checkers it will use. Round 1 hands each checker up to 8 units with the full
-checks. The checker answers with a verdict per unit id: `PASS`, `FAIL` with a
-rewrite in the same shape, or `DELETE` when there is no accurate version. Round
-2 takes only the units that failed, batch them again up to 8 at a time, and use
-a narrower prompt: is every problem the last round found fixed, and is nothing
-new unconfirmed? Storybook items are checked on Sonnet; the rest on Opus.
+Verification works in groups: one backend drafter's steps and its "covered by
+test" claims, the conversions from those claims, one human drafter's steps, the
+Storybook items, and the boot block on its own. A claim is checked by the same
+checker as its group's steps, since it is already reading that code: it passes
+when the named test genuinely asserts the behaviour, and otherwise its entry is
+drafted as a step. Before a group starts, the workflow logs how many units it
+has and how many checkers it will use. Round 1 hands each checker up to 8 units
+with the full checks. The checker answers with a verdict per unit id: `PASS`,
+`FAIL` with a rewrite in the same shape, or `DELETE` when there is no accurate
+version. Round 2 takes only the units that failed, batch them again up to 8 at a
+time, and use a narrower prompt: is every problem the last round found fixed,
+and is nothing new unconfirmed? Round 2 always runs on Sonnet, as do Storybook
+items; round 1 runs on Opus.
 
 A unit's fate is one of:
 
 - **pass** — it goes in the checklist. A step's priority and title are read back
   from its verified title line, so a checker that demotes or renames a step is
   heard. Storybook items render from their verified text.
-- **deleted** — the checker found no accurate version. It is listed under "Not
-  covered by these checks" with the reason.
+- **deleted** — the checker found no accurate version. It goes in `gaps` with
+  the reason.
 - **exhausted** — still failing after two rounds.
 - **unverified** — the checker returned nothing, or its answer left the unit's
   id out.
 
-Exhausted and unverified units are left out of the steps, listed under "Not
-covered by these checks", logged apart from each other, and named in
-`unresolved` so the skill can tell you. The boot block is the exception: every
-step relies on it, so one that did not pass is published under a visible warning
-instead, and is not listed as a gap.
+Exhausted and unverified units are left out of the steps, put in `gaps`, logged
+apart from each other, and named in `unresolved` so the skill can tell you. The
+published checklist holds only steps: gaps reach the author through the skill's
+report, never the PR comment. The boot block is the exception: every step relies
+on it, so one that did not pass is published under a visible warning instead,
+and is not listed as a gap.
+
+When 3 or more steps failed round 1, a Sonnet agent reads the findings and the
+traps file and returns `trapCandidates`: each mistake that broke at least 3
+steps and the traps file does not already cover, with why it fails and what to
+write instead. Publish prints them, and the skill offers to add them to the
+traps file, so the next run's drafters avoid them.
 
 An entry that lands in no drafted section, which happens when the backend
-section is off and the entry is not visible, is listed as a gap and logged, so
+section is off and the entry is not visible, goes in `gaps` and is logged, so
 nothing is dropped silently.
 
-The workflow returns `{ summary, checklist, gaps, unresolved, stats }`. The
-checklist is laid out as: the boot block, the backend section, each human
-section, Storybook items, how to stop the stack, the gaps, and the Local CI
-boxes. Each section opens with a timing line built from the drafters' minute
-estimates.
+The workflow returns
+`{ summary, checklist, gaps, unresolved, trapCandidates, stats }`. The checklist
+is laid out as: the boot block, the backend section, each human section,
+Storybook items, how to stop the stack, and the Local CI boxes. Each section
+opens with a timing line built from the drafters' minute estimates.
 
 #### Split sections
 
@@ -498,16 +515,13 @@ switch: re-run the skill on those PRs.
 
 ## Experiments
 
-Two changes that could affect quality ship switched off, to be measured side by
-side before they become the default:
+One change that could affect quality ships switched off, to be measured side by
+side before it becomes the default:
 
 ```js
-experiments: { narrowRounds: true, dropCrossCutting: true },
+experiments: { dropCrossCutting: true },
 ```
 
-- **`narrowRounds`** — runs verify rounds after the first on Sonnet instead of
-  Opus. Those rounds always use the narrower re-check prompt; this only changes
-  the model. The two-round cap stays.
 - **`dropCrossCutting`** — removes the cross-cutting inventory agent. The
   dimensions audit asks the same questions straight afterwards, and can only add
   entries.

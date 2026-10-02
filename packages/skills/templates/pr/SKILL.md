@@ -83,7 +83,7 @@ changed behaviour, audits the inventory for what is missing, then drafts each
 section and verifies every step against the code as soon as its draft lands,
 up to eight steps to a checker. Verification only reads code; it never runs a
 step or touches the local stack. It returns
-`{ summary, checklist, gaps, unresolved, stats }`.
+`{ summary, checklist, gaps, unresolved, trapCandidates, stats }`.
 
 Wait for the completion notification. If the workflow fails, re-run it with
 `resumeFromRunId` and the same `scriptPath`; finished agents return their
@@ -107,7 +107,8 @@ open one, and writes the checklist into the Manual QA
 comment — editing the existing one, so its place in the timeline and everyone's
 notifications stay put. A checklist longer than one GitHub comment is split
 across numbered comments. It prints the PR's `url`, whether it was `created`,
-how many comment `parts` it wrote, and the `unresolved` units.
+how many comment `parts` it wrote, the `unresolved` units, and the
+`trapCandidates`.
 
 It never moves an open PR onto another base on its own. When the open PR's base
 differs from the prepass's, it prints that base as `baseMismatch`. Tell the user,
@@ -124,9 +125,16 @@ Give the PR URL, and say:
 - **The checklist arrives unticked**, and that is correct: its steps have
   never been run against this commit.
 - **Each unresolved unit**, by name. It failed verification twice, or its
-  checker gave no verdict for it, so it was left out of the steps and listed
-  under "Not covered by these checks"; shipping a step that never passed is
-  not an option.
+  checker gave no verdict for it, so it was left out of the checklist;
+  shipping a step that never passed is not an option. The checklist itself
+  holds only steps, so this report is the one place the author hears what
+  was left out.
+- **Each trap candidate**: a mistake that broke 3 or more drafted steps and
+  that [`{{traps}}`]({{trapsLink}}) does not cover yet. List them, then ask the
+  user whether to add them. On a yes, add each under the heading for its area,
+  in the file's own shape: the trap, why the obvious step fails, and what to
+  write instead. Every drafter reads that file, so each addition stops the
+  same mistake costing a rewrite on the next PR.
 - **A boot block that failed verification**, if the checklist opens with a
   warning. Every step relies on it, so it is published with the warning rather
   than dropped.
@@ -159,7 +167,7 @@ Give the PR URL, and say:
 - **Publish says the summary is empty**: the summary agent returned nothing.
   Run the skill again.
 - **A tester finds a bad step after the PR is open**: fix the step, and **add
-  the trap to [`{{traps}}`]({{trapsLink}})**. Every verifier reads that file,
+  the trap to [`{{traps}}`]({{trapsLink}})**. Every drafter and verifier reads that file,
   so updating it is part of fixing the step, not optional follow-up.
 {{#qaGate}}- **Fork PR**: the gate skips it, because a fork's token is read-only, so its
   `Manual QA` check stays pending. Post the checklist anyway and say the gate
