@@ -64,7 +64,6 @@ describe('pr config — defaults', () => {
     assert.equal(resolved.template, '.github/pull_request_template.md');
     assert.equal(resolved.storybook, false);
     assert.deepEqual(resolved.experiments, {
-      narrowRounds: false,
       dropCrossCutting: false,
     });
     assert.deepEqual(resolved.boot.variables, [
@@ -383,8 +382,8 @@ describe('pr config — refusals', () => {
       /prompts\.gating must be a string/,
     );
     rejects(
-      minimal({ experiments: { narrowRounds: 'yes' } }),
-      /experiments\.narrowRounds must be true or false/,
+      minimal({ experiments: { dropCrossCutting: 'yes' } }),
+      /experiments\.dropCrossCutting must be true or false/,
     );
     rejects(
       minimal({ experiments: { fast: true } }),

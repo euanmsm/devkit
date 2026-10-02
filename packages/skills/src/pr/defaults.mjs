@@ -106,7 +106,6 @@ export const DEFAULT_LOCAL_CI = [
 
 /** Features that change what agents do, off until measured. */
 export const DEFAULT_EXPERIMENTS = {
-  narrowRounds: false,
   dropCrossCutting: false,
 };
 

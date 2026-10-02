@@ -272,6 +272,7 @@ describe('pr publish — against a fake gh', () => {
       created: true,
       parts: 1,
       unresolved: ['backend:x'],
+      trapCandidates: [],
       gaps: 1,
       baseMismatch: null,
     });
