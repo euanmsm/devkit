@@ -1,6 +1,6 @@
 {
   "name": "@euanmsm/skills",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Shared Claude Code skills, written into a repository from one config file and kept in step with it",
   "type": "module",
   "license": "MIT",
