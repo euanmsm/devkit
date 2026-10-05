@@ -13,6 +13,7 @@ import { availableParallelism } from 'node:os';
 import path from 'node:path';
 
 import { splitPatches } from '../review/prepass.mjs';
+import { TOUCHES } from './defaults.mjs';
 
 /** The most importers listed for one file, so a shared module cannot flood the facts. */
 const MAX_IMPORTERS = 30;
@@ -21,6 +22,23 @@ const MAX_IMPORTERS = 30;
 const CODE_FILE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|vue|svelte)$/;
 
 const STORY_FILE = /\.stories\.[cm]?[jt]sx?$/;
+
+/** The rename similarity, in percent, at which a moved file counts as unchanged. */
+const MOVE_SIMILARITY = 90;
+
+/**
+ * A changed line that only rewires an import or re-export, or is blank: the
+ * kinds of edit a move forces on the files around it.
+ */
+const IMPORT_LINE = new RegExp(
+  [
+    String.raw`^\s*$`,
+    String.raw`^\s*import\b`,
+    String.raw`^\s*export\b.*\bfrom\s+['"]`,
+    String.raw`^\s*\}\s*from\s+['"]`,
+    String.raw`^\s*(type\s+)?[\w$]+(\s+as\s+[\w$]+)?,?\s*$`,
+  ].join('|'),
+);
 
 // Pins the diff's output format, whatever the user's git config says.
 const DIFF_ARGS = [
@@ -77,7 +95,8 @@ export async function prPrepass(
   mkdirSync(scratchDir, { recursive: true });
 
   const diffPath = path.join(scratchDir, 'pr-qa-diff.tmp.patch');
-  writeFileSync(diffPath, git(...DIFF_ARGS, mergeBase, 'HEAD'));
+  const diffText = git(...DIFF_ARGS, mergeBase, 'HEAD');
+  writeFileSync(diffPath, diffText);
 
   const split = await splitPatches(root, {
     base: mergeBase,
@@ -85,7 +104,7 @@ export async function prPrepass(
     out: path.join(scratchDir, 'pr-qa-patches'),
   });
 
-  const { changed, deleted, moved } = parseNameStatus(
+  const { changed, added, deleted, moved } = parseNameStatus(
     git(...STATUS_ARGS, mergeBase, 'HEAD'),
   );
   const tracked = names(git('ls-files', '-z'));
@@ -113,6 +132,17 @@ export async function prPrepass(
     config.boot.read.some((glob) => globToRegExp(glob).test(file)),
   );
 
+  const triage = triageHints({
+    touched,
+    layers: config.layers,
+    questions: config.outsideRepo,
+    files: [...changed, ...deleted, ...moved.map(({ from }) => from)],
+    added,
+    deleted,
+    moved,
+    importOnly: importOnlyFiles(diffText),
+  });
+
   const factsPath = path.join(scratchDir, 'pr-qa-facts.tmp.md');
   writeFileSync(
     factsPath,
@@ -127,6 +157,7 @@ export async function prPrepass(
       stories,
       readFiles,
       layers: config.layers,
+      triage,
     }),
   );
 
@@ -149,6 +180,7 @@ export async function prPrepass(
       ]),
     ),
     sections: touched.sections,
+    triage,
     storyCount: stories.length,
     scratchDir,
     agentCap: agentCap(),
@@ -233,30 +265,124 @@ function names(stdout) {
  * Reads git's `--name-status -z` output.
  *
  * @param stdout - NUL-separated statuses and paths
- * @returns The changed paths (a moved or copied file under its new path), the deleted paths, and one `{ from, to }` per moved file
+ * @returns The changed paths (a moved or copied file under its new path), the added paths, the deleted paths, and one `{ from, to, similarity }` per moved file
  */
 export function parseNameStatus(stdout) {
   const fields = names(stdout);
   const changed = [];
+  const added = [];
   const deleted = [];
   const moved = [];
 
   for (let i = 0; i < fields.length;) {
-    const status = fields[i++][0];
+    const field = fields[i++];
+    const status = field[0];
 
     if (status === 'R' || status === 'C') {
       const from = fields[i++];
       const to = fields[i++];
       changed.push(to);
-      if (status === 'R') moved.push({ from, to });
+      if (status === 'R') {
+        moved.push({ from, to, similarity: Number(field.slice(1)) || 0 });
+      }
     } else if (status === 'D') {
       deleted.push(fields[i++]);
     } else {
-      changed.push(fields[i++]);
+      const file = fields[i++];
+      changed.push(file);
+      if (status === 'A') added.push(file);
     }
   }
 
-  return { changed, deleted, moved };
+  return { changed, added, deleted, moved };
+}
+
+/**
+ * Finds the files whose every changed line only rewires an import.
+ *
+ * @param diff - The branch's full diff
+ * @returns The new paths of those files
+ */
+export function importOnlyFiles(diff) {
+  const result = new Set();
+  let file = null;
+  let clean = true;
+
+  const close = () => {
+    if (file && clean) result.add(file);
+  };
+
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      close();
+      file = /^diff --git a\/.+ b\/(.+)$/.exec(line)?.[1] ?? null;
+      clean = true;
+    } else if (line.startsWith('+++') || line.startsWith('---')) {
+      continue;
+    } else if (/^[+-]/.test(line) && !IMPORT_LINE.test(line.slice(1))) {
+      clean = false;
+    }
+  }
+  close();
+
+  return result;
+}
+
+/**
+ * Works out what a script can tell the triage about a diff.
+ *
+ * @param facts - The `touched` layers, the resolved `layers` and outside-the-repo `questions`, every changed, deleted or moved-from path as `files`, the `added`, `deleted` and `moved` lists, and the `importOnly` files
+ * @returns What the diff `touches`, whether it may be a pure move, and the questions a changed path answers yes
+ */
+export function triageHints({
+  touched,
+  layers,
+  questions,
+  files,
+  added,
+  deleted,
+  moved,
+  importOnly,
+}) {
+  const touches = new Set();
+
+  for (const layer of layers) {
+    if (touched.layers[layer.key].length === 0) continue;
+    // A layer that does not say what it needs could need anything.
+    for (const touch of layer.touches ?? TOUCHES) touches.add(touch);
+  }
+
+  const movedTo = new Set(moved.map(({ to }) => to));
+  const edited = files.filter(
+    (file) =>
+      !movedTo.has(file) &&
+      !moved.some(({ from }) => from === file) &&
+      !deleted.includes(file),
+  );
+  const pureMoveCandidate =
+    moved.length > 0 &&
+    added.length === 0 &&
+    deleted.length === 0 &&
+    moved.every(
+      ({ to, similarity }) =>
+        similarity >= MOVE_SIMILARITY || importOnly.has(to),
+    ) &&
+    edited.every((file) => importOnly.has(file));
+
+  const outsideRepo = questions
+    .map((question) => ({
+      ask: question.ask,
+      files: files.filter((file) =>
+        question.paths.some((pattern) => matchesPath(pattern, file)),
+      ),
+    }))
+    .filter((answer) => answer.files.length > 0);
+
+  return {
+    touches: TOUCHES.filter((touch) => touches.has(touch)),
+    pureMoveCandidate,
+    outsideRepo,
+  };
 }
 
 /**
@@ -593,6 +719,7 @@ export function renderFacts({
   stories,
   readFiles,
   layers,
+  triage = null,
 }) {
   const movedTo = new Map(moved.map(({ from, to }) => [from, to]));
   const list = (items, empty = '- (none)') =>
@@ -635,8 +762,12 @@ export function renderFacts({
     `## Changed files in no layer\n\n${list(touched.unmatched)}`,
     `## Deleted files\n\n${list(deleted)}`,
     `## Moved files\n\n${
-      moved.map(({ from, to }) => `- \`${from}\` → \`${to}\``).join('\n') ||
-      '- (none)'
+      moved
+        .map(
+          ({ from, to, similarity }) =>
+            `- \`${from}\` → \`${to}\`${similarity ? ` (${similarity}% similar)` : ''}`,
+        )
+        .join('\n') || '- (none)'
     }`,
     `## Tests beside each changed file\n\n${testBlocks.join('\n') || '- (none)'}`,
     `## Importers of each changed module\n\n${importerBlocks.join('\n') || '- (none)'}`,
@@ -654,6 +785,21 @@ export function renderFacts({
   }
 
   sections.push(`## Seed, fixture and env files to read\n\n${list(readFiles)}`);
+
+  if (triage) {
+    const answers = triage.outsideRepo.map(
+      (answer) =>
+        `- Yes: ${answer.ask} (${answer.files.map((f) => `\`${f}\``).join(', ')})`,
+    );
+    sections.push(
+      [
+        '## Triage hints\n',
+        `- Needs running to test: ${triage.touches.join(', ') || 'nothing'}`,
+        `- Pure move candidate: ${triage.pureMoveCandidate ? 'yes — every change is a rename or an import rewiring' : 'no'}`,
+        ...answers,
+      ].join('\n'),
+    );
+  }
 
   return `${sections.join('\n\n')}\n`;
 }

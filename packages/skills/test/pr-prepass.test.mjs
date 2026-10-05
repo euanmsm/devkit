@@ -24,7 +24,9 @@ import {
   findImporters,
   findStories,
   globToRegExp,
+  importOnlyFiles,
   parseNameStatus,
+  triageHints,
   prPrepass,
   renderFacts,
   ripgrep,
@@ -474,9 +476,129 @@ describe('pr prepass — name status', () => {
         'src/ui/Pré.tsx',
         'src/new.ts',
       ],
+      added: ['src/new.ts'],
       deleted: ['src/gone.ts'],
-      moved: [{ from: 'src/api/users.ts', to: 'src/legacy/users.ts' }],
+      moved: [
+        { from: 'src/api/users.ts', to: 'src/legacy/users.ts', similarity: 87 },
+      ],
     });
+  });
+});
+
+describe('pr prepass — triage hints', () => {
+  const layers = [
+    { key: 'db', section: 'backend', touches: ['database'] },
+    { key: 'api', section: 'backend', touches: ['api', 'database'] },
+    { key: 'ui', section: 'frontend', touches: ['page'] },
+    { key: 'misc', section: 'backend', touches: null },
+  ];
+  const touched = (keys) => ({
+    layers: Object.fromEntries(
+      layers.map((l) => [l.key, keys.includes(l.key) ? ['x'] : []]),
+    ),
+  });
+  const hints = (extra) =>
+    triageHints({
+      touched: touched([]),
+      layers,
+      questions: [],
+      files: [],
+      added: [],
+      deleted: [],
+      moved: [],
+      importOnly: new Set(),
+      ...extra,
+    });
+
+  it('unions what the touched layers need, and assumes anything for an untagged one', () => {
+    assert.deepEqual(hints({ touched: touched(['ui']) }).touches, ['page']);
+    assert.deepEqual(hints({ touched: touched(['db', 'ui']) }).touches, [
+      'database',
+      'page',
+    ]);
+    assert.deepEqual(hints({ touched: touched(['misc']) }).touches, [
+      'database',
+      'api',
+      'page',
+    ]);
+  });
+
+  it('calls a diff of near-identical moves and import rewiring a pure move candidate', () => {
+    const moved = [{ from: 'a/x.ts', to: 'b/x.ts', similarity: 96 }];
+    const files = ['b/x.ts', 'a/y.ts', 'a/x.ts'];
+
+    assert.equal(
+      hints({ moved, files, importOnly: new Set(['a/y.ts']) })
+        .pureMoveCandidate,
+      true,
+    );
+    assert.equal(hints({ moved, files }).pureMoveCandidate, false);
+    assert.equal(
+      hints({
+        moved: [{ ...moved[0], similarity: 60 }],
+        files,
+        importOnly: new Set(['a/y.ts']),
+      }).pureMoveCandidate,
+      false,
+    );
+    assert.equal(
+      hints({
+        moved,
+        files,
+        importOnly: new Set(['a/y.ts']),
+        added: ['c.ts'],
+      }).pureMoveCandidate,
+      false,
+    );
+    assert.equal(
+      hints({ files: ['a/y.ts'], importOnly: new Set(['a/y.ts']) })
+        .pureMoveCandidate,
+      false,
+    );
+  });
+
+  it('answers an outside-the-repo question yes when a changed path matches it', () => {
+    const questions = [
+      { ask: 'Hosting config?', paths: [/(^|\/)vercel\.json$/] },
+      { ask: 'New env var?', paths: ['lib/env/'] },
+      { ask: 'New service?', paths: [] },
+    ];
+
+    assert.deepEqual(
+      hints({ questions, files: ['apps/web/vercel.json', 'src/a.ts'] })
+        .outsideRepo,
+      [{ ask: 'Hosting config?', files: ['apps/web/vercel.json'] }],
+    );
+    assert.deepEqual(
+      hints({ questions, files: ['lib/env/manifest.ts'] }).outsideRepo,
+      [{ ask: 'New env var?', files: ['lib/env/manifest.ts'] }],
+    );
+  });
+
+  it('finds the files whose changed lines only rewire imports', () => {
+    const diff = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      "-import { x } from './old/x';",
+      "+import { x } from './new/x';",
+      'diff --git a/src/b.ts b/src/b.ts',
+      '--- a/src/b.ts',
+      '+++ b/src/b.ts',
+      '-import {',
+      '+import {',
+      '   x,',
+      "-} from './old/x';",
+      "+} from './new/x';",
+      "+export { y } from './new/y';",
+      'diff --git a/src/c.ts b/src/c.ts',
+      '--- a/src/c.ts',
+      '+++ b/src/c.ts',
+      '-const x = 1;',
+      '+const x = 2;',
+    ].join('\n');
+
+    assert.deepEqual([...importOnlyFiles(diff)], ['src/a.ts', 'src/b.ts']);
   });
 });
 
@@ -667,9 +789,18 @@ describe('pr prepass — against a real branch', () => {
         /### API \(backend section\)\n\n- `src\/api\/users\.ts` — moved to `src\/legacy\/users\.ts`/,
       );
       assert.match(facts, /## Deleted files\n\n- \(none\)/);
+      assert.deepEqual(args.triage, {
+        touches: ['database', 'api', 'page'],
+        pureMoveCandidate: false,
+        outsideRepo: [],
+      });
       assert.match(
         facts,
-        /## Moved files\n\n- `src\/api\/users\.ts` → `src\/legacy\/users\.ts`/,
+        /## Triage hints\n\n- Needs running to test: database, api, page\n- Pure move candidate: no/,
+      );
+      assert.match(
+        facts,
+        /## Moved files\n\n- `src\/api\/users\.ts` → `src\/legacy\/users\.ts` \(100% similar\)/,
       );
       assert.match(facts, /- `src\/ui\/Préférences\.tsx`\n/);
       assert.match(
