@@ -51,7 +51,7 @@ export const AGENT_HALF_DEFAULTS = {
 /** The cross-cutting questions every inventory asks, by name. */
 export const BUILT_IN_DIMENSIONS = {
   authorisation: 'which callers must be REJECTED, not just allowed',
-  regression: 'the old behaviour, where the old behaviour is still right',
+  regression: 'behaviour this diff removes or changes that a caller relied on',
   'failure paths': 'what runs when a call fails, times out or is rate limited',
   'data volume': 'pagination and ordering beyond a handful of rows',
   concurrency: 'two sessions or two workers acting at once',
@@ -103,6 +103,48 @@ export const DEFAULT_LOCAL_CI = [
   'Review agents run locally before merge',
   'Full test suite passes locally',
 ];
+
+/** What a change in a layer can need running to test it. */
+export const TOUCHES = ['database', 'api', 'page'];
+
+/**
+ * What a change can depend on outside the repository, asked of every diff.
+ * A question with `paths` is answered yes by script when a changed file
+ * matches one; the triage agent answers the rest from the diff.
+ */
+export const DEFAULT_OUTSIDE_REPO = [
+  {
+    ask: 'Does it change hosting or deploy config, or need a project setting changed on the host?',
+    paths: [/(^|\/)vercel\.json$/, /(^|\/)netlify\.toml$/, /(^|\/)fly\.toml$/],
+  },
+  {
+    ask: 'Does it add or rename an environment variable that needs a production value?',
+    paths: [/(^|\/)\.env\.example$/],
+  },
+  {
+    ask: 'Does it change an auth or platform setting that also lives on a hosted service?',
+    paths: [],
+  },
+  {
+    ask: 'Does it add a migration that will run against populated production data?',
+    paths: [],
+  },
+  {
+    ask: 'Does it call an external service it did not call before?',
+    paths: [],
+  },
+];
+
+/**
+ * How many steps a checklist may carry for each kind of diff the triage
+ * names, and the minutes a tester should need for all of it.
+ */
+export const DEFAULT_BUDGET = {
+  move: 2,
+  small: 8,
+  large: 20,
+  minutes: 30,
+};
 
 /** Features that change what agents do, off until measured. */
 export const DEFAULT_EXPERIMENTS = {

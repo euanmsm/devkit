@@ -311,7 +311,7 @@ const BOOT_VARIABLES = CONFIG.boot.variables;
  * @returns The variable names, as `$NAME` joined with commas
  */
 function bootVariableNames(needsBackend) {
-  return BOOT_VARIABLES.filter((variable) => needsBackend || !variable.backendOnly)
+  return BOOT_VARIABLES.filter((variable) => needsBackend || variable.when.length === 0)
     .map((variable) => `$${variable.name}`)
     .join(', ');
 }
@@ -733,7 +733,7 @@ paragraph. Drop stories the branch did not visibly change.`;
 function bootDraftPrompt(input) {
   const needsBackend = Boolean(input.sections.backend);
   const variables = BOOT_VARIABLES.filter(
-    (variable) => needsBackend || !variable.backendOnly,
+    (variable) => needsBackend || variable.when.length === 0,
   );
 
   return `
@@ -744,7 +744,7 @@ ${packRule(input)}
 Boot the stack once, ahead of every section. From the repo root:
 
 \`\`\`bash
-${CONFIG.boot.start.join('\n')}
+${CONFIG.boot.start.map((entry) => entry.run).join('\n')}
 \`\`\`
 
 Then ONE line deriving what the sections need:

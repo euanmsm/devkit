@@ -15,6 +15,8 @@ import { check } from '../src/check.mjs';
 import { loadPrConfig, resolvePrConfig } from '../src/pr/config.mjs';
 import {
   BUILT_IN_DIMENSIONS,
+  DEFAULT_BUDGET,
+  DEFAULT_OUTSIDE_REPO,
   DEFAULT_PROMPTS,
   DEFAULT_TESTS,
   DEFAULT_VERIFY,
@@ -70,14 +72,17 @@ describe('pr config — defaults', () => {
       {
         name: 'PORT',
         from: 'the port the app serves on locally',
-        backendOnly: false,
+        when: [],
       },
       {
         name: 'TOKEN',
         from: 'a bearer token for a seeded account',
-        backendOnly: true,
+        when: ['api'],
       },
     ]);
+    assert.deepEqual(resolved.outsideRepo, DEFAULT_OUTSIDE_REPO);
+    assert.deepEqual(resolved.budget, DEFAULT_BUDGET);
+    assert.equal(resolved.layers[0].touches, null);
   });
 
   it('puts the traps file under the configured skills folder', () => {
@@ -350,7 +355,19 @@ describe('pr config — refusals', () => {
     );
     rejects(
       minimal({ boot: { start: 'npm run dev' } }),
-      /boot\.start must be a list of strings/,
+      /boot\.start must be a list/,
+    );
+    rejects(
+      minimal({ boot: { start: [{ run: 'npm run dev', when: ['disk'] }] } }),
+      /boot\.start\[0\]\.when must be a non-empty list of database, api, page/,
+    );
+    rejects(
+      minimal({ boot: { start: [{ when: ['page'] }] } }),
+      /boot\.start\[0\]\.run must be a string/,
+    );
+    rejects(
+      minimal({ boot: { start: [{ run: 'x', if: ['page'] }] } }),
+      /unknown key "if" in boot\.start\[0\]/,
     );
     rejects(minimal({ boot: { stop: ['x'] } }), /boot\.stop must be a string/);
     rejects(
@@ -363,7 +380,15 @@ describe('pr config — refusals', () => {
     );
     rejects(
       minimal({ boot: { variables: { PORT: { from: 'x', when: 1 } } } }),
-      /unknown key "when"/,
+      /PORT\.when must be a non-empty list/,
+    );
+    rejects(
+      minimal({
+        boot: {
+          variables: { PORT: { from: 'x', when: ['api'], backendOnly: true } },
+        },
+      }),
+      /sets both when and backendOnly/,
     );
     rejects(
       minimal({ boot: { variables: [] } }),
@@ -388,6 +413,76 @@ describe('pr config — refusals', () => {
     rejects(
       minimal({ experiments: { fast: true } }),
       /unknown key "fast" in experiments/,
+    );
+  });
+
+  it('refuses malformed touches, outside-the-repo questions and budget', () => {
+    rejects(
+      { layers: [{ ...LAYER, touches: 'api' }] },
+      /layers\[0\]\.touches must be a non-empty list/,
+    );
+    rejects(
+      { layers: [{ ...LAYER, touches: [] }] },
+      /layers\[0\]\.touches must be a non-empty list/,
+    );
+    rejects(minimal({ outsideRepo: {} }), /outsideRepo must be a list/);
+    rejects(
+      minimal({ outsideRepo: [{ paths: [] }] }),
+      /outsideRepo\[0\]\.ask must be a string/,
+    );
+    rejects(
+      minimal({ outsideRepo: [{ ask: 'x', paths: 'vercel.json' }] }),
+      /outsideRepo\[0\]\.paths must be a list/,
+    );
+    rejects(
+      minimal({ outsideRepo: [{ ask: 'x', who: 'me' }] }),
+      /unknown key "who" in outsideRepo\[0\]/,
+    );
+    rejects(
+      minimal({ budget: { small: 0 } }),
+      /budget\.small must be a whole number/,
+    );
+    rejects(minimal({ budget: { tiny: 1 } }), /unknown key "tiny" in budget/);
+  });
+
+  it('resolves conditional boot commands, variables, touches and budget', () => {
+    const resolved = resolvePrConfig(
+      {
+        layers: [{ ...LAYER, touches: ['api', 'database', 'api'] }],
+        boot: {
+          start: ['docker ps', { run: 'npm run db:start', when: ['database'] }],
+          variables: {
+            PORT: 'the port',
+            DB: { from: 'the container', backendOnly: true },
+            TOKEN: { from: 'a token', when: ['api'] },
+          },
+        },
+        outsideRepo: [
+          { ask: 'Does it change vercel.json?', paths: [/vercel\.json$/] },
+        ],
+        budget: { small: 5 },
+      },
+      context,
+    );
+
+    assert.deepEqual(resolved.layers[0].touches, ['api', 'database']);
+    assert.deepEqual(resolved.boot.start, [
+      { run: 'docker ps', when: [] },
+      { run: 'npm run db:start', when: ['database'] },
+    ]);
+    assert.deepEqual(
+      resolved.boot.variables.map((v) => [v.name, v.when]),
+      [
+        ['PORT', []],
+        ['DB', ['database', 'api']],
+        ['TOKEN', ['api']],
+      ],
+    );
+    assert.equal(resolved.outsideRepo.length, 1);
+    assert.deepEqual(resolved.budget, { ...DEFAULT_BUDGET, small: 5 });
+    assert.deepEqual(
+      resolvePrConfig(minimal({ outsideRepo: [] }), context).outsideRepo,
+      [],
     );
   });
 
