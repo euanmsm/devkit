@@ -40,13 +40,17 @@ skill is called `pr` unless the `name` option says otherwise; this page writes
   belongs to one section; a changed file in that layer switches the section on.
 - **Entry** — one behaviour the branch changes, found by the inventory. Every
   entry ends up as a step, as a claim that an automated test already covers it,
-  or as a gap in the result's `gaps`. None are dropped silently.
-- **Unit** — anything that gets verified: a step, the boot block, or a Storybook
-  item.
+  as a gap, or as a report note saying why it went. None are dropped silently.
+- **Unit** — anything that gets verified: a step, a claim, a section's setup, a
+  deploy check, the boot block, or a Storybook item.
 - **Checker** — one verifying agent. It is handed up to 8 units at once and
   gives a verdict for each.
-- **Claim** — "entry X is covered by test Y". Each is checked; one that does not
-  hold is **converted** into a step.
+- **Claim** — "entry X is covered by test Y". Each is checked. One that holds is
+  cited on the section's Covered by line; one that does not is reported to the
+  author as a test gap for code review, not turned into a manual step.
+- **Triage** — the first, cheap look at the diff: whether it is a pure move,
+  tooling only or a behaviour change, how big it is, what it needs running, and
+  what it depends on outside the repository.
 - **Traps file** — the repository's own list of ways a manual step can look
   right and test nothing. Every verifier reads it.
 
@@ -72,8 +76,9 @@ A script, not an agent. It:
 3. Writes the diff, one patch file per changed file, and a **facts file** to the
    scratch folder. The facts file lists:
    - the changed files sorted into layers, and the files in no layer
-   - deleted files, and moved files with both paths; a moved file also counts in
-     its old path's layer, marked with where it moved to
+   - deleted files, and moved files with both paths and git's similarity score;
+     a moved file also counts in its old path's layer, marked with where it
+     moved to
    - the tests beside each changed file — same folder or a `__tests__` folder
      beside it, same name stem
    - the files importing each changed module (at most 30 per module), found with
@@ -86,9 +91,12 @@ A script, not an agent. It:
      when it sits beside the file with the same name stem; `storyMatch` picks
      one or both. Without ripgrep only the name match is left
    - the seed, fixture and env files matching `boot.read`
+   - triage hints: what the touched layers need running (from their `touches`),
+     whether every change is a near-identical move or an import rewired by one,
+     and the `outsideRepo` questions a changed path answers yes
 4. Prints the workflow's arguments as JSON: which layers and sections the branch
-   touches, the paths above, the `headSha` it diffed, and how many agents may
-   run at once.
+   touches, the triage hints, the paths above, the `headSha` it diffed, and how
+   many agents may run at once.
 
 Every agent reads the facts file, so none of them spends its first minutes
 rediscovering these lists.
@@ -102,69 +110,100 @@ every agent only reads code.
 A branch touching no section gets a summary and a checklist of the line
 `_No manual checks needed — no runtime surface touched._` plus the Local CI
 boxes, and nothing else runs. The boxes are there so the gate's reset still
-leaves something to tick after a push. Otherwise:
+leaves something to tick after a push.
 
-| Stage           | Agents                                                                                                 | Starts when                 |
-| --------------- | ------------------------------------------------------------------------------------------------------ | --------------------------- |
-| Summary         | one, Sonnet                                                                                            | at once                     |
-| Surfaces        | one per touched human section: every place a person can see the change                                 | at once                     |
-| Storybook draft | one, Sonnet, when Storybook is on and the branch has stories                                           | at once                     |
-| Context pack    | one: a map of the branch every later agent reads                                                       | at once                     |
-| Boot draft      | one: how to start the stack, and the variables the sections use; verified as soon as it is drafted     | the pack is written         |
-| Inventory       | one for the backend, one per human section with a visible change, one for cross-cutting dimensions     | the pack is written         |
-| Audit           | two: every hunk has an entry; every dimension is explored                                              | the inventory is in         |
-| Backend drafts  | one per group of up to 8 entries, grouped by file                                                      | the audit is in             |
-| Human drafts    | one per group of up to 8 entries in each touched human section, grouped by file                        | the audit and boot are in   |
-| Verify          | one checker per 8 units of a draft, claims included; later rounds re-check only the failures on Sonnet | **that draft is in**        |
-| Convert         | one per failed claim; a group's converted steps are then verified together                             | **that claim's round ends** |
-| Traps           | one, Sonnet, when 3 or more steps failed round 1                                                       | every group is verified     |
+Otherwise a Sonnet triage agent runs first, beside the summary. It can only add
+to the prepass hints: what the diff touches and which outside-the-repo questions
+are yes. A **tooling-only** diff then gets the same summary-only checklist. A
+**pure move** gets a sized boot block, at most `budget.move` smoke steps, any
+deploy checks, and a Local CI box for the type check and build; none of the
+stages below run. A **behaviour change** runs them all:
 
-The bold column is what makes it fast. Nothing waits for an unrelated agent: a
-human section is verified while the backend is still being drafted, and a failed
-claim is converted while other steps are still being re-checked.
+| Stage           | Agents                                                                                                  | Starts when               |
+| --------------- | ------------------------------------------------------------------------------------------------------- | ------------------------- |
+| Summary         | one, Sonnet                                                                                             | at once                   |
+| Triage          | one, Sonnet                                                                                             | at once                   |
+| Surfaces        | one per touched human section: every place a person can see the change                                  | the triage is in          |
+| Storybook draft | one, Sonnet, when Storybook is on and the branch has stories                                            | the triage is in          |
+| Context pack    | one: a map of the branch every later agent reads                                                        | the triage is in          |
+| Boot draft      | one, when the diff needs anything started: only those commands; verified as soon as it is drafted       | the pack is written       |
+| Deploy draft    | one, when the triage found anything outside the repo; verified as soon as it is drafted                 | the pack is written       |
+| Inventory       | one for the backend, one per human section with a visible change, one for cross-cutting dimensions      | the pack is written       |
+| Audit           | two: every hunk has an entry; every dimension is explored                                               | the inventory is in       |
+| Prune           | one: merges entries that differ only by input or page, drops what main or a test already covers         | the audit is in           |
+| Backend drafts  | one per group of up to 8 entries, grouped by file                                                       | the prune is in           |
+| Human drafts    | one per group of up to 8 entries in each touched human section, grouped by file                         | the prune and boot are in |
+| Verify          | one checker per 8 units of a draft, setup and claims included; later rounds re-check failures on Sonnet | **that draft is in**      |
+| Duplicates      | one per section with two or more passing steps, Sonnet                                                  | every group is verified   |
+| Traps           | one, Sonnet, when 3 or more steps failed round 1                                                        | every group is verified   |
 
-Every drafter is given the verified boot block and told to read the traps file.
+The bold row is what makes it fast. Nothing waits for an unrelated agent: a
+human section is verified while the backend is still being drafted.
+
+The prune is the pipeline's one step that removes entries: the inventory and the
+audits only add. It merges entries that are one behaviour with different inputs,
+or one shared component on several pages; drops entries the old code would
+satisfy too; and drops entries a test asserts, as claims checked like any other.
+Ids it makes up are ignored, and an entry it does not mention is kept.
+
+Every drafter is given the verified boot block, its share of the step budget,
+and told to read the traps file. It returns its steps, its claims, its gaps, and
+one `setup` and `teardown` for its share of the section: steps in a section run
+in order and may rely on the setup and earlier steps, so the same SQL is not
+repeated on every step. Each step also carries an **On main:** line, what a
+tester would see with the PR reverted, unless it needs a person's judgement.
 Most first-round failures in recorded runs were the same environment mistake
 repeated across steps — a variable the boot block never defines, a rate limiter,
 mail that never reaches the local inbox — so drafting against the real boot
 block and the known traps saves a rewrite and a re-check for each of them.
 
 Before a step reaches a checker, a script checks its format — an `Expect:` line,
-labels in order, a fenced command in a terminal step, no `Teardown: none`. A
+labels in order, a fenced command in a terminal step, no per-step `Teardown:`. A
 step that fails gets a quick Sonnet fix first, so an Opus round is not spent on
 formatting.
 
-Verification works in groups: one backend drafter's steps and its "covered by
-test" claims, the conversions from those claims, one human drafter's steps, the
-Storybook items, and the boot block on its own. A claim is checked by the same
-checker as its group's steps, since it is already reading that code: it passes
-when the named test genuinely asserts the behaviour, and otherwise its entry is
-drafted as a step. Before a group starts, the workflow logs how many units it
-has and how many checkers it will use. Round 1 hands each checker up to 8 units
-with the full checks. The checker answers with a verdict per unit id: `PASS`,
-`FAIL` with a rewrite in the same shape, or `DELETE` when there is no accurate
-version. Round 2 takes only the units that failed, batch them again up to 8 at a
-time, and use a narrower prompt: is every problem the last round found fixed,
-and is nothing new unconfirmed? Round 2 always runs on Sonnet, as do Storybook
-items; round 1 runs on Opus.
+Verification works in groups: one drafter's setup, steps and "covered by test"
+claims, the pruner's claims, the deploy checks, the Storybook items, and the
+boot block on its own. A claim is checked by the same checker as its group's
+steps, since it is already reading that code: it passes when the named test
+genuinely asserts the behaviour, and otherwise it becomes a test gap in the
+report. Besides checking a step is reachable and its Expect line is what the
+code returns, a checker deletes a step that would pass on the old code or whose
+On main line matches its Expect line, deletes one a listed test already asserts,
+and sends back one proved by a count from seed data, a long wait, a race timed
+by hand, `grep -c` or a throwaway test file. Before a group starts, the workflow
+logs how many units it has and how many checkers it will use. Round 1 hands each
+checker up to 8 units with the full checks. The checker answers with a verdict
+per unit id: `PASS`, `FAIL` with a rewrite in the same shape, or `DELETE` when
+there is no accurate version. Round 2 takes only the units that failed, batch
+them again up to 8 at a time, and use a narrower prompt: is every problem the
+last round found fixed, and is nothing new unconfirmed? Round 2 always runs on
+Sonnet, as do Storybook items; round 1 runs on Opus.
 
 A unit's fate is one of:
 
 - **pass** — it goes in the checklist. A step's priority and title are read back
   from its verified title line, so a checker that demotes or renames a step is
   heard. Storybook items render from their verified text.
-- **deleted** — the checker found no accurate version. It goes in `gaps` with
-  the reason.
+- **deleted** — vacuous, covered by a test, or with no accurate version.
 - **exhausted** — still failing after two rounds.
 - **unverified** — the checker returned nothing, or its answer left the unit's
   id out.
+- **duplicate** — the duplicate pass, seeing the whole section's passing steps
+  at once, found it repeats another.
+- **cut** — an if-time step cut to fit the budget.
 
-Exhausted and unverified units are left out of the steps, put in `gaps`, logged
-apart from each other, and named in `unresolved` so the skill can tell you. The
-published checklist holds only steps: gaps reach the author through the skill's
-report, never the PR comment. The boot block is the exception: every step relies
-on it, so one that did not pass is published under a visible warning instead,
-and is not listed as a gap.
+Only passing steps reach the checklist. The others become `reportNotes`, each
+with a `kind` and the reason, and exhausted and unverified ones are also named
+in `unresolved`. The boot block and a section's setup are the exception: the
+steps after them rely on them, so one that did not pass is published under a
+visible warning instead.
+
+After the duplicate pass, the budget is applied. The cap is `budget.small` or
+`budget.large`, by the size the triage found, and the target is
+`budget.minutes`. If-time steps are cut, longest first, until both fit. Blocking
+steps are never cut; when they alone exceed the budget, a report note says by
+how much.
 
 When 3 or more steps failed round 1, a Sonnet agent reads the findings and the
 traps file and returns `trapCandidates`: each mistake that broke at least 3
@@ -173,14 +212,22 @@ write instead. Publish prints them, and the skill offers to add them to the
 traps file, so the next run's drafters avoid them.
 
 An entry that lands in no drafted section, which happens when the backend
-section is off and the entry is not visible, goes in `gaps` and is logged, so
-nothing is dropped silently.
+section is off and the entry is not visible, becomes a report note and is
+logged, so nothing is dropped silently.
+
+`gaps` holds only what a tester needs to know, such as a check that needs
+production; each is published as one line under the checklist. Everything about
+how the workflow got there goes in `reportNotes`, which publish prints and the
+skill relays to the author, never to the PR.
 
 The workflow returns
-`{ summary, checklist, gaps, unresolved, trapCandidates, stats }`. The checklist
-is laid out as: the boot block, the backend section, each human section,
-Storybook items, how to stop the stack, and the Local CI boxes. Each section
-opens with a timing line built from the drafters' minute estimates.
+`{ summary, checklist, gaps, reportNotes, unresolved, trapCandidates, stats }`.
+The checklist is laid out as: the triage line (kind, what it needs running,
+estimated minutes), the boot block, the Deploy and Config Checks, the backend
+section, each human section, Storybook items, the one-line gaps, how to stop the
+stack, and the Local CI boxes. Each section opens with a timing line built from
+the drafters' minute estimates, then its setup, its steps, its teardown and its
+Covered by line.
 
 #### Split sections
 
@@ -231,7 +278,8 @@ It:
    longer needed are deleted.
 
 It prints the PR's URL, whether it was created, how many comment parts it wrote,
-the unresolved units, and `baseMismatch`.
+the unresolved units, the trap candidates, the number of tester gaps, the report
+notes, and `baseMismatch`.
 
 ### The comment
 
@@ -331,6 +379,15 @@ layers — a package both sides depend on can switch on the backend and a human
 section at once. Files matching no layer are listed in the facts file but switch
 nothing on.
 
+A layer may also say what a change in it needs running to test, with `touches`:
+any of `database`, `api` and `page`. The triage starts from these, and the boot
+block starts only what they need. A layer without `touches` could need anything,
+so the whole boot runs.
+
+```js
+{ key: 'ui', title: 'Frontend', paths: ['src/components/'], section: 'frontend', touches: ['page'] },
+```
+
 ### `sections`
 
 The human sections, by key, plus optional overrides for the built-in backend
@@ -347,7 +404,7 @@ section. Every human section needs a layer pointing at it.
 | `inventoryBrief` | every noticeable surface, copy, states and interactions | The inventory agent's scope                                     |
 | `firstStep`      | getting to the product as one seeded user               | What step 1 of the section does                                 |
 | `stepNames`      | where it happens and how to get there                   | What every step must name                                       |
-| `coveredBy`      | `an end-to-end test`                                    | The automated tests that make a step `if-time`                  |
+| `coveredBy`      | `an end-to-end test`                                    | The automated tests a step there may be cited as covered by     |
 | `agent`          | none                                                    | Splits the section in two, below                                |
 
 `agent` is an object:
@@ -381,8 +438,9 @@ signed-in user, an admin, an API caller and a background job.
 
 The cross-cutting questions asked of every behaviour, by name. The built-ins are
 `authorisation`, `regression`, `failure paths`, `data volume`, `concurrency` and
-`configuration`. Add your own, reword a built-in by giving its name, or remove
-one with `false`.
+`configuration`. `regression` asks about behaviour the diff removes or changes
+that a caller relied on, never for old behaviour that still passes on main. Add
+your own, reword a built-in by giving its name, or remove one with `false`.
 
 ### `verify`
 
@@ -399,20 +457,58 @@ Three lists the verifier checks every step against, each added to the built-ins:
 
 ```js
 boot: {
-  start: ['npm run db:up', 'npm run migrate', 'npm run dev'],
-  stop: 'docker compose down',
+  start: [
+    { run: 'npm run db:up', when: ['database'] },
+    { run: 'npm run migrate', when: ['database'] },
+    { run: 'npm run dev', when: ['api', 'page'] },
+  ],
+  stop: { run: 'docker compose down', when: ['database'] },
   variables: {
-    PORT: 'from .env',
-    TOKEN: { from: 'a bearer token for the seeded admin', backendOnly: true },
+    PORT: { from: 'from .env', when: ['api', 'page'] },
+    TOKEN: { from: 'a bearer token for the seeded admin', when: ['api'] },
   },
   read: ['supabase/seed*', '.env.example'],
 },
 ```
 
 `start` is the boot block's command list, and `stop` the line closing the
-checklist. `variables` are what the boot block derives for the steps; a
-`backendOnly` one is left out when there is no backend section. `read` lists
-globs for the seed, fixture and env files agents read real values from.
+checklist. `variables` are what the boot block derives for the steps. Each may
+be a plain string, which always applies, or carry `when`: the `touches` it is
+needed for. The triage decides what the diff touches, and the boot block holds
+only what that needs; when nothing applies there is no boot block at all. The
+older `backendOnly: true` still works on a variable and means
+`when: ['database', 'api']`. `read` lists globs for the seed, fixture and env
+files agents read real values from.
+
+### `outsideRepo`
+
+The questions every diff is asked about what it depends on outside the
+repository. Each yes becomes a check in the Deploy and Config Checks section,
+for someone with dashboard access, marked pre-merge or post-deploy.
+
+```js
+outsideRepo: [
+  { ask: 'Does it change vercel.json or a Vercel project setting?', paths: [/(^|\/)vercel\.json$/] },
+  { ask: 'Does it add an env var that needs a production value?', paths: ['src/lib/env/'] },
+  { ask: 'Does it call an external service it did not call before?' },
+],
+```
+
+A question with `paths` is answered yes by the prepass whenever a changed file
+matches, and the triage cannot overrule that; the triage answers the rest from
+the diff. Your list replaces the defaults, which ask about hosting config, new
+env vars, hosted auth settings, migrations on production data and new external
+services. `[]` asks nothing.
+
+### `budget`
+
+```js
+budget: { move: 2, small: 8, large: 20, minutes: 30 },
+```
+
+The most steps a checklist carries for a pure move, a small change and a large
+one, and the minutes a tester should need for all of it. Any key you leave out
+keeps its default. Deploy checks and Storybook items do not count against it.
 
 ### `tests`
 
@@ -463,7 +559,11 @@ the checklist honest about which commit was tested:
 
 - **On every push** it un-ticks every box outside a code block, restamps the
   comment with the new head commit, and writes a banner saying how many boxes
-  the previous pass had ticked and against which commit.
+  the previous pass had ticked and against which commit. It keeps only the
+  latest `> **Observed**` or `> **Failed**` note under each step. It also asks
+  GitHub which files changed since the stamped commit, and the banner names
+  every step citing one of them in backticks as possibly stale, with a
+  suggestion to re-run the skill.
 - **On a push to a checklist with no boxes at all**, it leaves the stamp on the
   old commit and posts red with `checklist predates <sha>, re-run /pr`, so new
   code is never passed on a checklist nobody could tick.
@@ -538,6 +638,9 @@ experiments: { dropCrossCutting: true },
 | `sections.x needs a title`                                     | Add a `title`                                           |
 | `dimensions.x is false, but there is no built-in of that name` | Check the spelling                                      |
 | `boot.variables.x must be an upper-case shell variable name`   | Rename it, e.g. `PORT`                                  |
+| `….when must be a non-empty list of database, api, page`       | Use only those names, or leave `when` out for always    |
+| `boot.variables.x sets both when and backendOnly; keep when`   | Delete `backendOnly`                                    |
+| `budget.x must be a whole number above 0`                      | Give a positive whole number                            |
 | `The PR template … does not exist`                             | Create it, or point `template` at yours                 |
 | `The PR template … has no <!-- pr-qa:summary --> line`         | Add the line where the summary should go                |
 | `unknown key "x" in …`                                         | Check the spelling against this page                    |

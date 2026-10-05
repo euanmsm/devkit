@@ -21,13 +21,20 @@ the checklist.
 **The manual checklist is the deliverable that can silently lie.** A vague
 summary gets questioned; a wrong test step gets ticked. The workflow keeps it
 honest: a behaviour inventory plus an adversarial audit define what _complete_
-means, and every step is checked against the code until it would genuinely
-observe what it claims. Every gap either becomes a step or is published
-alongside the checklist — never dropped.
+means, a pruner cuts it back to what could actually break, and every step is
+checked against the code until it would genuinely observe what it claims.
+A step that would pass with the PR reverted, or repeats a test, does not
+ship. Every gap is either one line on the checklist or a note in your report
+— never dropped.
+
+**The checklist is short on purpose.** It aims for under 30 minutes: what
+only a live run or a person can check, plus what the diff needs outside the
+repository. A behaviour a test already proves is cited on a Covered by line,
+not repeated as a step.
 
 **Test coverage is NOT this skill's job.** The workflow reads the automated
-suite only to decide what the backend section may skip and how human steps are
-prioritised.
+suite only to cite it; a coverage claim that does not hold is reported as a
+test gap for code review.
 
 ## Usage
 
@@ -78,12 +85,17 @@ Workflow({
 })
 ```
 
-It explores the branch once into a shared context pack, inventories every
-changed behaviour, audits the inventory for what is missing, then drafts each
-section and verifies every step against the code as soon as its draft lands,
-up to eight steps to a checker. Verification only reads code; it never runs a
-step or touches the local stack. It returns
-`{ summary, checklist, gaps, unresolved, trapCandidates, stats }`.
+It triages the diff first: a pure move gets one smoke check, a tooling-only
+change gets none, and the triage decides what the boot block starts and
+whether the diff depends on anything outside the repo. Otherwise it explores
+the branch once into a shared context pack, inventories every changed
+behaviour, audits the inventory for what is missing, prunes duplicates and
+anything a test or the old code already covers, then drafts each section and
+verifies every step against the code as soon as its draft lands, up to eight
+steps to a checker. A last pass per section drops steps repeating another,
+and if-time steps are cut until the checklist fits its budget. Verification
+only reads code; it never runs a step or touches the local stack. It returns
+`{ summary, checklist, gaps, reportNotes, unresolved, trapCandidates, stats }`.
 
 Wait for the completion notification. If the workflow fails, re-run it with
 `resumeFromRunId` and the same `scriptPath`; finished agents return their
@@ -100,15 +112,16 @@ npx --no-install skills pr publish --result <output-file> --base <base from the 
 Before publishing, read the summary in the output file. It must stay under
 about 25 lines, lead paragraph and bullet sections together. If it has grown
 diagrams, a module map or a file-by-file tour, rewrite it in the output file
-first. The checklist has no length cap: trimming it deletes coverage.
+first. Leave the checklist as the workflow wrote it; its budget is already
+applied.
 
 It fills `{{template}}` with the summary, creates the PR as a draft or edits the
 open one, and writes the checklist into the Manual QA
 comment — editing the existing one, so its place in the timeline and everyone's
 notifications stay put. A checklist longer than one GitHub comment is split
 across numbered comments. It prints the PR's `url`, whether it was `created`,
-how many comment `parts` it wrote, the `unresolved` units, and the
-`trapCandidates`.
+how many comment `parts` it wrote, the `unresolved` units, the
+`trapCandidates`, and the `reportNotes`.
 
 It never moves an open PR onto another base on its own. When the open PR's base
 differs from the prepass's, it prints that base as `baseMismatch`. Tell the user,
@@ -135,9 +148,14 @@ Give the PR URL, and say:
   in the file's own shape: the trap, why the obvious step fails, and what to
   write instead. Every drafter reads that file, so each addition stops the
   same mistake costing a rewrite on the next PR.
-- **A boot block that failed verification**, if the checklist opens with a
-  warning. Every step relies on it, so it is published with the warning rather
-  than dropped.
+- **The report notes**, grouped by `kind`, one line each. They never reach
+  the PR: `test gap` (a coverage claim that did not hold — raise it in code
+  review), `deleted` (a step the checker removed as vacuous, covered or
+  unreachable), `pruned`, `duplicate`, `cut for budget` and `over budget`,
+  `no surface` and `not drafted`. Skip the section when there are none.
+- **A boot block or section setup that failed verification**, if the
+  checklist carries a warning. The steps after it rely on it, so it is
+  published with the warning rather than dropped.
 {{#qaGate}}- **The gate:** `.github/workflows/pr-manual-qa.yml` un-ticks every box on each
   push, and the `Manual QA` status stays red until they are ticked again. It
   only counts a checklist posted by someone who can push to the repository.
@@ -158,9 +176,11 @@ Give the PR URL, and say:
 - **No `gh` CLI or no auth**: publish fails naming the command. Print the
   summary and checklist from the output file so the user can open the PR by
   hand.
-- **No runtime surface touched**: the workflow writes only a summary and a
-  checklist of the line `_No manual checks needed — no runtime surface
-  touched._` plus the Local CI boxes. Publish both as normal.
+- **No runtime surface touched, or a tooling-only diff**: the workflow
+  writes only a summary and a checklist saying no manual checks are needed,
+  plus the Local CI boxes. Publish both as normal.
+- **A pure move**: the checklist is one smoke check plus a Local CI box for
+  the type check and build. That is correct, not a failed run.
 - **Commits land while the workflow runs**: publish refuses with "commits
   landed on GitHub since then, so re-run /{{name}}". Run the skill again once the
   branch is settled.
