@@ -21,6 +21,8 @@ import { runWorkflow } from './workflow.mjs';
 const labels = (calls) => calls.map((call) => call.label);
 const find = (calls, label) => calls.find((call) => call.label === label);
 const unitNames = (call) => promptUnits(call.prompt).map((unit) => unit.name);
+const afterTriage = (checklist) =>
+  checklist.replace(/^_Triage: [^\n]*_\n\n/, '');
 const gapText = (result) =>
   result.gaps.map((g) => `- ${g.gap} — ${g.why}`).join('\n');
 
@@ -164,6 +166,140 @@ describe('pr workflow — what runs', () => {
       { reply: prReplies() },
     );
     assert.ok(!labels(salesRun.calls).includes('draft:storybook'));
+  });
+});
+
+describe('pr workflow — triage', () => {
+  it('triages on Sonnet first, alongside the summary, and opens the checklist with its line', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      { reply: prReplies({ triage: { size: 'small', touches: ['page'] } }) },
+    );
+
+    assert.deepEqual(labels(calls).slice(0, 2), ['draft:summary', 'triage']);
+    assert.equal(find(calls, 'triage').model, 'sonnet');
+    assert.ok(
+      find(calls, 'triage').ended < find(calls, 'context-pack').started,
+    );
+    // No prepass hints, so anything could need running.
+    assert.match(
+      result.checklist,
+      /^_Triage: behaviour change \(small\) · needs database, api, page · about \d+ minutes_\n\n/,
+    );
+  });
+
+  it('adds to what the prepass found, never takes from it', async () => {
+    const source = await prWorkflow('webapp', {
+      outsideRepo: [
+        { ask: 'Hosting config?', paths: ['vercel.json'] },
+        { ask: 'New service?' },
+        { ask: 'New env var?' },
+      ],
+    });
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs(
+        { frontend: true },
+        {
+          triage: {
+            touches: ['page'],
+            pureMoveCandidate: false,
+            outsideRepo: [{ ask: 'Hosting config?', files: ['vercel.json'] }],
+          },
+        },
+      ),
+      {
+        reply: prReplies({
+          triage: {
+            touches: ['api'],
+            outsideRepo: [
+              { ask: 'Hosting config?', yes: false, why: 'no' },
+              {
+                ask: 'New service?',
+                yes: true,
+                why: 'calls Stripe',
+                files: ['src/pay.ts'],
+              },
+              { ask: 'New env var?', yes: false, why: 'none' },
+            ],
+          },
+        }),
+      },
+    );
+
+    assert.match(result.checklist, /needs api, page/);
+    assert.match(
+      find(calls, 'triage').prompt,
+      /- Hosting config\?\n- New service\?\n- New env var\?/,
+    );
+  });
+
+  it('falls back to a large behaviour change when the triage returns nothing', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({ triage: null }),
+      },
+    );
+
+    assert.ok(labels(calls).includes('context-pack'));
+    assert.match(result.checklist, /^_Triage: behaviour change \(large\)/);
+  });
+
+  it('writes only a summary for a tooling-only diff', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({ triage: { kind: 'tooling' } }),
+      },
+    );
+
+    assert.deepEqual(labels(calls), ['draft:summary', 'triage']);
+    assert.match(
+      result.checklist,
+      /^_Triage: tooling only · needs database, api, page · time not estimated_\n\n_No manual checks needed — nothing this branch changes runs in the product\._\n\n---\n\n### Local CI/,
+    );
+  });
+
+  it('gives a pure move a smoke check within its budget, skipping the inventory', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      { reply: prReplies({ triage: { kind: 'move', touches: ['page'] } }) },
+    );
+    const names = labels(calls);
+
+    for (const label of [
+      'context-pack',
+      'inventory:backend',
+      'audit:hunks',
+      'surfaces:frontend',
+    ]) {
+      assert.ok(!names.includes(label), `${label} skipped`);
+    }
+    assert.ok(names.indexOf('verify:boot') < names.indexOf('draft:smoke'));
+    assert.equal(unitNames(find(calls, 'verify:smoke')).length, 2);
+    assert.doesNotMatch(find(calls, 'draft:boot').prompt, /Context pack:/);
+    assert.match(
+      result.checklist,
+      /^_Triage: pure move · needs database, api, page · about 5 minutes_/,
+    );
+    assert.match(
+      result.checklist,
+      /## Smoke Check\n\n.*\n\n- \[ \] \*\*\[blocking\] Smoke 1 — Load the moved page\*\*/,
+    );
+    assert.match(
+      result.checklist,
+      /- \[ \] The type check and the production build pass/,
+    );
+    assert.equal(result.stats.steps, 2);
   });
 });
 
@@ -1179,7 +1315,7 @@ describe('pr workflow — edges', () => {
     });
 
     assert.ok(
-      result.checklist.startsWith(
+      afterTriage(result.checklist).startsWith(
         '> [!WARNING]\n> **This boot block did not pass verification** — the checker found no accurate version: no port. Check each command against the repository before relying on it.\n\n```bash\nnpm run dev\n```',
       ),
     );
@@ -1208,7 +1344,7 @@ describe('pr workflow — edges', () => {
 
     assert.ok(find(calls, 'verify:boot:r2'));
     assert.match(
-      result.checklist,
+      afterTriage(result.checklist),
       /^> \[!WARNING\]\n> \*\*This boot block did not pass verification\*\* — it still failed after 2 rounds: still no port\./,
     );
     assert.match(result.checklist, /npm run dev -- --port 3000/);
@@ -1230,7 +1366,11 @@ describe('pr workflow — edges', () => {
       }),
     });
 
-    assert.ok(result.checklist.startsWith('```bash\nnpm run db:reset\n```'));
+    assert.ok(
+      afterTriage(result.checklist).startsWith(
+        '```bash\nnpm run db:reset\n```',
+      ),
+    );
   });
 
   it('leaves out a human section that ended with no steps', async () => {

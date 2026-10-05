@@ -119,7 +119,8 @@ export function promptUnits(prompt) {
  * The scenario sets the `visible` sections, the `backend` and `human` entry
  * counts over `files`, the `claims` and `failClaims` ids, a `verify` verdict
  * function, `badFormat` human steps, the number of `stories`, and a `runner`
- * function naming who runs each human step, as `(entry, i) => 'agent' | 'human'`.
+ * function naming who runs each human step, as `(entry, i) => 'agent' | 'human'`,
+ * and the `triage` answer, merged over a large behaviour change touching everything.
  *
  * A claim's checker upholds it unless its entry id is in `failClaims`. `verify`
  * is asked about every other unit one at a time, as `verify:<unit name>` with
@@ -141,9 +142,52 @@ export function prReplies(scenario = {}) {
     badFormat = false,
     stories = 1,
     runner = null,
+    triage = {},
   } = scenario;
 
   return (label, prompt) => {
+    if (label === 'triage') {
+      return triage === null
+        ? null
+        : {
+            kind: 'behaviour',
+            size: 'large',
+            touches: ['database', 'api', 'page'],
+            outsideRepo: [],
+            ...triage,
+          };
+    }
+
+    if (label === 'draft:smoke') {
+      return {
+        steps: [
+          {
+            title: 'Load the moved page',
+            priority: 'blocking',
+            body: GOOD_HUMAN,
+            coversEntryIds: [],
+            minutes: 3,
+          },
+          {
+            title: 'A second smoke step',
+            priority: 'if-time',
+            body: GOOD_HUMAN,
+            coversEntryIds: [],
+            minutes: 2,
+          },
+          {
+            title: 'A third smoke step',
+            priority: 'if-time',
+            body: GOOD_HUMAN,
+            coversEntryIds: [],
+            minutes: 2,
+          },
+        ],
+        coveredByTests: [],
+        gaps: [],
+      };
+    }
+
     if (label === 'context-pack') {
       const keys = [...prompt.matchAll(/`(\w+)` — /g)].map((m) => m[1]);
       return {

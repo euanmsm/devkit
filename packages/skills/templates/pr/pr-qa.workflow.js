@@ -2,9 +2,10 @@
 // PR QA — Workflow Script
 // ============================================================================
 //
-// Explores a branch diff into a shared context pack, inventories behaviours,
-// audits for gaps, drafts the Manual QA checklist and summary, and verifies
-// every unit against the code before returning the assembled artifacts.
+// Triages a branch diff, explores it into a shared context pack, inventories
+// behaviours, audits for gaps, drafts the Manual QA checklist and summary, and
+// verifies every unit against the code before returning the assembled
+// artifacts.
 
 /** Workflow metadata read by the Workflow tool. */
 export const meta = {
@@ -12,6 +13,7 @@ export const meta = {
   description:
     'Explore a branch diff, inventory its behaviours, draft and adversarially verify the Manual QA checklist and PR summary',
   phases: [
+    { title: 'Triage' },
     { title: 'Explore' },
     { title: 'Inventory' },
     { title: 'Audit' },
@@ -29,6 +31,16 @@ const SECTIONS = CONFIG.sections;
 const BACKEND = SECTIONS.backend;
 const HUMAN_KEYS = Object.keys(SECTIONS).filter((key) => key !== 'backend');
 const PROMPTS = CONFIG.prompts;
+
+/** What a change can need running to test it, in the order the triage line names them. */
+const TOUCHES = ['database', 'api', 'page'];
+
+/** How the triage line names each kind of diff. */
+const KIND_NAMES = {
+  move: 'pure move',
+  tooling: 'tooling only',
+  behaviour: 'behaviour change',
+};
 
 /**
  * Opus for the work that decides what the checklist covers, Sonnet for narrow
@@ -74,6 +86,29 @@ const INVENTORY = {
   type: 'object',
   required: ['entries'],
   properties: { entries: { type: 'array', items: ENTRY } },
+};
+
+const TRIAGE_SCHEMA = {
+  type: 'object',
+  required: ['kind', 'size', 'touches', 'outsideRepo'],
+  properties: {
+    kind: { enum: Object.keys(KIND_NAMES) },
+    size: { enum: ['small', 'large'] },
+    touches: { type: 'array', items: { enum: TOUCHES } },
+    outsideRepo: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['ask', 'yes', 'why'],
+        properties: {
+          ask: str,
+          yes: { type: 'boolean' },
+          why: str,
+          files: { type: 'array', items: str },
+        },
+      },
+    },
+  },
 };
 
 const EXPLORE_SCHEMA = {
@@ -386,6 +421,46 @@ ${RUNNER_RULES}
 // =============================================================================
 // Prompt builders
 // =============================================================================
+
+/**
+ * Builds the prompt sizing up the diff before anything else runs.
+ *
+ * @param input - Workflow args plus derived paths
+ * @returns The prompt
+ */
+function triagePrompt(input) {
+  const questions = CONFIG.outsideRepo.map((question) => question.ask);
+
+  return `
+Triage this branch's diff for a Manual QA run. Later phases read your labels
+to decide how big a checklist to write and which services the tester starts.
+
+Branch: ${input.branch}
+Diff stat:
+${input.diffStat}
+
+Read the diff at \`${input.diffPath}\`${input.largeDiff ? ` (large — skim the per-file patches in \`${input.patchDir}\`)` : ''}.
+${packRule({ ...input, packPath: null })}
+The facts file ends with triage hints a script worked out. Treat them as
+evidence: confirm them, never contradict them without reading the code.
+
+Return:
+- kind — \`move\` when the diff only moves or renames code and fixes the
+  imports that forces, with no behaviour changed; \`tooling\` when nothing it
+  changes runs in the product (CI, lint, docs, dev scripts, tests alone);
+  \`behaviour\` otherwise.
+- size — \`small\` for one concern a tester could cover in a handful of
+  steps; \`large\` otherwise.
+- touches — what testing it needs running: \`database\` when it reads or
+  writes data or changes the schema, \`api\` when it changes an HTTP route or
+  server handler, \`page\` when it changes a rendered page or component. Empty
+  when it needs nothing running.
+- outsideRepo — one answer per question below: \`yes\`, why in one line, and
+  the changed files behind a yes.
+${bullets(questions, '- (no questions)')}
+
+Never run a command other than reading and searching files.`;
+}
 
 /**
  * Builds the prompt writing the shared context pack.
@@ -722,6 +797,36 @@ Each item carries EXACTLY two things:
 No file paths in the output (keep storyFile in the data for verification
 only), no routes, no numbered click walkthroughs, no separate Expected
 paragraph. Drop stories the branch did not visibly change.`;
+}
+
+/**
+ * Builds the prompt drafting the smoke check for a pure move.
+ *
+ * @param input - Workflow args plus derived paths, with the verified `bootMarkdown`
+ * @returns The prompt
+ */
+function smokePrompt(input) {
+  return `
+Draft the SMOKE CHECK of a Manual QA checklist. The triage found this branch
+only moves or renames code, so the type checker and the build prove most of
+it. Write at most ${CONFIG.budget.move} step(s) proving the moved code still runs.
+
+Branch: ${input.branch}
+Diff stat:
+${input.diffStat}
+
+Read the diff at \`${input.diffPath}\`.${packRule(input)}
+
+Pick the page, route or command that exercises the most moved code. Load it,
+do its main action, and expect it to work with no errors in the console or the
+server log. Never walk through every screen; this is a smoke check.
+
+## Step shape
+${STEP_FORMAT}
+${draftEnvironment(input, triage.touches.includes('api'))}
+
+Return the steps, with empty coveredByTests, and a gap only for something the
+move could break that no step can reach.`;
 }
 
 /**
@@ -1294,7 +1399,7 @@ function numberSteps(steps, prefix, start = 0) {
  * @returns The timing line
  */
 function timingLine(steps, paste, runs = '') {
-  const minutes = steps.reduce((sum, step) => sum + (Number(step.minutes) || 0), 0);
+  const minutes = totalMinutes(steps);
   const blocking = steps.filter((step) => step.priority === 'blocking').length;
   const time = minutes > 0 ? `About ${Math.max(1, Math.round(minutes))} minutes` : 'Time not estimated';
   const note = paste ? ' Paste what you observed under each step.' : '';
@@ -1363,10 +1468,11 @@ function storybookMarkdown(bodies) {
  * Builds the Local CI checklist block.
  *
  * @param branch - The branch name, filled into the note
+ * @param extra - Boxes to add after the configured ones
  * @returns The block markdown
  */
-function localCiBlock(branch) {
-  const boxes = CONFIG.localCi.map((line) => `- [ ] ${line}`).join('\n');
+function localCiBlock(branch, extra = []) {
+  const boxes = [...CONFIG.localCi, ...extra].map((line) => `- [ ] ${line}`).join('\n');
   const note = CONFIG.localCiNote
     ? `\n\n${CONFIG.localCiNote.split('{{branch}}').join(branch)}`
     : '';
@@ -1425,6 +1531,27 @@ input.sections = input.sections ?? {};
 
 const touched = Object.keys(SECTIONS).filter((key) => input.sections[key]);
 
+/**
+ * Builds the result for a diff that needs no manual steps.
+ *
+ * The Local CI boxes stay, so a push the gate resets still needs a tick.
+ *
+ * @param summary - The summary agent's answer
+ * @param why - What the checklist says instead of steps
+ * @param lead - Lines to open the checklist with, such as the triage line
+ * @returns The workflow result
+ */
+function summaryOnly(summary, why, lead = []) {
+  return {
+    summary: summary?.markdown ?? '',
+    checklist: [...lead, `_No manual checks needed — ${why}._`, `---\n\n${localCiBlock(input.branch)}`].join('\n\n'),
+    gaps: [],
+    unresolved: [],
+    trapCandidates: [],
+    stats: { entries: 0, steps: 0, verified: 0 },
+  };
+}
+
 if (touched.length === 0) {
   phase('Draft and verify');
   log('No runtime surface touched — summary only');
@@ -1436,26 +1563,226 @@ if (touched.length === 0) {
     model: LIGHT,
   });
 
-  // The Local CI boxes stay, so a push the gate resets still needs a tick.
+  return summaryOnly(summary, 'no runtime surface touched');
+}
+
+phase('Triage');
+
+// The summary needs only the diff, so it runs alongside everything else.
+const summaryRun = agent(summaryPrompt(input), {
+  label: 'draft:summary',
+  phase: 'Triage',
+  schema: TEXT_SCHEMA,
+  model: LIGHT,
+});
+
+/**
+ * Combines the triage agent's labels with what the prepass worked out.
+ *
+ * A script finding is never overruled: the agent can add to what the diff
+ * touches and answer more questions yes, never fewer.
+ *
+ * @param answer - The triage agent's answer, or null when it returned nothing
+ * @returns The `kind`, `size`, `touches` and yes `outsideRepo` answers
+ */
+function settleTriage(answer) {
+  const hints = input.triage ?? {};
+  // Without hints from the prepass, anything could need running.
+  const hinted = hints.touches ?? TOUCHES;
+  const said = answer?.touches ?? [];
+
+  const outsideRepo = CONFIG.outsideRepo
+    .map((question) => {
+      const found = (hints.outsideRepo ?? []).find((a) => a.ask === question.ask);
+      const yes = (answer?.outsideRepo ?? []).find(
+        (a) => a.ask === question.ask && a.yes,
+      );
+      if (!found && !yes) return null;
+
+      return {
+        ask: question.ask,
+        why: yes?.why ?? 'a changed file matches it',
+        files: [...new Set([...(found?.files ?? []), ...(yes?.files ?? [])])],
+      };
+    })
+    .filter(Boolean);
+
   return {
-    summary: summary?.markdown ?? '',
-    checklist: `_No manual checks needed — no runtime surface touched._\n\n---\n\n${localCiBlock(input.branch)}`,
-    gaps: [],
-    unresolved: [],
+    kind: answer?.kind ?? 'behaviour',
+    size: answer?.size ?? 'large',
+    touches: TOUCHES.filter((t) => hinted.includes(t) || said.includes(t)),
+    outsideRepo,
+  };
+}
+
+const triage = settleTriage(
+  await agent(triagePrompt(input), {
+    label: 'triage',
+    phase: 'Triage',
+    schema: TRIAGE_SCHEMA,
+    model: LIGHT,
+  }),
+);
+
+/**
+ * Writes the line opening the checklist, so a tester knows the size of the job first.
+ *
+ * @param minutes - The checklist's estimated minutes, or 0 when not estimated
+ * @returns The triage line
+ */
+function triageLine(minutes) {
+  const kind = KIND_NAMES[triage.kind] + (triage.kind === 'behaviour' ? ` (${triage.size})` : '');
+  const needs = triage.touches.length > 0 ? `needs ${triage.touches.join(', ')}` : 'needs nothing running';
+  const time = minutes > 0 ? `about ${Math.max(1, Math.round(minutes))} minutes` : 'time not estimated';
+
+  return `_Triage: ${kind} · ${needs} · ${time}_`;
+}
+
+log(`Triage: ${triageLine(0)}`);
+
+if (triage.kind === 'tooling') {
+  log('Triage found nothing that runs in the product — summary only');
+  return summaryOnly(await summaryRun, 'nothing this branch changes runs in the product', [triageLine(0)]);
+}
+
+/**
+ * Drafts the boot block, then verifies it.
+ *
+ * @param context - Workflow args plus derived paths
+ * @param phaseName - The phase the draft is shown under
+ * @returns The boot block's verification outcome, or null when no draft came back
+ */
+function startBoot(context, phaseName) {
+  return agent(bootDraftPrompt(context), {
+    label: 'draft:boot',
+    phase: phaseName,
+    schema: TEXT_SCHEMA,
+    model: DEEP,
+  }).then((boot) =>
+    boot?.markdown
+      ? verifyUnits(context, 'boot', [
+          { kind: 'boot', label: 'boot', body: boot.markdown },
+        ]).then(([outcome]) => outcome)
+      : null,
+  );
+}
+
+const BOOT_WARNINGS = {
+  deleted: 'the checker found no accurate version',
+  exhausted: `it still failed after ${MAX_VERIFY_ROUNDS} rounds`,
+  unverified: 'the checker returned no verdict',
+};
+
+/**
+ * Settles the verified boot block. Every step assumes it, so one that failed
+ * is kept, flagged with a warning, rather than dropped.
+ *
+ * @param outcome - The boot block's verification outcome, or null
+ * @returns The `body` drafters write against, and the `published` markdown
+ */
+function settleBoot(outcome) {
+  const body = outcome?.unit.body ?? '';
+  if (!outcome || outcome.fate === 'pass') return { body, published: body };
+
+  log(`Boot block did not pass verification (${outcome.fate}) — published with a warning`);
+  const why = [BOOT_WARNINGS[outcome.fate], oneLine(outcome.reason)]
+    .filter(Boolean)
+    .join(': ');
+
+  return {
+    body,
+    published: `> [!WARNING]\n> **This boot block did not pass verification** — ${why}. Check each command against the repository before relying on it.\n\n${body.trim()}`,
+  };
+}
+
+/**
+ * Turns the units verification left out into gaps the author hears about.
+ *
+ * @param outcomes - Verification outcomes
+ * @returns One gap per deleted, exhausted or unverified unit
+ */
+function outcomeGaps(outcomes) {
+  return outcomes.flatMap((o) => {
+    if (o.fate === 'deleted') {
+      log(`Deleted (no accurate version): ${o.unit.label}`);
+      return [{ gap: o.unit.label, why: `no accurate manual version — ${oneLine(o.reason)}` }];
+    }
+    if (o.fate === 'exhausted') {
+      log(`Left out, still failing after ${MAX_VERIFY_ROUNDS} rounds: ${o.unit.label}`);
+      return [{ gap: o.unit.label, why: `failed verification ${MAX_VERIFY_ROUNDS} times — ${oneLine(o.reason)}` }];
+    }
+    if (o.fate === 'unverified') {
+      log(`Left out, never verified (${o.reason}): ${o.unit.label}`);
+      return [{ gap: o.unit.label, why: `never verified — ${o.reason}` }];
+    }
+    return [];
+  });
+}
+
+/**
+ * Lists the units verification could not settle, for the author's report.
+ *
+ * @param outcomes - Verification outcomes
+ * @returns The labels of exhausted and unverified units
+ */
+function unresolvedLabels(outcomes) {
+  return outcomes
+    .filter((o) => o.fate === 'exhausted' || o.fate === 'unverified')
+    .map((o) => o.unit.label);
+}
+
+/**
+ * Sums the minutes a tester needs for some steps.
+ *
+ * @param steps - The steps
+ * @returns Their estimated minutes
+ */
+function totalMinutes(steps) {
+  return steps.reduce((sum, step) => sum + (Number(step.minutes) || 0), 0);
+}
+
+if (triage.kind === 'move') {
+  phase('Draft and verify');
+  log('Triage found a pure move — one smoke check instead of a full checklist');
+
+  // A move needs no context pack: the diff and facts file are enough.
+  const moveInput = { ...input, packPath: null };
+  const boot = settleBoot(await startBoot(moveInput, 'Draft and verify'));
+  moveInput.bootMarkdown = boot.body;
+
+  const drafted = await agent(smokePrompt(moveInput), {
+    label: 'draft:smoke',
+    phase: 'Draft and verify',
+    schema: SECTION_SCHEMA,
+    model: DEEP,
+  });
+  const outcomes = await verifyUnits(
+    moveInput,
+    'smoke',
+    (drafted?.steps ?? []).slice(0, CONFIG.budget.move).map((step) => stepUnit('smoke', step)),
+  );
+  const steps = outcomes.filter((o) => o.fate === 'pass').map((o) => readStep(o.unit));
+
+  const checklist = [
+    triageLine(totalMinutes(steps)),
+    boot.published.trim(),
+    steps.length > 0
+      ? `---\n\n## Smoke Check\n\n${timingLine(steps, true)}\n\n${numberSteps(steps, 'Smoke')}`
+      : '',
+    `---\n\n${localCiBlock(input.branch, ['The type check and the production build pass'])}`,
+  ].filter(Boolean);
+
+  return {
+    summary: (await summaryRun)?.markdown ?? '',
+    checklist: checklist.join('\n\n'),
+    gaps: [...(drafted?.gaps ?? []), ...outcomeGaps(outcomes)],
+    unresolved: unresolvedLabels(outcomes),
     trapCandidates: [],
-    stats: { entries: 0, steps: 0, verified: 0 },
+    stats: { entries: 0, steps: steps.length, checkerAgents },
   };
 }
 
 phase('Explore');
-
-// The summary, surfaces and Storybook drafts need only the diff and facts file.
-const summaryRun = agent(summaryPrompt(input), {
-  label: 'draft:summary',
-  phase: 'Explore',
-  schema: TEXT_SCHEMA,
-  model: LIGHT,
-});
 
 const surfaceRuns = Object.fromEntries(
   HUMAN_KEYS.filter((key) => input.sections[key]).map((key) => [
@@ -1493,18 +1820,7 @@ const visibleSections = new Set(explore.visibleSections ?? []);
 
 // The boot block needs only the pack, so it drafts and is verified while the
 // inventory and audit run. Every drafter then writes against the verified one.
-const bootRun = agent(bootDraftPrompt(input), {
-  label: 'draft:boot',
-  phase: 'Inventory',
-  schema: TEXT_SCHEMA,
-  model: DEEP,
-}).then((boot) =>
-  boot?.markdown
-    ? verifyUnits(input, 'boot', [
-        { kind: 'boot', label: 'boot', body: boot.markdown },
-      ]).then(([outcome]) => outcome)
-    : null,
-);
+const bootRun = startBoot(input, 'Inventory');
 
 phase('Inventory');
 
@@ -1585,23 +1901,8 @@ function entryText(id) {
   return entry ? `${entry.behaviour} (${entry.where})` : id;
 }
 
-const BOOT_WARNINGS = {
-  deleted: 'the checker found no accurate version',
-  exhausted: `it still failed after ${MAX_VERIFY_ROUNDS} rounds`,
-  unverified: 'the checker returned no verdict',
-};
-
-// Every step assumes the boot block, so one that failed is kept, flagged.
-const bootVerified = await bootRun;
-input.bootMarkdown = bootVerified?.unit.body ?? '';
-let finalBoot = input.bootMarkdown;
-if (bootVerified && bootVerified.fate !== 'pass') {
-  log(`Boot block did not pass verification (${bootVerified.fate}) — published with a warning`);
-  const why = [BOOT_WARNINGS[bootVerified.fate], oneLine(bootVerified.reason)]
-    .filter(Boolean)
-    .join(': ');
-  finalBoot = `> [!WARNING]\n> **This boot block did not pass verification** — ${why}. Check each command against the repository before relying on it.\n\n${finalBoot.trim()}`;
-}
+const boot = settleBoot(await bootRun);
+input.bootMarkdown = boot.body;
 
 const backendEntries = entries.filter((entry) => sectionFor(entry) === 'backend');
 const backendChunks = input.sections.backend ? chunkEntries(backendEntries) : [];
@@ -1768,14 +2069,6 @@ const deleted = allVerified.filter((v) => v.fate === 'deleted');
 const exhausted = allVerified.filter((v) => v.fate === 'exhausted');
 const unverified = allVerified.filter((v) => v.fate === 'unverified');
 
-for (const d of deleted) log(`Deleted (no accurate version): ${d.unit.label}`);
-for (const e of exhausted) {
-  log(`Left out, still failing after ${MAX_VERIFY_ROUNDS} rounds: ${e.unit.label}`);
-}
-for (const u of unverified) {
-  log(`Left out, never verified (${u.reason}): ${u.unit.label}`);
-}
-
 /**
  * Collects the steps of one section that passed verification.
  *
@@ -1806,21 +2099,10 @@ const gaps = [
     gap: `${entry.behaviour} (${entry.where})`,
     why: 'no checklist section drafts it, since the backend section is off',
   })),
-  ...deleted.map((d) => ({
-    gap: d.unit.label,
-    why: `no accurate manual version — ${oneLine(d.reason)}`,
-  })),
-  ...exhausted.map((e) => ({
-    gap: e.unit.label,
-    why: `failed verification ${MAX_VERIFY_ROUNDS} times — ${oneLine(e.reason)}`,
-  })),
-  ...unverified.map((u) => ({
-    gap: u.unit.label,
-    why: `never verified — ${u.reason}`,
-  })),
+  ...outcomeGaps(allVerified),
 ];
 
-const sectionsMd = [finalBoot.trim()];
+const sectionsMd = [boot.published.trim()];
 let stepCount = 0;
 
 const backendSteps = keep('backend');
@@ -1867,12 +2149,20 @@ if (CONFIG.boot.stop) {
 }
 
 sectionsMd.push(`---\n\n${localCiBlock(input.branch)}`);
+sectionsMd.unshift(
+  triageLine(
+    totalMinutes([
+      ...keep('backend'),
+      ...HUMAN_KEYS.flatMap((key) => keep(key)),
+    ]),
+  ),
+);
 
 return {
   summary: (await summaryRun)?.markdown ?? '',
   checklist: sectionsMd.join('\n\n'),
   gaps,
-  unresolved: [...exhausted, ...unverified].map((v) => v.unit.label),
+  unresolved: unresolvedLabels(allVerified),
   trapCandidates: ((await trapRun)?.traps ?? []).filter(
     (trap) => trap.units >= TRAP_MIN_UNITS,
   ),
