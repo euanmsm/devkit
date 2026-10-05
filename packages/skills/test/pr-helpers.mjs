@@ -121,7 +121,8 @@ export function promptUnits(prompt) {
  * `failClaims` ids, a `verify` verdict
  * function, `badFormat` human steps, the number of `stories`, and a `runner`
  * function naming who runs each human step, as `(entry, i) => 'agent' | 'human'`,
- * and the `triage` answer, merged over a large behaviour change touching everything.
+ * the `triage` answer, merged over a large behaviour change touching everything,
+ * and the `prune` answer, which keeps everything by default.
  *
  * A claim's checker upholds it unless its entry id is in `failClaims`. `verify`
  * is asked about every other unit one at a time, as `verify:<unit name>` with
@@ -145,6 +146,7 @@ export function prReplies(scenario = {}) {
     runner = null,
     triage = {},
     humanClaims = [],
+    prune = { merge: [], drop: [] },
   } = scenario;
 
   return (label, prompt) => {
@@ -253,6 +255,7 @@ export function prReplies(scenario = {}) {
     }
 
     if (label.startsWith('audit:')) return { entries: [] };
+    if (label === 'prune') return prune;
 
     if (label.startsWith('draft:backend')) {
       const entries = promptEntries(prompt);

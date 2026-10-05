@@ -17,6 +17,7 @@ export const meta = {
     { title: 'Explore' },
     { title: 'Inventory' },
     { title: 'Audit' },
+    { title: 'Prune' },
     { title: 'Draft and verify' },
   ],
 };
@@ -141,6 +142,39 @@ const SURFACES_SCHEMA = {
       },
     },
     unresolved: { type: 'array', items: str },
+  },
+};
+
+const PRUNE_SCHEMA = {
+  type: 'object',
+  required: ['merge', 'drop'],
+  properties: {
+    merge: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['keep', 'ids', 'inputs'],
+        properties: {
+          keep: str,
+          ids: { type: 'array', items: str },
+          inputs: str,
+        },
+      },
+    },
+    drop: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'reason', 'why'],
+        properties: {
+          id: str,
+          reason: { enum: ['passes-on-main', 'covered'] },
+          why: str,
+          testFile: { type: ['string', 'null'] },
+          assertion: { type: ['string', 'null'] },
+        },
+      },
+    },
   },
 };
 
@@ -680,6 +714,47 @@ checker, the build or a test suite: Local CI covers those.
 
 Tests that exist:
 ${JSON.stringify(testFiles, null, 1)}`;
+}
+
+/**
+ * Builds the prompt pruning the inventory down to what could actually break.
+ *
+ * @param input - Workflow args plus derived paths
+ * @param entries - The inventory after the audit
+ * @param testFiles - The test files found by the explorer
+ * @returns The prompt
+ */
+function prunePrompt(input, entries, testFiles) {
+  return `
+You are the PRUNER for a PR QA inventory. The inventory agents and auditors
+only ever add entries; you are the one step that removes them, so the
+checklist carries one step per behaviour that could actually break.
+
+Branch: ${input.branch}
+Read the diff at \`${input.diffPath}\`.${packRule(input)}
+
+Tests that exist:
+${JSON.stringify(testFiles, null, 1)}
+
+The inventory:
+${JSON.stringify(entries, null, 1)}
+
+Return:
+- merge — groups that are one behaviour differing only by input, or one
+  shared component at several render sites. Name the entry to \`keep\` (for a
+  shared component, the riskiest page), every id in the group in \`ids\`, and
+  in \`inputs\` the inputs or pages the kept entry now stands for.
+- drop — entries to remove, each with a reason:
+  - \`passes-on-main\` — the old code would satisfy it too: the behaviour did
+    not change, only code near it did. Say what shows that in \`why\`.
+  - \`covered\` — a test above already asserts it. Name the \`testFile\` and the
+    \`assertion\`. It is checked later; one that does not hold is reported to
+    code review as a test gap.
+
+Never drop a check only a person can judge (how it looks or feels, a screen
+reader). Never drop deleted behaviour unless a test asserts it is gone. An
+entry you do not mention is kept. Never run a command other than reading and
+searching files.`;
 }
 
 /**
@@ -1844,6 +1919,75 @@ const combined = dedupeEntries([
 log(`Audit added ${combined.length - entries.length} entries`);
 entries = combined;
 
+/** Every entry the inventory and audit produced, pruned or not, by id. */
+const everyEntry = new Map(entries.map((entry) => [entry.id, entry]));
+
+phase('Prune');
+
+/**
+ * Applies the pruner's merges and drops, ignoring any id it made up.
+ *
+ * @param list - The inventory after the audit
+ * @param answer - The pruner's answer, or null when it returned nothing
+ * @returns The kept `entries`, the `covered` drops to verify as claims, and the `passing` drops
+ */
+function applyPrune(list, answer) {
+  const byId = new Map(list.map((entry) => [entry.id, entry]));
+  const removed = new Set();
+  const covered = [];
+  const passing = [];
+
+  for (const group of answer?.merge ?? []) {
+    if (!byId.has(group.keep) || removed.has(group.keep)) continue;
+    const others = (group.ids ?? []).filter(
+      (id) => id !== group.keep && byId.has(id) && !removed.has(id),
+    );
+    if (others.length === 0) continue;
+
+    for (const id of others) removed.add(id);
+    const kept = byId.get(group.keep);
+    byId.set(group.keep, {
+      ...kept,
+      behaviour: group.inputs ? `${kept.behaviour} — stands for ${group.inputs}` : kept.behaviour,
+    });
+  }
+
+  for (const drop of answer?.drop ?? []) {
+    if (!byId.has(drop.id) || removed.has(drop.id)) continue;
+    // A covered drop that names no test has nothing to check, so the entry stays.
+    if (drop.reason === 'covered' && !drop.testFile) continue;
+
+    removed.add(drop.id);
+    if (drop.reason === 'covered') {
+      covered.push({ entryId: drop.id, testFile: drop.testFile, assertion: drop.assertion ?? drop.why });
+    } else {
+      passing.push({ entry: byId.get(drop.id), why: drop.why });
+    }
+  }
+
+  return {
+    entries: list.filter((entry) => !removed.has(entry.id)).map((entry) => byId.get(entry.id)),
+    covered,
+    passing,
+  };
+}
+
+const pruned = applyPrune(
+  entries,
+  await agent(prunePrompt(input, entries, testFiles), {
+    label: 'prune',
+    phase: 'Prune',
+    schema: PRUNE_SCHEMA,
+    model: DEEP,
+  }),
+);
+
+log(
+  `Prune kept ${pruned.entries.length} of ${entries.length} entries: ${pruned.covered.length} covered by a test, ${pruned.passing.length} would pass on main`,
+);
+const auditedCount = entries.length;
+entries = pruned.entries;
+
 phase('Draft and verify');
 
 const firstVisible = HUMAN_KEYS.find((key) => input.sections[key]);
@@ -1868,7 +2012,7 @@ function sectionFor(entry) {
  * @returns The entry description, or the id when no entry matches
  */
 function entryText(id) {
-  const entry = entries.find((e) => e.id === id);
+  const entry = everyEntry.get(id);
   return entry ? `${entry.behaviour} (${entry.where})` : id;
 }
 
@@ -1985,7 +2129,15 @@ log(
   `Drafting ${backendChunks.length} backend group(s) and ${humanGroups.length} group(s) across ${humanKeys.length} human section(s); each group's steps are verified up to ${PER_VERIFIER_CAP} to a checker`,
 );
 
-const [backendResults, humanResults, storybookVerified] = await Promise.all([
+// The pruner's covered drops are claims like a drafter's, checked by their own checkers.
+const prunedClaims = HUMAN_KEYS.concat('backend').flatMap((key) =>
+  claimUnits(
+    key,
+    pruned.covered.filter((claim) => sectionFor(everyEntry.get(claim.entryId)) === key),
+  ),
+);
+
+const [backendResults, humanResults, storybookVerified, prunedVerified] = await Promise.all([
   Promise.all(backendChunks.map(draftAndVerifyBackend)),
   Promise.all(humanGroups.map(draftAndVerifyHuman)),
   storybookRun.then((drafted) =>
@@ -2001,6 +2153,7 @@ const [backendResults, humanResults, storybookVerified] = await Promise.all([
       { model: LIGHT },
     ),
   ),
+  verifyUnits(input, 'pruned', prunedClaims),
 ]);
 
 // The repeated mistakes behind this run's failures, for the author to add to the traps file.
@@ -2018,6 +2171,7 @@ const allVerified = [
   ...backendResults.flatMap((result) => result.verified),
   ...humanResults.flatMap((result) => result.verified),
   ...storybookVerified,
+  ...prunedVerified,
 ];
 
 // A claim is not a step: one upheld cites its test, one that fails is a test gap.
@@ -2130,7 +2284,7 @@ if (backendSteps.length > 0) {
       'backend',
     ),
   );
-} else {
+} else if (input.sections.backend) {
   sectionsMd.push(...coveredOnly(BACKEND.title, 'backend'));
 }
 
@@ -2195,6 +2349,7 @@ return {
   ),
   stats: {
     entries: entries.length,
+    pruned: auditedCount - entries.length,
     steps: stepCount,
     storybookItems: storybookItems.length,
     backendDrafters: backendChunks.length,

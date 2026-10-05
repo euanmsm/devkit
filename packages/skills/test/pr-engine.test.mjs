@@ -303,6 +303,85 @@ describe('pr workflow — triage', () => {
   });
 });
 
+describe('pr workflow — prune', () => {
+  it('prunes on Opus after both audits, before any drafter', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies(),
+    });
+    const prune = find(calls, 'prune');
+
+    assert.equal(prune.model, 'opus');
+    assert.ok(find(calls, 'audit:hunks').ended < prune.started);
+    assert.ok(find(calls, 'audit:dimensions').ended < prune.started);
+    assert.ok(prune.ended < find(calls, 'draft:backend').started);
+    assert.match(prune.prompt, /"id": "be-1"/);
+  });
+
+  it('merges and drops what it names, ignoring made-up ids and covered drops with no test', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({
+          backend: 5,
+          prune: {
+            merge: [
+              {
+                keep: 'be-1',
+                ids: ['be-1', 'be-2', 'be-99'],
+                inputs: 'every status code',
+              },
+              { keep: 'be-404', ids: ['be-3'], inputs: 'nothing' },
+            ],
+            drop: [
+              {
+                id: 'be-4',
+                reason: 'passes-on-main',
+                why: 'only a comment moved',
+              },
+              {
+                id: 'be-5',
+                reason: 'covered',
+                why: 'asserted',
+                testFile: 'src/a.test.ts',
+                assertion: 'it 5',
+              },
+              {
+                id: 'xc-1',
+                reason: 'covered',
+                why: 'probably',
+                testFile: null,
+              },
+              { id: 'nope', reason: 'passes-on-main', why: 'made up' },
+            ],
+          },
+        }),
+      },
+    );
+    const drafted = promptEntries(find(calls, 'draft:backend').prompt);
+
+    assert.deepEqual(drafted.map((e) => e.id).sort(), ['be-1', 'be-3', 'xc-1']);
+    assert.match(
+      drafted.find((e) => e.id === 'be-1').behaviour,
+      /backend behaviour 1 — stands for every status code/,
+    );
+    assert.deepEqual(unitNames(find(calls, 'verify:pruned')), ['claim:be-5']);
+    assert.match(result.checklist, /\*\*Covered by:\*\* `src\/a\.test\.ts`/);
+    assert.equal(result.stats.pruned, 3);
+  });
+
+  it('keeps the whole inventory when the pruner returns nothing', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({ prune: null }),
+    });
+
+    assert.equal(promptEntries(find(calls, 'draft:backend').prompt).length, 4);
+  });
+});
+
 describe('pr workflow — the backend drafters', () => {
   it('splits backend entries across drafters, each entry exactly once', async () => {
     const source = await prWorkflow('webapp');
