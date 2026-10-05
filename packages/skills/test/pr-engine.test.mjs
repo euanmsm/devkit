@@ -362,7 +362,7 @@ describe('pr workflow — the backend drafters', () => {
 });
 
 describe('pr workflow — verification', () => {
-  it('turns a failed coverage claim into a verified backend step', async () => {
+  it('cites an upheld claim under Covered by, and reports a failed one as a test gap', async () => {
     const source = await prWorkflow('webapp');
     const { result, calls } = await runWorkflow(
       source,
@@ -382,43 +382,49 @@ describe('pr workflow — verification', () => {
       find(calls, 'verify:backend').prompt,
       /For a claim the checks reduce to/,
     );
-    assert.ok(labels(calls).includes('convert:be-2'));
-    assert.ok(!labels(calls).includes('convert:be-1'));
-    assert.deepEqual(unitNames(find(calls, 'verify:converted')), [
-      'converted:Converted be-2',
-    ]);
-    assert.match(result.checklist, /Backend \d — Converted be-2/);
+    assert.ok(!labels(calls).some((label) => label.startsWith('convert:')));
+    assert.doesNotMatch(result.checklist, /Check be-2/);
+    assert.match(result.checklist, /\*\*Covered by:\*\* `src\/a\.test\.ts`/);
+    assert.match(
+      gapText(result),
+      /backend behaviour 2 \(src\/service\/file1\.ts:11\) — no test proves it after all, so it is a test gap for code review — no such assertion/,
+    );
     assert.equal(result.stats.claimsChecked, 2);
-    assert.equal(result.stats.claimsConverted, 1);
-    assert.equal(find(calls, 'convert:be-2').model, 'opus');
+    assert.equal(result.stats.claimsFailed, 1);
     assert.ok(!result.gaps.some((gap) => gap.gap.startsWith('claim:')));
   });
 
-  it('starts a conversion while other steps are still being re-checked', async () => {
+  it('lets a human section cite tests too, and tells drafters to cite rather than repeat', async () => {
     const source = await prWorkflow('webapp');
-    const slow = 'verify:backend:Check be-2';
-    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
-      reply: prReplies({
-        claims: ['be-1'],
-        failClaims: ['be-1'],
-        verify: (label) =>
-          label.startsWith(slow) && !label.endsWith(':r2')
-            ? {
-                verdict: 'FAIL',
-                findings: 'wrong port',
-                rewrite: '```bash\ncurl\n```\n\n**Expect:** `201`',
-              }
-            : { verdict: 'PASS', findings: 'holds' },
-      }),
-      delay: (label) => (label.startsWith('verify:backend') ? 15 : 0),
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ frontend: true }),
+      { reply: prReplies({ human: 2, humanClaims: ['frontend-2'] }) },
+    );
+    const draft = find(calls, 'draft:frontend').prompt;
+
+    assert.match(draft, /A manual step exists only for what no test proves/);
+    assert.match(draft, /never a judgement|is never covered by a test/);
+    assert.doesNotMatch(draft, /NO automated-test filter/);
+    assert.doesNotMatch(find(calls, 'draft:frontend').prompt, /When in doubt/);
+    assert.deepEqual(unitNames(find(calls, 'verify:frontend')), [
+      'frontend:See frontend-1',
+      'claim:frontend-2',
+    ]);
+    assert.match(result.checklist, /See frontend-1/);
+    assert.doesNotMatch(result.checklist, /See frontend-2/);
+    assert.match(result.checklist, /\*\*Covered by:\*\* `src\/a\.test\.ts`/);
+  });
+
+  it('renders a section whose every entry a test proves as just its Covered by line', async () => {
+    const source = await prWorkflow('webapp');
+    const { result } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({ backend: 2, claims: ['be-1', 'be-2', 'xc-1'] }),
     });
 
-    const convert = find(calls, 'convert:be-1');
-    const lastSlowRound = find(calls, 'verify:backend:r2');
-    assert.ok(lastSlowRound, 'the slow step took two rounds');
-    assert.ok(
-      convert.started < lastSlowRound.ended,
-      'the conversion did not wait for the slow step',
+    assert.match(
+      result.checklist,
+      /## Agent-Runnable Backend Checks\n\n_Every change here is proven by a test\._\n\n\*\*Covered by:\*\* `src\/a\.test\.ts`/,
     );
   });
 

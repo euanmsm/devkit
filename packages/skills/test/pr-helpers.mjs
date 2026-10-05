@@ -117,7 +117,8 @@ export function promptUnits(prompt) {
  * Builds a canned-reply function for one scenario.
  *
  * The scenario sets the `visible` sections, the `backend` and `human` entry
- * counts over `files`, the `claims` and `failClaims` ids, a `verify` verdict
+ * counts over `files`, the backend `claims`, the `humanClaims` and the
+ * `failClaims` ids, a `verify` verdict
  * function, `badFormat` human steps, the number of `stories`, and a `runner`
  * function naming who runs each human step, as `(entry, i) => 'agent' | 'human'`,
  * and the `triage` answer, merged over a large behaviour change touching everything.
@@ -143,6 +144,7 @@ export function prReplies(scenario = {}) {
     stories = 1,
     runner = null,
     triage = {},
+    humanClaims = [],
   } = scenario;
 
   return (label, prompt) => {
@@ -293,16 +295,25 @@ export function prReplies(scenario = {}) {
     }
 
     if (label.startsWith('draft:')) {
+      const entries = promptEntries(prompt);
       return {
-        steps: promptEntries(prompt).map((entry, i) => ({
-          title: `See ${entry.id}`,
-          priority: i === 0 ? 'blocking' : 'if-time',
-          body: badFormat ? 'Open the page and look.' : GOOD_HUMAN,
-          coversEntryIds: [entry.id],
-          minutes: 3,
-          ...(runner ? { runner: runner(entry, i) } : {}),
-        })),
-        coveredByTests: [],
+        steps: entries
+          .filter((entry) => !humanClaims.includes(entry.id))
+          .map((entry, i) => ({
+            title: `See ${entry.id}`,
+            priority: i === 0 ? 'blocking' : 'if-time',
+            body: badFormat ? 'Open the page and look.' : GOOD_HUMAN,
+            coversEntryIds: [entry.id],
+            minutes: 3,
+            ...(runner ? { runner: runner(entry, i) } : {}),
+          })),
+        coveredByTests: entries
+          .filter((entry) => humanClaims.includes(entry.id))
+          .map((entry) => ({
+            entryId: entry.id,
+            testFile: 'src/a.test.ts',
+            assertion: `asserts ${entry.id}`,
+          })),
         gaps: [{ gap: 'screen reader output', why: 'needs a screen reader' }],
       };
     }
@@ -344,23 +355,6 @@ export function prReplies(scenario = {}) {
           },
           { trap: 'a one-off', why: 'why', instead: 'do that', units: 1 },
         ],
-      };
-    }
-
-    if (label.startsWith('convert:')) {
-      const id = label.slice('convert:'.length);
-      return {
-        steps: [
-          {
-            title: `Converted ${id}`,
-            priority: 'blocking',
-            body: GOOD_BACKEND,
-            coversEntryIds: [id],
-            minutes: 4,
-          },
-        ],
-        coveredByTests: [],
-        gaps: [],
       };
     }
 

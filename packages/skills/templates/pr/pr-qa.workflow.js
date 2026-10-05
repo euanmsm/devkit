@@ -661,6 +661,28 @@ and still miss the case that breaks.`,
 ];
 
 /**
+ * Tells a drafter to cite the tests that already prove a behaviour instead of
+ * writing a step for it.
+ *
+ * @param testFiles - The test files found by the explorer
+ * @param kinds - The kinds of test that count, in the section's words
+ * @returns The prompt fragment
+ */
+function coverageRule(testFiles, kinds) {
+  return `## Coverage rule
+A manual step exists only for what no test proves. When ${kinds} below
+already asserts an entry's behaviour, the entry resolves to a coveredByTests
+claim naming the file and the specific assertion — never to a step that
+repeats it. The section ends with one "Covered by" line built from the
+claims. Every claim is verified; one that fails becomes a test gap for code
+review, not a manual step. Never write a step that runs lint, the type
+checker, the build or a test suite: Local CI covers those.
+
+Tests that exist:
+${JSON.stringify(testFiles, null, 1)}`;
+}
+
+/**
  * Builds the prompt drafting one group of the agent-runnable backend checks.
  *
  * @param input - Workflow args plus derived paths
@@ -682,15 +704,7 @@ Draft steps for the ${BACKEND.title.toUpperCase()} section of a Manual QA
 checklist — terminal-only checks (${BACKEND.tools}). No human judgment.
 ${packRule(input)}
 ${split}
-## Coverage rule
-This section covers EVERYTHING the automated suite does not — where "the
-suite" means the tests below, found in the repo by the explorer. An inventory
-entry may resolve to "covered by test" ONLY by naming one of these files and
-the specific assertion; every claim is verified later, and a claim that fails
-becomes a step. When in doubt, write the step.
-
-Tests that exist:
-${JSON.stringify(testFiles, null, 1)}
+${coverageRule(testFiles, 'the automated suite')}
 
 ## Inventory entries to cover
 ${JSON.stringify(entries, null, 1)}
@@ -745,18 +759,9 @@ Draft the ${section.title.toUpperCase()} section of a Manual QA checklist —
 everything that needs a person at ${section.where}.
 ${packRule(input)}
 ${shared}
-## Coverage rule
-This section covers EVERY change ${section.audience} could notice on the
-branch, with NO automated-test filter. A person uses the product before
-anything ships; automated coverage never removes a step. Priority encodes
-coverage instead:
-- behaviour with no automated coverage → blocking
-- behaviour also asserted by ${section.coveredBy} → if-time, with a short
-  \`also asserted by <test file>\` tag at the end of the step title.
-The section is empty only if NOTHING in it changed at all.
-
-Tests that exist (for the tags and priorities only — never to drop a step):
-${JSON.stringify(testFiles, null, 1)}
+${coverageRule(testFiles, section.coveredBy)}
+A check that needs a person's judgement — how it looks or feels, a real
+screen reader or device — is never covered by a test, so it is always a step.
 
 ## Surfaces
 ${JSON.stringify(surfaces, null, 1)}
@@ -764,8 +769,9 @@ ${JSON.stringify(surfaces, null, 1)}
 ## Inventory entries to cover
 ${JSON.stringify(entries, null, 1)}
 
-Every entry resolves to a step (list ids in coversEntryIds) or a gap — never
-a coveredByTests resolution in this section, and never silently dropped.
+Every entry resolves to exactly one of: a step (list its ids in
+coversEntryIds), a coveredByTests claim, or a gap (one line: gap + why it is
+out of reach). Never silently drop one.
 
 ## Step shape
 ${STEP_FORMAT}
@@ -965,7 +971,7 @@ test file GENUINELY cover the inventory entry — not the same function under
 different conditions, not a sibling case? Open the file and quote the test name
 and line in findings. PASS when it does. FAIL with rewrite null when the file
 is missing, or the assertion is absent or narrower than the claim; the entry
-then gets a manual step drafted for it. Never run the test.`);
+is then reported to code review as a test gap. Never run the test.`);
   }
   if (kinds.has('boot')) {
     reduced.push(`
@@ -1048,32 +1054,6 @@ The step:
 ${unit.body}
 
 Return the corrected step as markdown, keeping its bold title line.`;
-}
-
-/**
- * Builds the prompt drafting one backend step for a failed test-coverage claim.
- *
- * @param input - Workflow args plus derived paths
- * @param claim - The failed coverage claim
- * @param testFiles - The test files found by the explorer
- * @returns The prompt
- */
-function convertPrompt(input, claim, testFiles) {
-  return `
-A "covered by test" claim failed verification, so this inventory entry needs a
-manual checklist step after all. Draft ONE backend step for it.
-
-Entry: ${claim.entryText}
-Failed claim: \`${claim.testFile}\` — ${claim.evidence}
-${packRule(input)}
-Tests that exist: ${JSON.stringify(testFiles.map((test) => test.file))}
-
-## Step shape
-${STEP_FORMAT}
-${draftEnvironment(input)}
-
-Return it as a section with exactly one step (priority: your judgment) and
-empty coveredByTests and gaps.`;
 }
 
 /**
@@ -1271,35 +1251,6 @@ async function verifyUnits(input, group, units, { model = DEEP, onRound = () => 
   }
 
   return outcomes.sort((a, b) => a.unit.order - b.unit.order);
-}
-
-/**
- * Drafts the backend step for a coverage claim its checker did not uphold.
- *
- * @param input - Workflow args plus derived paths
- * @param outcome - The claim unit's outcome, whose `reason` says why it failed
- * @param testFiles - The test files found by the explorer
- * @returns The drafted steps
- */
-async function convertClaim(input, outcome, testFiles) {
-  const claim = outcome.unit.claim;
-  log(`Coverage claim failed: ${claim.testFile} — converting to a step`);
-
-  const drafted = await agent(
-    convertPrompt(
-      input,
-      { ...claim, evidence: outcome.reason ?? 'claim unverifiable' },
-      testFiles,
-    ),
-    {
-      label: `convert:${claim.entryId}`,
-      phase: 'Draft and verify',
-      schema: SECTION_SCHEMA,
-      model: DEEP,
-    },
-  );
-
-  return drafted?.steps ?? [];
 }
 
 // =============================================================================
@@ -1928,74 +1879,59 @@ const backendEntries = entries.filter((entry) => sectionFor(entry) === 'backend'
 const backendChunks = input.sections.backend ? chunkEntries(backendEntries) : [];
 
 /**
+ * Wraps a drafter's coverage claims as verification units.
+ *
+ * @param key - The section key the claims belong to
+ * @param claims - The drafter's `coveredByTests`
+ * @returns One claim unit per claim
+ */
+function claimUnits(key, claims) {
+  return (claims ?? []).map((claim) => ({
+    kind: 'claim',
+    section: key,
+    label: `claim:${claim.entryId}`,
+    body: `Claim: \`${claim.testFile}\` asserts: ${claim.assertion}\nInventory entry it discharges: ${entryText(claim.entryId)}`,
+    claim: { ...claim, entryText: entryText(claim.entryId) },
+  }));
+}
+
+/**
  * Drafts one backend group, then verifies its steps and coverage claims together.
  *
- * The same checkers that read the code for the steps confirm each claim. A
- * claim they do not uphold is drafted as a step as soon as its round ends,
- * and that step is verified with the others converted in this group.
+ * The same checkers that read the code for the steps confirm each claim.
  *
  * @param chunk - The group's entries
  * @param index - The group's position
- * @returns The drafted section and every verified unit it led to
+ * @returns The drafted section and every verified unit, claims included
  */
 async function draftAndVerifyBackend(chunk, index) {
+  const suffix = backendChunks.length > 1 ? `:${index + 1}` : '';
   const section = await agent(
     backendDraftPrompt(input, chunk, testFiles, {
       index,
       count: backendChunks.length,
     }),
     {
-      label: `draft:backend${backendChunks.length > 1 ? `:${index + 1}` : ''}`,
+      label: `draft:backend${suffix}`,
       phase: 'Draft and verify',
       schema: SECTION_SCHEMA,
       model: DEEP,
     },
   );
 
-  const claims = (section?.coveredByTests ?? []).map((claim) => ({
-    kind: 'claim',
-    label: `claim:${claim.entryId}`,
-    body: `Claim: \`${claim.testFile}\` asserts: ${claim.assertion}\nInventory entry it discharges: ${entryText(claim.entryId)}`,
-    claim: { ...claim, entryText: entryText(claim.entryId) },
-  }));
-  const suffix = backendChunks.length > 1 ? `:${index + 1}` : '';
-  const conversions = [];
+  const verified = await verifyUnits(input, `backend${suffix}`, [
+    ...(section?.steps ?? []).map((step) => stepUnit('backend', step)),
+    ...claimUnits('backend', section?.coveredByTests),
+  ]);
 
-  const outcomes = await verifyUnits(
-    input,
-    `backend${suffix}`,
-    [...(section?.steps ?? []).map((step) => stepUnit('backend', step)), ...claims],
-    {
-      onRound: (settled) => {
-        for (const outcome of settled) {
-          if (outcome.unit.kind === 'claim' && outcome.fate !== 'pass') {
-            conversions.push(convertClaim(input, outcome, testFiles));
-          }
-        }
-      },
-    },
-  );
-
-  const drafted = (await Promise.all(conversions)).flat();
-  const converted = await verifyUnits(
-    input,
-    `converted${suffix}`,
-    drafted.map((step) => stepUnit('backend', step, 'converted')),
-  );
-
-  return {
-    section,
-    claims: claims.length,
-    verified: [...outcomes.filter((o) => o.unit.kind !== 'claim'), ...converted],
-    converted: converted.length,
-  };
+  return { section, verified };
 }
 
 /**
- * Drafts one group of a human section, then verifies its steps.
+ * Drafts one group of a human section, then verifies its steps and coverage claims.
  *
  * @param group - The section `key`, the group's `entries`, its `index` and the section's group `count`
- * @returns The drafted section and its verified units
+ * @returns The drafted section and its verified units, claims included
  */
 async function draftAndVerifyHuman({ key, entries: chunk, index, count }) {
   const suffix = count > 1 ? `:${index + 1}` : '';
@@ -2012,11 +1948,10 @@ async function draftAndVerifyHuman({ key, entries: chunk, index, count }) {
     },
   );
 
-  const verified = await verifyUnits(
-    input,
-    `${key}${suffix}`,
-    (section?.steps ?? []).map((step) => stepUnit(key, step)),
-  );
+  const verified = await verifyUnits(input, `${key}${suffix}`, [
+    ...(section?.steps ?? []).map((step) => stepUnit(key, step)),
+    ...claimUnits(key, section?.coveredByTests),
+  ]);
 
   return { key, section, verified };
 }
@@ -2085,9 +2020,37 @@ const allVerified = [
   ...storybookVerified,
 ];
 
-const deleted = allVerified.filter((v) => v.fate === 'deleted');
-const exhausted = allVerified.filter((v) => v.fate === 'exhausted');
-const unverified = allVerified.filter((v) => v.fate === 'unverified');
+// A claim is not a step: one upheld cites its test, one that fails is a test gap.
+const claimOutcomes = allVerified.filter((v) => v.unit.kind === 'claim');
+const stepOutcomes = allVerified.filter((v) => v.unit.kind !== 'claim');
+const failedClaims = claimOutcomes.filter((v) => v.fate !== 'pass');
+
+for (const c of failedClaims) {
+  log(`Coverage claim failed: ${c.unit.claim.testFile} — a test gap for code review`);
+}
+
+const deleted = stepOutcomes.filter((v) => v.fate === 'deleted');
+const exhausted = stepOutcomes.filter((v) => v.fate === 'exhausted');
+const unverified = stepOutcomes.filter((v) => v.fate === 'unverified');
+
+/**
+ * Writes the line naming the tests that prove a section's covered entries.
+ *
+ * @param section - The section key
+ * @returns The line, or an empty string when nothing in the section was covered
+ */
+function coveredLine(section) {
+  const files = [
+    ...new Set(
+      claimOutcomes
+        .filter((v) => v.unit.section === section && v.fate === 'pass')
+        .map((v) => v.unit.claim.testFile),
+    ),
+  ];
+  return files.length > 0
+    ? `**Covered by:** ${files.map((file) => `\`${file}\``).join(', ')}`
+    : '';
+}
 
 /**
  * Collects the steps of one section that passed verification.
@@ -2119,19 +2082,56 @@ const gaps = [
     gap: `${entry.behaviour} (${entry.where})`,
     why: 'no checklist section drafts it, since the backend section is off',
   })),
-  ...outcomeGaps(allVerified),
+  ...outcomeGaps(stepOutcomes),
+  ...failedClaims.map((c) => ({
+    gap: c.unit.claim.entryText,
+    why: `no test proves it after all, so it is a test gap for code review — ${oneLine(c.reason ?? `\`${c.unit.claim.testFile}\` does not assert it`)}`,
+  })),
 ];
 
 const sectionsMd = [boot.published.trim()];
 let stepCount = 0;
+
+/**
+ * Ends a section's blocks with its Covered by line.
+ *
+ * @param blocks - The section's markdown blocks, the last one closing it
+ * @param key - The section key
+ * @returns The blocks, the last carrying the line when the section has one
+ */
+function withCovered(blocks, key) {
+  const line = coveredLine(key);
+  if (!line || blocks.length === 0) return blocks;
+  return [...blocks.slice(0, -1), `${blocks.at(-1).trimEnd()}\n\n${line}`];
+}
+
+/**
+ * Renders a section whose steps all turned out to be proven by tests.
+ *
+ * @param title - The section heading
+ * @param key - The section key
+ * @returns The section's blocks, or none when nothing in it was covered either
+ */
+function coveredOnly(title, key) {
+  return coveredLine(key)
+    ? withCovered([`---\n\n## ${title}\n\n_Every change here is proven by a test._`], key)
+    : [];
+}
 
 const backendSteps = keep('backend');
 stepCount += backendSteps.length;
 
 if (backendSteps.length > 0) {
   sectionsMd.push(
-    `---\n\n## ${BACKEND.title}\n\n${timingLine(backendSteps, true)}\n\n${numberSteps(backendSteps, BACKEND.label)}`,
+    ...withCovered(
+      [
+        `---\n\n## ${BACKEND.title}\n\n${timingLine(backendSteps, true)}\n\n${numberSteps(backendSteps, BACKEND.label)}`,
+      ],
+      'backend',
+    ),
   );
+} else {
+  sectionsMd.push(...coveredOnly(BACKEND.title, 'backend'));
 }
 
 for (const key of HUMAN_KEYS.filter((k) => input.sections[k])) {
@@ -2140,12 +2140,19 @@ for (const key of HUMAN_KEYS.filter((k) => input.sections[k])) {
   stepCount += steps.length;
 
   if (section.agent && humanKeys.includes(key)) {
-    sectionsMd.push(...splitSectionMarkdown(section, steps));
+    sectionsMd.push(...withCovered(splitSectionMarkdown(section, steps), key));
   } else if (steps.length > 0) {
     sectionsMd.push(
-      `---\n\n## ${section.title}\n\n${timingLine(steps, false)}\n\n${numberSteps(steps, section.label)}`,
+      ...withCovered(
+        [
+          `---\n\n## ${section.title}\n\n${timingLine(steps, false)}\n\n${numberSteps(steps, section.label)}`,
+        ],
+        key,
+      ),
     );
-  } else if (!humanKeys.includes(key)) {
+  } else if (humanKeys.includes(key)) {
+    sectionsMd.push(...coveredOnly(section.title, key));
+  } else {
     sectionsMd.push(
       `---\n\n## ${section.title}\n\n_Nothing ${section.audience} could notice changed on this branch._`,
     );
@@ -2182,7 +2189,7 @@ return {
   summary: (await summaryRun)?.markdown ?? '',
   checklist: sectionsMd.filter(Boolean).join('\n\n'),
   gaps,
-  unresolved: unresolvedLabels(allVerified),
+  unresolved: unresolvedLabels(stepOutcomes),
   trapCandidates: ((await trapRun)?.traps ?? []).filter(
     (trap) => trap.units >= TRAP_MIN_UNITS,
   ),
@@ -2192,8 +2199,8 @@ return {
     storybookItems: storybookItems.length,
     backendDrafters: backendChunks.length,
     humanDrafters: humanGroups.length,
-    claimsChecked: backendResults.reduce((sum, r) => sum + r.claims, 0),
-    claimsConverted: backendResults.reduce((sum, r) => sum + r.converted, 0),
+    claimsChecked: claimOutcomes.length,
+    claimsFailed: failedClaims.length,
     checkerAgents,
     deleted: deleted.length,
     unresolved: exhausted.length + unverified.length,
