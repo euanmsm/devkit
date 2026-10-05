@@ -21,6 +21,7 @@ import {
   readStampedSha,
   resetBody,
   runGate,
+  staleSteps,
 } from '../src/pr/gate.mjs';
 
 const HEAD_SHA = 'def5678def5678def5678def5678def5678def56';
@@ -475,6 +476,94 @@ describe('resetBody', () => {
   });
 });
 
+describe('resetBody — observations', () => {
+  const steps = [
+    '- [x] **Backend 1 — Seat cap**',
+    '',
+    '  > **Observed** (agent, `abc1234`): 403 first time.',
+    '',
+    '  > **Failed** (agent, `bcd2345`): 500.',
+    '  > Stack trace in the server log.',
+    '',
+    '  > **Observed** (agent, `cde3456`): 403 with `{"error":"cap"}`.',
+    '',
+    '- [ ] **Backend 2 — Invite**',
+    '',
+    '  > **Observed** (person, `abc1234`): sent.',
+    '',
+    '```markdown',
+    '> **Observed** (agent, `abc1234`): a sample in a fence.',
+    '> **Observed** (agent, `abc1234`): another sample.',
+    '```',
+  ].join('\n');
+
+  it('keeps only the latest note under each step, continuation lines and all', () => {
+    const result = resetBody(steps, { headSha: HEAD_SHA, now: NOW });
+
+    assert.equal(
+      result,
+      [
+        '- [ ] **Backend 1 — Seat cap**',
+        '',
+        '  > **Observed** (agent, `cde3456`): 403 with `{"error":"cap"}`.',
+        '',
+        '- [ ] **Backend 2 — Invite**',
+        '',
+        '  > **Observed** (person, `abc1234`): sent.',
+        '',
+        '```markdown',
+        '> **Observed** (agent, `abc1234`): a sample in a fence.',
+        '> **Observed** (agent, `abc1234`): another sample.',
+        '```',
+      ].join('\n'),
+    );
+  });
+
+  it('names a step citing a changed file as possibly stale in the banner', () => {
+    const result = resetBody(checklist(), {
+      headSha: HEAD_SHA,
+      now: NOW,
+      staleSteps: ['[blocking] Sign in as an admin'],
+      skill: 'ship',
+    });
+
+    assert.match(
+      result,
+      /> they are ticked again\.\n>\n> This push changed files these steps cite, so they may be stale — re-run `\/ship` to redraft them:\n> - \[blocking\] Sign in as an admin\n/,
+    );
+  });
+});
+
+describe('staleSteps', () => {
+  const body = [
+    '- [ ] **[blocking] Backend 1 — Seat cap**',
+    '',
+    '```bash',
+    'curl `src/not/a/citation.ts`',
+    '```',
+    'Reads `apps/main/src/api/seats/route.ts:42`.',
+    '- [ ] **[if-time] Backend 2 — Invite**',
+    '',
+    'See `lib/invite.ts`.',
+    '- [ ] **[blocking] Frontend 3 — Toast**',
+  ].join('\n');
+
+  it('names the steps citing a file the push changed, matching a path tail too', () => {
+    assert.deepEqual(
+      staleSteps(body, [
+        'apps/main/src/api/seats/route.ts',
+        'apps/main/src/lib/invite.ts',
+      ]),
+      ['[blocking] Backend 1 — Seat cap', '[if-time] Backend 2 — Invite'],
+    );
+  });
+
+  it('ignores citations inside a fence, and returns nothing for no changes', () => {
+    assert.deepEqual(staleSteps(body, ['src/not/a/citation.ts']), []);
+    assert.deepEqual(staleSteps(body, []), []);
+  });
+});
+
 describe('computeStatus', () => {
   it('fails when no comment carries the marker', () => {
     assert.deepEqual(computeStatus({ main: null, headSha: HEAD_SHA }), {
@@ -621,7 +710,7 @@ describe('computeStatus', () => {
  * @param head - The PR's head SHA
  * @returns The `api` function, its `calls`, and the live `comments`
  */
-function fakeApi(comments, head = HEAD_SHA) {
+function fakeApi(comments, head = HEAD_SHA, compare = null) {
   const calls = [];
   const store = comments.map((comment) => ({
     html_url: `https://x/${comment.id}`,
@@ -636,6 +725,10 @@ function fakeApi(comments, head = HEAD_SHA) {
     });
 
     if (path.startsWith('/repos/o/r/pulls/')) return { head: { sha: head } };
+    if (path.includes('/compare/')) {
+      if (compare instanceof Error) throw compare;
+      return compare;
+    }
     const who = /\/collaborators\/([^/]+)\/permission$/.exec(path);
     if (who) {
       const answer = ROLES[decodeURIComponent(who[1])];
@@ -683,6 +776,56 @@ describe('runGate', () => {
       context: 'Manual QA',
       target_url: 'https://x/7',
     });
+  });
+
+  it('names the steps a push may have made stale, from the files GitHub says changed', async () => {
+    const body = checklist({
+      extra: '\n- [ ] **Backend 9 — Seats**\n\nReads `src/api/seats.ts:3`.',
+    });
+    const { api, calls, comments } = fakeApi([{ id: 7, body }], HEAD_SHA, {
+      files: [
+        { filename: 'src/api/seats.ts' },
+        { filename: 'README.md', previous_filename: 'docs/old.md' },
+      ],
+    });
+
+    await runGate('reset', {
+      api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+      now: NOW,
+      skill: 'pr',
+    });
+
+    assert.ok(
+      calls.some(
+        (c) => c.path === `/repos/o/r/compare/${OLD_SHA}...${HEAD_SHA}`,
+      ),
+    );
+    assert.match(
+      comments[0].body,
+      /may be stale — re-run `\/pr` to redraft them:\n> - Backend 9 — Seats/,
+    );
+  });
+
+  it('still resets when GitHub cannot compare the commits', async () => {
+    const { api, comments } = fakeApi(
+      [{ id: 7, body: checklist() }],
+      HEAD_SHA,
+      new Error('404'),
+    );
+
+    await runGate('reset', {
+      api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+      now: NOW,
+    });
+
+    assert.equal(readStampedSha(comments[0].body), HEAD_SHA);
+    assert.doesNotMatch(comments[0].body, /may be stale/);
   });
 
   it('leaves a checklist already stamped against the head alone', async () => {

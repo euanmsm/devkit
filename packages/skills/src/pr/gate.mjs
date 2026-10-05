@@ -57,6 +57,19 @@ const TICKED_BOX_PATTERN =
 const HEADING_PATTERN =
   /^(##[ \t]+Manual QA[ \t]+—[ \t]+`)[0-9a-fA-F]{7,40}(`)/m;
 
+/** The line a tester or agent pastes under a step: `> **Observed** …` or `> **Failed** …`. */
+const OBSERVATION_PATTERN = /^[ \t]*>[ \t]*\*\*(?:Observed|Failed)\*\*/;
+
+/** A quoted line, which continues the observation above it. */
+const QUOTE_PATTERN = /^[ \t]*>/;
+
+/** A repo path cited in backticks, with an optional `:line`. */
+const CITED_PATH_PATTERN = /`([\w.@-]+(?:\/[\w.@-]+)+)(?::\d+)?`/g;
+
+/** A step's checkbox line, captured down to its title. */
+const STEP_TITLE_PATTERN =
+  /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?: {1,4}|\t)\[[ xX]\][ \t]*(.*)$/;
+
 /** The part count a split checklist's first heading carries. */
 const PART_COUNT_PATTERN =
   /^##[ \t]+Manual QA[ \t]+—[ \t]+`[0-9a-fA-F]{7,40}`[ \t]+\(part 1 of (\d+)\)/m;
@@ -267,7 +280,14 @@ export function countBoxes(body) {
  * @param context - The `headSha` that triggered the reset, the `previousSha` the ticks were made against, the box `counts` before clearing, and the reset time `now`
  * @returns A markdown alert block, without a trailing newline
  */
-function buildBanner({ headSha, previousSha, counts, now }) {
+function buildBanner({
+  headSha,
+  previousSha,
+  counts,
+  now,
+  staleSteps = [],
+  skill = DEFAULT_SKILL,
+}) {
   const lines = [
     '> [!WARNING]',
     `> **Reset by push \`${shortSha(headSha)}\` — ${formatStamp(now)}.**`,
@@ -290,6 +310,14 @@ function buildBanner({ headSha, previousSha, counts, now }) {
     '> they are ticked again.',
   );
 
+  if (staleSteps.length > 0) {
+    lines.push(
+      '>',
+      `> This push changed files these steps cite, so they may be stale — re-run \`/${skill}\` to redraft them:`,
+      ...staleSteps.map((title) => `> - ${title}`),
+    );
+  }
+
   return lines.join('\n');
 }
 
@@ -300,18 +328,33 @@ function buildBanner({ headSha, previousSha, counts, now }) {
  * marker, the visible heading and, when the body has one, the banner block.
  *
  * @param body - The current comment body
- * @param context - The `headSha` to stamp, the reset time `now`, and `counts` to report in the banner when the checklist spans several comments
+ * Each step also keeps only its latest **Observed** or **Failed** note, so
+ * notes from earlier passes do not pile up under it.
+ *
+ * @param body - The current comment body
+ * @param context - The `headSha` to stamp, the reset time `now`, `counts` to report in the banner when the checklist spans several comments, the `staleSteps` the push may have made stale, and the `skill` name to re-run
  * @returns The cleared body
  */
-export function resetBody(body, { headSha, now, counts = countBoxes(body) }) {
+export function resetBody(
+  body,
+  {
+    headSha,
+    now,
+    counts = countBoxes(body),
+    staleSteps = [],
+    skill = DEFAULT_SKILL,
+  },
+) {
   const previousSha = readStampedSha(body);
   const lines = body.split('\n');
   const fenced = fenceMask(lines);
+  const dropped = olderObservations(lines, fenced);
 
   let next = lines
     .map((line, index) =>
       fenced[index] ? line : line.replace(TICKED_BOX_PATTERN, '$1 $2'),
     )
+    .filter((_, index) => !dropped.has(index))
     .join('\n');
 
   next = next.replace(SHA_MARKER_PATTERN, `<!-- pr-qa:sha=${headSha} -->`);
@@ -321,11 +364,125 @@ export function resetBody(body, { headSha, now, counts = countBoxes(body) }) {
   const bannerEnd = next.indexOf(BANNER_END);
 
   if (bannerStart !== -1 && bannerEnd > bannerStart) {
-    const banner = buildBanner({ headSha, previousSha, counts, now });
+    const banner = buildBanner({
+      headSha,
+      previousSha,
+      counts,
+      now,
+      staleSteps,
+      skill,
+    });
     next = `${next.slice(0, bannerStart + BANNER_START.length)}\n\n${banner}\n\n${next.slice(bannerEnd)}`;
   }
 
   return next;
+}
+
+/**
+ * Finds the observation notes a reset removes: every one under a step but
+ * the last.
+ *
+ * An observation is its `> **Observed**` or `> **Failed**` line plus the
+ * quoted lines continuing it, and the blank line after it.
+ *
+ * @param lines - The body split on newlines
+ * @param fenced - Which lines sit inside a fenced block
+ * @returns The indices of the lines to remove
+ */
+function olderObservations(lines, fenced) {
+  const dropped = new Set();
+  let notes = [];
+
+  const settle = () => {
+    for (const note of notes.slice(0, -1)) {
+      for (const index of note) dropped.add(index);
+    }
+    notes = [];
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    if (fenced[i]) continue;
+    if (BOX_PATTERN.test(lines[i])) {
+      settle();
+      continue;
+    }
+    if (!OBSERVATION_PATTERN.test(lines[i])) continue;
+
+    const note = [i];
+    while (
+      i + 1 < lines.length &&
+      !fenced[i + 1] &&
+      QUOTE_PATTERN.test(lines[i + 1]) &&
+      !OBSERVATION_PATTERN.test(lines[i + 1])
+    ) {
+      note.push((i += 1));
+    }
+    if (i + 1 < lines.length && lines[i + 1].trim() === '') note.push(i + 1);
+    notes.push(note);
+  }
+  settle();
+
+  return dropped;
+}
+
+/**
+ * Names the steps that cite a file a push changed.
+ *
+ * @param body - A checklist comment body
+ * @param changed - The repo paths the push changed
+ * @returns Each such step's title, as its checkbox line shows it
+ */
+export function staleSteps(body, changed) {
+  if (changed.length === 0) return [];
+
+  const lines = body.split('\n');
+  const fenced = fenceMask(lines);
+  const titles = [];
+  let title = null;
+  let cited = false;
+
+  const close = () => {
+    if (title && cited) titles.push(title);
+  };
+
+  lines.forEach((line, index) => {
+    if (!fenced[index] && BOX_PATTERN.test(line)) {
+      close();
+      title = STEP_TITLE_PATTERN.exec(line)[1].replace(/\*\*/g, '').trim();
+      cited = false;
+    }
+    if (!title || cited || fenced[index]) return;
+
+    for (const [, path] of line.matchAll(CITED_PATH_PATTERN)) {
+      if (changed.some((file) => file === path || file.endsWith(`/${path}`))) {
+        cited = true;
+      }
+    }
+  });
+  close();
+
+  return titles;
+}
+
+/**
+ * Lists the files changed between two commits.
+ *
+ * @param api - The GitHub client
+ * @param repo - `owner/repo`
+ * @param from - The commit the checklist was stamped against
+ * @param to - The new head
+ * @returns The changed paths, old names included, or none when GitHub cannot say
+ */
+async function changedFiles(api, repo, from, to) {
+  try {
+    const answer = await api(`/repos/${repo}/compare/${from}...${to}`);
+    return (answer?.files ?? []).flatMap((file) =>
+      [file.filename, file.previous_filename].filter(Boolean),
+    );
+  } catch {
+    // A force-push can drop the old commit; the reset goes ahead without the list.
+    return [];
+  }
 }
 
 /**
@@ -553,6 +710,14 @@ export async function runGate(
       };
     } else {
       const updated = [];
+      const previous = readStampedSha(main.body ?? '');
+      const changed =
+        stale.length > 0 && previous
+          ? await changedFiles(api, repo, previous, head)
+          : [];
+      const possiblyStale = checklist.flatMap((comment) =>
+        staleSteps(comment.body ?? '', changed),
+      );
 
       for (const comment of checklist) {
         if (!stale.includes(comment)) {
@@ -571,6 +736,8 @@ export async function runGate(
           headSha: head,
           now,
           counts,
+          staleSteps: possiblyStale,
+          skill,
         });
         updated.push(
           await api(`/repos/${repo}/issues/comments/${comment.id}`, {
