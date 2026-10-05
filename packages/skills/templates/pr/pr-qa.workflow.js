@@ -226,6 +226,29 @@ const SECTION_SCHEMA = {
   },
 };
 
+/** When a deploy or config check can be done. */
+const DEPLOY_WHEN = ['pre-merge', 'post-deploy'];
+
+const DEPLOY_SCHEMA = {
+  type: 'object',
+  required: ['steps'],
+  properties: {
+    steps: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['title', 'when', 'body', 'minutes'],
+        properties: {
+          title: str,
+          when: { enum: DEPLOY_WHEN },
+          body: str,
+          minutes: { type: 'number' },
+        },
+      },
+    },
+  },
+};
+
 const STORYBOOK_SCHEMA = {
   type: 'object',
   required: ['items'],
@@ -949,6 +972,38 @@ paragraph. Drop stories the branch did not visibly change.`;
 }
 
 /**
+ * Builds the prompt drafting the checks for what the diff needs outside the repo.
+ *
+ * @param input - Workflow args plus derived paths
+ * @returns The prompt
+ */
+function deployDraftPrompt(input) {
+  return `
+Draft the DEPLOY AND CONFIG CHECKS of a Manual QA checklist: the things this
+diff depends on that live outside the repository, for someone with access to
+the hosted dashboards. Nothing in the local stack can prove these.
+
+Branch: ${input.branch}
+Read the diff at \`${input.diffPath}\`.${packRule(input)}
+
+The triage answered yes to these:
+${JSON.stringify(triage.outsideRepo, null, 1)}
+
+Write one step per answer, two only when one setting must change before
+merge and another be confirmed after deploy. Each step:
+- when — \`pre-merge\` when it must be true before the PR merges (a setting,
+  a secret, a project option), \`post-deploy\` when it can only be seen once
+  the change is live (a migration on real rows, a call to a live service).
+- body — **Where:** the dashboard, page or command to look in; the action;
+  **Expect:** the exact value, setting or result to see; **If wrong:** one
+  line. Name the real variable, setting, file or migration from the repo.
+
+Skip anything a deploy of this PR alone cannot break: there are no
+production users yet, and API changes ship in the same PR as their callers.
+Never run a command other than reading and searching files.`;
+}
+
+/**
  * Builds the prompt drafting the smoke check for a pure move.
  *
  * @param input - Workflow args plus derived paths, with the verified `bootMarkdown`
@@ -1125,6 +1180,14 @@ different conditions, not a sibling case? Open the file and quote the test name
 and line in findings. PASS when it does. FAIL with rewrite null when the file
 is missing, or the assertion is absent or narrower than the claim; the entry
 is then reported to code review as a test gap. Never run the test.`);
+  }
+  if (kinds.has('deploy')) {
+    reduced.push(`
+For a deploy or config check the checks reduce to: every variable, setting,
+file or migration it names exists in the repo with that exact name, the
+diff really makes the check necessary, \`when\` is right (pre-merge for what
+must hold before merging, post-deploy for what only shows once live), and it
+says where to look and the exact value to expect.`);
   }
   if (kinds.has('setup')) {
     reduced.push(`
@@ -1918,6 +1981,62 @@ function totalMinutes(steps) {
 }
 
 /**
+ * Drafts and verifies the checks for what the diff needs outside the repo.
+ *
+ * @param context - Workflow args plus derived paths
+ * @returns The verification outcomes, empty when the triage found nothing outside the repo
+ */
+async function draftDeployChecks(context) {
+  if (triage.outsideRepo.length === 0) return [];
+
+  const drafted = await agent(deployDraftPrompt(context), {
+    label: 'draft:deploy',
+    phase: 'Draft and verify',
+    schema: DEPLOY_SCHEMA,
+    model: DEEP,
+  });
+
+  return verifyUnits(
+    context,
+    'deploy',
+    (drafted?.steps ?? []).map((step) => ({
+      kind: 'deploy',
+      section: 'deploy',
+      label: `deploy:${step.title.slice(0, 40)}`,
+      body: `**[${DEPLOY_WHEN.includes(step.when) ? step.when : 'pre-merge'}] ${step.title}**\n\n${step.body}`,
+      deploy: step,
+    })),
+  );
+}
+
+/**
+ * Renders the verified deploy and config checks, pre-merge first.
+ *
+ * @param outcomes - The deploy checks' verification outcomes
+ * @returns The section's markdown, or an empty string when none passed
+ */
+function deployMarkdown(outcomes) {
+  const checks = outcomes
+    .filter((o) => o.fate === 'pass')
+    .map((o) => {
+      const line = /^\*\*\[(pre-merge|post-deploy)\] ([^\n]+?)\*\*[ \t]*(?:\n|$)/.exec(o.unit.body.trimStart());
+      return {
+        when: line?.[1] ?? o.unit.deploy.when,
+        title: line?.[2] ?? o.unit.deploy.title,
+        body: o.unit.body.trimStart().replace(/^\*\*\[[^\]]+\][^\n]*\*\*\n+/, ''),
+      };
+    })
+    .sort((a, b) => DEPLOY_WHEN.indexOf(a.when) - DEPLOY_WHEN.indexOf(b.when));
+  if (checks.length === 0) return '';
+
+  const list = checks
+    .map((c, i) => `- [ ] **[${c.when}] Deploy ${i + 1} — ${c.title}**\n\n${c.body.trim()}\n`)
+    .join('\n');
+
+  return `---\n\n## Deploy and Config Checks\n\n_For someone with access to the hosted dashboards. Pre-merge checks must hold before merging; post-deploy ones once it is live._\n\n${list}`;
+}
+
+/**
  * Collects a section's verified setups and teardowns into one of each.
  *
  * Several drafters can each write one for their share of the section. A
@@ -1958,6 +2077,7 @@ if (triage.kind === 'move') {
 
   // A move needs no context pack: the diff and facts file are enough.
   const moveInput = { ...input, packPath: null };
+  const deployRun = draftDeployChecks(moveInput);
   const boot = settleBoot(await startBoot(moveInput, 'Draft and verify'));
   moveInput.bootMarkdown = boot.body;
 
@@ -1980,10 +2100,12 @@ if (triage.kind === 'move') {
     .filter((o) => o.unit.step && o.fate === 'pass')
     .map((o) => readStep(o.unit));
   const frame = sectionFrame(outcomes, 'smoke');
+  const deployOutcomes = await deployRun;
 
   const checklist = [
     triageLine(totalMinutes(steps)),
     boot.published.trim(),
+    deployMarkdown(deployOutcomes),
     steps.length > 0
       ? `---\n\n## Smoke Check\n\n${[timingLine(steps, true), frame.setup, numberSteps(steps, 'Smoke'), frame.teardown].filter(Boolean).join('\n\n')}`
       : '',
@@ -1993,8 +2115,11 @@ if (triage.kind === 'move') {
   return {
     summary: (await summaryRun)?.markdown ?? '',
     checklist: checklist.join('\n\n'),
-    gaps: [...(drafted?.gaps ?? []), ...outcomeGaps(outcomes.filter((o) => o.unit.step))],
-    unresolved: unresolvedLabels(outcomes.filter((o) => o.unit.step)),
+    gaps: [
+      ...(drafted?.gaps ?? []),
+      ...outcomeGaps([...outcomes.filter((o) => o.unit.step), ...deployOutcomes]),
+    ],
+    unresolved: unresolvedLabels([...outcomes.filter((o) => o.unit.step), ...deployOutcomes]),
     trapCandidates: [],
     stats: { entries: 0, steps: steps.length, checkerAgents },
   };
@@ -2035,6 +2160,9 @@ if (!explore) throw new Error('Context-pack explorer failed — cannot proceed')
 
 const testFiles = explore.testFiles ?? [];
 input.testFiles = testFiles;
+
+// The deploy checks need only the triage and the pack, so they run alongside the rest.
+const deployRun = draftDeployChecks(input);
 const visibleSections = new Set(explore.visibleSections ?? []);
 
 // The boot block needs only the pack, so it drafts and is verified while the
@@ -2348,7 +2476,7 @@ const prunedClaims = HUMAN_KEYS.concat('backend').flatMap((key) =>
   ),
 );
 
-const [backendResults, humanResults, storybookVerified, prunedVerified] = await Promise.all([
+const [backendResults, humanResults, storybookVerified, prunedVerified, deployVerified] = await Promise.all([
   Promise.all(backendChunks.map(draftAndVerifyBackend)),
   Promise.all(humanGroups.map(draftAndVerifyHuman)),
   storybookRun.then((drafted) =>
@@ -2365,6 +2493,7 @@ const [backendResults, humanResults, storybookVerified, prunedVerified] = await 
     ),
   ),
   verifyUnits(input, 'pruned', prunedClaims),
+  deployRun,
 ]);
 
 // The repeated mistakes behind this run's failures, for the author to add to the traps file.
@@ -2383,6 +2512,7 @@ const allVerified = [
   ...humanResults.flatMap((result) => result.verified),
   ...storybookVerified,
   ...prunedVerified,
+  ...deployVerified,
 ];
 
 /**
@@ -2546,7 +2676,7 @@ const gaps = [
   })),
 ];
 
-const sectionsMd = [boot.published.trim()];
+const sectionsMd = [boot.published.trim(), deployMarkdown(deployVerified)];
 let stepCount = 0;
 
 /**
@@ -2675,6 +2805,7 @@ return {
     claimsFailed: failedClaims.length,
     checkerAgents,
     deleted: deleted.length,
+    deployChecks: deployVerified.filter((v) => v.fate === 'pass').length,
     duplicates: duplicates.length,
     cutForBudget: budget.cut.length,
     unresolved: exhausted.length + unverified.length,

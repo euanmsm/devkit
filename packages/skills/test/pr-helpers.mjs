@@ -166,6 +166,22 @@ export function prReplies(scenario = {}) {
           };
     }
 
+    if (label === 'draft:deploy') {
+      const answers = JSON.parse(
+        prompt
+          .split('The triage answered yes to these:\n')[1]
+          .split('\n\nWrite one step')[0],
+      );
+      return {
+        steps: answers.map((answer, i) => ({
+          title: `Confirm ${answer.ask}`,
+          when: i === 0 ? 'post-deploy' : 'pre-merge',
+          body: `**Where:** the dashboard\n\n**Expect:** set (${answer.files.join(', ')})`,
+          minutes: 5,
+        })),
+      };
+    }
+
     if (label === 'draft:smoke') {
       return {
         steps: [

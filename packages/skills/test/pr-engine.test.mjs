@@ -234,6 +234,47 @@ describe('pr workflow — triage', () => {
       find(calls, 'triage').prompt,
       /- Hosting config\?\n- New service\?\n- New env var\?/,
     );
+
+    // The script's yes stands though the agent said no; the agent adds its own.
+    const deploy = find(calls, 'draft:deploy');
+    assert.equal(deploy.model, 'opus');
+    assert.match(
+      deploy.prompt,
+      /"ask": "Hosting config\?",\n  "why": "a changed file matches it",\n  "files": \[\n   "vercel\.json"/,
+    );
+    assert.match(
+      deploy.prompt,
+      /"ask": "New service\?",\n  "why": "calls Stripe"/,
+    );
+    assert.doesNotMatch(deploy.prompt, /"ask": "New env var\?"/);
+    assert.match(
+      find(calls, 'verify:deploy').prompt,
+      /For a deploy or config check the checks reduce to/,
+    );
+    assert.match(
+      result.checklist,
+      /\n\n---\n\n## Deploy and Config Checks\n\n_For someone with access to the hosted dashboards\.[^\n]*_\n\n- \[ \] \*\*\[pre-merge\] Deploy 1 — Confirm New service\?\*\*\n\n\*\*Where:\*\* the dashboard\n\n\*\*Expect:\*\* set \(src\/pay\.ts\)\n\n- \[ \] \*\*\[post-deploy\] Deploy 2 — Confirm Hosting config\?\*\*/,
+    );
+    // Deploy checks sit right after the boot block, ahead of every other section.
+    assert.ok(
+      result.checklist.indexOf('## Deploy and Config Checks') <
+        result.checklist.indexOf('## Human Browser Checks'),
+    );
+    assert.equal(result.stats.deployChecks, 2);
+  });
+
+  it('writes no deploy checks when nothing lives outside the repo', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies(),
+      },
+    );
+
+    assert.ok(!labels(calls).includes('draft:deploy'));
+    assert.doesNotMatch(result.checklist, /Deploy and Config Checks/);
   });
 
   it('falls back to a large behaviour change when the triage returns nothing', async () => {
