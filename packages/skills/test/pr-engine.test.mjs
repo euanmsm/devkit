@@ -1085,7 +1085,7 @@ describe('pr workflow — a section split between an agent and a person', () => 
 
     assert.match(find(calls, 'draft:frontend').prompt, /## Who runs each step/);
     assert.doesNotMatch(find(calls, 'draft:backend').prompt, /Who runs/);
-    assert.match(find(calls, 'verify:frontend').prompt, /9\. RUNNER/);
+    assert.match(find(calls, 'verify:frontend').prompt, /11\. RUNNER/);
     assert.deepEqual(
       promptUnits(find(calls, 'verify:frontend').prompt).map((u) => u.runner),
       ['agent', 'human', 'agent'],
@@ -1714,6 +1714,79 @@ describe('pr workflow — section setup and the On main line', () => {
       result.checklist,
       /\*\*Setup:\*\*\n\n> \[!WARNING\]\n> \*\*This setup did not pass verification\*\* — no seats table\. Check it against the repository before relying on it\.\n\ninsert a seat/,
     );
+  });
+});
+
+describe('pr workflow — stronger checks', () => {
+  it('tells checkers to delete vacuous and covered steps and to fix fragile proofs', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies(),
+    });
+    const prompt = find(calls, 'verify:backend').prompt;
+
+    assert.match(
+      prompt,
+      /4\. DISCRIMINATING[\s\S]*proves\s+nothing: DELETE it/,
+    );
+    assert.match(
+      prompt,
+      /9\. COVERED[\s\S]*DELETE the step and name the test file/,
+    );
+    assert.match(prompt, /10\. FRAGILE[\s\S]*`grep -c`/);
+    assert.match(prompt, /## Tests that exist\n- `src\/a\.test\.ts` — a works/);
+  });
+
+  it('drops a step repeating another in its section, seen across checker batches', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({
+          backend: 10,
+          duplicates: (label, steps) => {
+            const id = (title) => steps.find((step) => step.title === title).id;
+            return [
+              {
+                id: id('Check be-10'),
+                duplicateOf: id('Check be-1'),
+                why: 'same status code',
+              },
+              // Keeping be-10 for be-1 as well would lose both; the second drop is refused.
+              {
+                id: id('Check be-1'),
+                duplicateOf: id('Check be-10'),
+                why: 'loop',
+              },
+              { id: 's99', duplicateOf: id('Check be-2'), why: 'made up' },
+            ];
+          },
+        }),
+      },
+    );
+    const pass = find(calls, 'duplicates:backend');
+
+    assert.equal(pass.model, 'sonnet');
+    assert.equal(JSON.parse(pass.prompt.split('## The steps\n')[1]).length, 11);
+    assert.doesNotMatch(result.checklist, /Check be-10\b/);
+    assert.match(result.checklist, /Check be-1\b/);
+    assert.equal(result.stats.duplicates, 1);
+    assert.equal(result.stats.steps, 10);
+  });
+
+  it('skips the duplicate pass for a section with one step', async () => {
+    const source = await prWorkflow('webapp', {
+      experiments: { dropCrossCutting: true },
+    });
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({ backend: 1 }),
+    });
+
+    assert.deepEqual(unitNames(find(calls, 'verify:backend')), [
+      'backend:Check be-1',
+    ]);
+    assert.ok(!labels(calls).includes('duplicates:backend'));
   });
 });
 

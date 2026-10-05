@@ -123,7 +123,8 @@ export function promptUnits(prompt) {
  * function naming who runs each human step, as `(entry, i) => 'agent' | 'human'`,
  * the `triage` answer, merged over a large behaviour change touching everything,
  * the `prune` answer, which keeps everything by default, and a `setup` function
- * giving each drafter's `{ setup, teardown }` from its label.
+ * giving each drafter's `{ setup, teardown }` from its label, and a `duplicates`
+ * function returning the drops for a duplicate pass, from its label and steps.
  *
  * A claim's checker upholds it unless its entry id is in `failClaims`. `verify`
  * is asked about every other unit one at a time, as `verify:<unit name>` with
@@ -149,6 +150,7 @@ export function prReplies(scenario = {}) {
     humanClaims = [],
     prune = { merge: [], drop: [] },
     setup = () => ({ setup: '', teardown: '' }),
+    duplicates = () => [],
   } = scenario;
 
   return (label, prompt) => {
@@ -258,6 +260,11 @@ export function prReplies(scenario = {}) {
 
     if (label.startsWith('audit:')) return { entries: [] };
     if (label === 'prune') return prune;
+    if (label.startsWith('duplicates:')) {
+      return {
+        drop: duplicates(label, JSON.parse(prompt.split('## The steps\n')[1])),
+      };
+    }
 
     if (label.startsWith('draft:backend')) {
       const entries = promptEntries(prompt);

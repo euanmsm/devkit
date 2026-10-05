@@ -282,6 +282,21 @@ const VERDICTS_SCHEMA = {
   },
 };
 
+const DUPLICATES_SCHEMA = {
+  type: 'object',
+  required: ['drop'],
+  properties: {
+    drop: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'duplicateOf', 'why'],
+        properties: { id: str, duplicateOf: str, why: str },
+      },
+    },
+  },
+};
+
 const TRAPS_SCHEMA = {
   type: 'object',
   required: ['traps'],
@@ -425,7 +440,7 @@ Read \`${CONFIG.traps}\` in full before drafting. Every step is checked against
 it, and a step that falls into a listed trap is sent back.`;
 }
 
-const EIGHT_CHECKS = `
+const STEP_CHECKS = `
 1. REACHABILITY — trace the action to the code it executes. Name file:line.
    Can this step reach the changed lines at all?
 2. PRECONDITIONS — list every condition that changes the outcome (${CONFIG.verify.preconditions.join(', ')}).
@@ -433,7 +448,9 @@ const EIGHT_CHECKS = `
 3. EXPECTED RESULT — read the branch that runs and quote what it actually
    returns. Does it match the step's Expect line?
 4. DISCRIMINATING — would the observable result differ if this branch were
-   reverted? If identical, the step is vacuous.
+   reverted? Read the base side of the diff. When the step would pass on the
+   old code too, or its On main line matches its Expect line, it proves
+   nothing: DELETE it. Never rewrite a vacuous step into a different one.
 5. MASKED — can ${CONFIG.verify.masking.join(', ')} intercept first? If so the
    step must neutralise it or say how to tell them apart.
 6. IDENTIFIERS — confirm every ${CONFIG.verify.identifiers.join(', ')} exists IN
@@ -445,6 +462,15 @@ const EIGHT_CHECKS = `
    quoted, setup commands fenced and inline. A step that needs no person's
    judgement and has no On main line is a FAIL; write one from the code. A
    violation is a FAIL like any other.
+9. COVERED — does a test listed above already assert what this step checks?
+   Open it to be sure. If so, DELETE the step and name the test file and the
+   assertion in findings: a step must never repeat a test. A step that only
+   runs lint, the type checker, the build or a test suite is DELETE too.
+   Judgement only a person can make is never covered.
+10. FRAGILE — does the step prove its result with a count taken from seed
+   state, a wait over 30 seconds, a race timed by hand, \`grep -c\` output, or
+   a throwaway test file? FAIL and rewrite it to read the specific row,
+   message or value instead; DELETE it when no robust version exists.
 
 A claimed result that does not reproduce from the code is a FAIL.
 Verification is CODE-READING ONLY. Never execute a step, never start or touch
@@ -464,7 +490,7 @@ const RUNNER_RULES = `
   judgement is needed.`;
 
 const RUNNER_CHECK = `
-9. RUNNER — a unit with a \`runner\` is in a section split between an agent
+11. RUNNER — a unit with a \`runner\` is in a section split between an agent
    and a person. Check it against these rules:
 ${RUNNER_RULES}
    Set \`runner\` in your verdict to the one the unit should have. A wrong
@@ -1006,8 +1032,9 @@ below, each with:
   rewrite   on FAIL, the corrected unit in the same shape as the original,
             title line included; otherwise null
 
-DELETE a unit with no accurate version (unreachable by hand, needs
-instrumentation); it is published as a gap with your findings. Return a
+DELETE a unit that proves nothing on reverted code, repeats a test, or has
+no accurate version (unreachable by hand, needs instrumentation); it is
+reported with your findings, so say which. Return a
 verdict for every unit. A missing id counts as unverified and the unit is left
 out of the checklist.`;
 
@@ -1110,8 +1137,11 @@ ${setupsFor(units)}
 ## Known traps
 Read \`${CONFIG.traps}\` in full before judging.
 
+## Tests that exist
+${bullets((input.testFiles ?? []).map((test) => `\`${test.file}\` — ${test.asserts}`))}
+
 ## Checks — run all that apply, to every unit
-${EIGHT_CHECKS}${runnerCheck}
+${STEP_CHECKS}${runnerCheck}
 ${reduced.join('\n')}
 ${VERDICT_OUTPUT}
 
@@ -1164,6 +1194,30 @@ The step:
 ${unit.body}
 
 Return the corrected step as markdown, keeping its bold title line.`;
+}
+
+/**
+ * Builds the prompt finding steps that repeat another step in their section.
+ *
+ * @param title - The section heading
+ * @param steps - The section's passing steps, each with an `id`, `title` and `body`
+ * @returns The prompt
+ */
+function duplicatesPrompt(title, steps) {
+  return `
+These are every verified step of the ${title} section of a Manual QA
+checklist, together for the first time: each checker saw only a few at
+once. Find the steps that repeat another — the same behaviour checked again
+with a different input, at another page that renders the same component, or
+in other words.
+
+For each repeat return its \`id\`, the \`duplicateOf\` id of the step to keep
+(the one that checks the riskiest input), and \`why\` in one line. Keep a
+step that checks a genuinely different outcome, even when it looks similar.
+Return an empty list when nothing repeats. Never run a command.
+
+## The steps
+${JSON.stringify(steps, null, 1)}`;
 }
 
 /**
@@ -1956,6 +2010,7 @@ const explore = await agent(explorePrompt(input), {
 if (!explore) throw new Error('Context-pack explorer failed — cannot proceed');
 
 const testFiles = explore.testFiles ?? [];
+input.testFiles = testFiles;
 const visibleSections = new Set(explore.visibleSections ?? []);
 
 // The boot block needs only the pack, so it drafts and is verified while the
@@ -2306,6 +2361,54 @@ const allVerified = [
   ...prunedVerified,
 ];
 
+/**
+ * Has one light agent see a whole section's passing steps and drop the ones
+ * repeating another, which no checker could see across its batches.
+ *
+ * @param key - The section key
+ * @returns The outcomes it marked as duplicates
+ */
+async function dropDuplicates(key) {
+  const passing = allVerified.filter(
+    (v) => v.unit.section === key && v.unit.step && v.fate === 'pass',
+  );
+  if (passing.length < 2) return [];
+
+  const ids = new Map(passing.map((v, i) => [`s${i + 1}`, v]));
+  const answer = await agent(
+    duplicatesPrompt(
+      SECTIONS[key].title,
+      [...ids].map(([id, v]) => ({ id, title: readStep(v.unit).title, body: readStep(v.unit).body })),
+    ),
+    {
+      label: `duplicates:${key}`,
+      phase: 'Draft and verify',
+      schema: DUPLICATES_SCHEMA,
+      model: LIGHT,
+    },
+  );
+
+  const dropped = [];
+  for (const drop of answer?.drop ?? []) {
+    const outcome = ids.get(drop.id);
+    const keeper = ids.get(drop.duplicateOf);
+    // A step kept for another can never itself go, so a pair cannot vanish together.
+    if (!outcome || !keeper || drop.id === drop.duplicateOf || keeper.fate !== 'pass') continue;
+    if (dropped.some((d) => d.keeper === outcome)) continue;
+
+    outcome.fate = 'duplicate';
+    outcome.reason = `repeats "${readStep(keeper.unit).title}" — ${oneLine(drop.why)}`;
+    dropped.push({ outcome, keeper });
+  }
+
+  for (const { outcome } of dropped) log(`Dropped as a duplicate: ${outcome.unit.label}`);
+  return dropped.map(({ outcome }) => outcome);
+}
+
+const duplicates = (
+  await Promise.all(['backend', ...HUMAN_KEYS].filter((key) => input.sections[key]).map(dropDuplicates))
+).flat();
+
 // A claim is not a step: one upheld cites its test, one that fails is a test gap.
 const claimOutcomes = allVerified.filter((v) => v.unit.kind === 'claim');
 const stepOutcomes = allVerified.filter(
@@ -2506,6 +2609,7 @@ return {
     claimsFailed: failedClaims.length,
     checkerAgents,
     deleted: deleted.length,
+    duplicates: duplicates.length,
     unresolved: exhausted.length + unverified.length,
     exhausted: exhausted.length,
     unverified: unverified.length,
