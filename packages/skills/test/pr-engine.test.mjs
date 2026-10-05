@@ -1790,6 +1790,60 @@ describe('pr workflow — stronger checks', () => {
   });
 });
 
+describe('pr workflow — budget', () => {
+  it('gives each drafter its share of the step cap for the triage size', async () => {
+    const source = await prWorkflow('webapp', { budget: { small: 4 } });
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({ backend: 7, triage: { size: 'small' } }),
+    });
+    const drafts = calls.filter((c) => c.label.startsWith('draft:backend'));
+
+    // Eight entries: seven backend plus the cross-cutting one, in one drafter.
+    assert.equal(drafts.length, 1);
+    assert.match(
+      drafts[0].prompt,
+      /a budget of 4 steps and 30\s+minutes, and your share is about 4 step\(s\)/,
+    );
+  });
+
+  it('cuts if-time steps, longest first, until the checklist fits, and never a blocking one', async () => {
+    const source = await prWorkflow('webapp', {
+      budget: { large: 3, minutes: 100 },
+    });
+    const { result } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      {
+        reply: prReplies({ backend: 2, human: 4 }),
+      },
+    );
+
+    // Three blocking backend steps and one blocking frontend step already exceed the cap of three.
+    assert.equal(result.stats.cutForBudget, 3);
+    assert.doesNotMatch(result.checklist, /\[if-time\]/);
+    assert.match(result.checklist, /\[blocking\] Backend 3/);
+    assert.match(
+      gapText(result),
+      /frontend:See frontend-4 — cut to keep the checklist within 3 steps and 100 minutes/,
+    );
+    assert.match(
+      gapText(result),
+      /the checklist is over budget — its blocking steps alone come to 4 steps and about 9 minutes, over the budget of 3 steps and 100 minutes/,
+    );
+  });
+
+  it('cuts for the minutes target too', async () => {
+    const source = await prWorkflow('webapp', { budget: { minutes: 10 } });
+    const { result } = await runWorkflow(source, prArgs({ frontend: true }), {
+      reply: prReplies({ human: 4 }),
+    });
+
+    // Four 3-minute steps: one if-time step goes to bring 12 minutes under 10.
+    assert.equal(result.stats.cutForBudget, 1);
+    assert.equal(result.stats.steps, 3);
+  });
+});
+
 describe('pr workflow — format check and grouping rules', () => {
   it('names every format problem a script can see', async () => {
     const source = await prWorkflow('webapp');

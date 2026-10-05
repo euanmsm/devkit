@@ -731,6 +731,28 @@ and still miss the case that breaks.`,
   },
 ];
 
+/** The most steps the whole checklist may carry, for the size the triage found. */
+const STEP_CAP = () => CONFIG.budget[triage.size] ?? CONFIG.budget.large;
+
+/**
+ * Tells a drafter its share of the checklist's step budget.
+ *
+ * @param count - How many entries this drafter covers
+ * @returns The prompt fragment
+ */
+function budgetRule(count) {
+  const share = Math.max(1, Math.round((STEP_CAP() * count) / Math.max(1, entries.length)));
+
+  return `
+## Budget
+The whole checklist has a budget of ${STEP_CAP()} steps and ${CONFIG.budget.minutes}
+minutes, and your share is about ${share} step(s). Cover several entries with one
+step wherever one action shows them all. If you still need more, keep the
+blocking steps and leave out the least risky if-time ones, listing each entry
+left out as a gap with why "cut for budget". The checklist is cut to budget
+after verification, if-time steps first.`;
+}
+
 /**
  * Tells a drafter to cite the tests that already prove a behaviour instead of
  * writing a step for it.
@@ -830,7 +852,8 @@ ${STEP_FORMAT}
 ${draftEnvironment(input)}
 
 Order steps cheapest-and-highest-signal first, blocking before if-time. Give
-each step the minutes a tester needs for it.`;
+each step the minutes a tester needs for it.
+${budgetRule(entries.length)}`;
 }
 
 /**
@@ -893,7 +916,8 @@ ${opening} Read the seed and env files the facts file
 lists for the real values. Each step names ${section.stepNames}. Judgement
 steps keep their framing as ${section.audience} would read it — that IS the
 instruction — with no coverage justification paragraphs. Order cheapest-signal first, blocking
-before if-time. Give each step the minutes a tester needs for it.${split}`;
+before if-time. Give each step the minutes a tester needs for it.
+${budgetRule(entries.length)}${split}`;
 }
 
 /**
@@ -2409,6 +2433,46 @@ const duplicates = (
   await Promise.all(['backend', ...HUMAN_KEYS].filter((key) => input.sections[key]).map(dropDuplicates))
 ).flat();
 
+/**
+ * Cuts if-time steps, longest first, until the checklist fits its step cap
+ * and minutes target. Blocking steps are never cut.
+ *
+ * @returns The `cut` outcomes, and `over` describing how far the blocking steps alone exceed the budget, or null
+ */
+function enforceBudget() {
+  const cap = STEP_CAP();
+  const live = allVerified.filter((v) => v.unit.step && v.fate === 'pass');
+  const minutesOf = (v) => Number(readStep(v.unit).minutes) || 0;
+
+  let count = live.length;
+  let minutes = live.reduce((sum, v) => sum + minutesOf(v), 0);
+  const fits = () => count <= cap && minutes <= CONFIG.budget.minutes;
+
+  const cuttable = live
+    .filter((v) => readStep(v.unit).priority !== 'blocking')
+    .sort((a, b) => minutesOf(b) - minutesOf(a) || b.unit.order - a.unit.order);
+  const cut = [];
+
+  for (const outcome of cuttable) {
+    if (fits()) break;
+    outcome.fate = 'cut';
+    outcome.reason = `cut to keep the checklist within ${cap} steps and ${CONFIG.budget.minutes} minutes`;
+    count -= 1;
+    minutes -= minutesOf(outcome);
+    cut.push(outcome);
+  }
+
+  for (const outcome of cut) log(`Cut for budget: ${outcome.unit.label}`);
+  const over = fits()
+    ? null
+    : `its blocking steps alone come to ${count} steps and about ${Math.round(minutes)} minutes, over the budget of ${cap} steps and ${CONFIG.budget.minutes} minutes`;
+  if (over) log(`Over budget: ${over}`);
+
+  return { cut, over };
+}
+
+const budget = enforceBudget();
+
 // A claim is not a step: one upheld cites its test, one that fails is a test gap.
 const claimOutcomes = allVerified.filter((v) => v.unit.kind === 'claim');
 const stepOutcomes = allVerified.filter(
@@ -2474,6 +2538,8 @@ const gaps = [
     why: 'no checklist section drafts it, since the backend section is off',
   })),
   ...outcomeGaps(stepOutcomes),
+  ...budget.cut.map((c) => ({ gap: c.unit.label, why: c.reason })),
+  ...(budget.over ? [{ gap: 'the checklist is over budget', why: budget.over }] : []),
   ...failedClaims.map((c) => ({
     gap: c.unit.claim.entryText,
     why: `no test proves it after all, so it is a test gap for code review — ${oneLine(c.reason ?? `\`${c.unit.claim.testFile}\` does not assert it`)}`,
@@ -2610,6 +2676,7 @@ return {
     checkerAgents,
     deleted: deleted.length,
     duplicates: duplicates.length,
+    cutForBudget: budget.cut.length,
     unresolved: exhausted.length + unverified.length,
     exhausted: exhausted.length,
     unverified: unverified.length,
