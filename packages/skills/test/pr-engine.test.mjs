@@ -1105,16 +1105,64 @@ describe('pr workflow — config reaches the prompts', () => {
     assert.match(verify.prompt, /the worker loop intercept first/);
   });
 
-  it('leaves backend-only boot variables out when there is no backend section', async () => {
+  it('leaves backend-only boot variables out when the diff needs only a page', async () => {
     const source = await prWorkflow('webapp');
-    const { calls } = await runWorkflow(source, prArgs({ frontend: true }), {
-      reply: prReplies(),
-    });
+    const { calls } = await runWorkflow(
+      source,
+      prArgs(
+        { frontend: true },
+        { triage: { touches: ['page'], outsideRepo: [] } },
+      ),
+      { reply: prReplies({ triage: { touches: [] } }) },
+    );
     const boot = find(calls, 'draft:boot').prompt;
 
     assert.match(boot, /\\\$PORT — the dev server port/);
     assert.doesNotMatch(boot, /TOKEN/);
-    assert.match(boot, /db:reset/);
+    assert.doesNotMatch(find(calls, 'draft:frontend').prompt, /TOKEN/);
+  });
+
+  it('boots only what the diff needs, and skips the boot block when that is nothing', async () => {
+    const boot = {
+      start: [
+        { run: 'npm run db:start', when: ['database'] },
+        { run: 'npm run dev', when: ['api', 'page'] },
+      ],
+      stop: { run: 'npm run db:stop', when: ['database'] },
+      variables: {
+        PORT: { from: 'the dev server port', when: ['api', 'page'] },
+      },
+    };
+    const source = await prWorkflow('webapp', { boot });
+    const pageOnly = await runWorkflow(
+      source,
+      prArgs(
+        { frontend: true },
+        { triage: { touches: ['page'], outsideRepo: [] } },
+      ),
+      { reply: prReplies({ triage: { touches: [] } }) },
+    );
+    const prompt = find(pageOnly.calls, 'draft:boot').prompt;
+
+    assert.match(prompt, /```bash\nnpm run dev\n```/);
+    assert.match(prompt, /needs page running/);
+    assert.match(prompt, /FIVE caveat lines at most/);
+    assert.doesNotMatch(pageOnly.result.checklist, /db:stop/);
+
+    const nothing = await runWorkflow(
+      source,
+      prArgs({ backend: true }, { triage: { touches: [], outsideRepo: [] } }),
+      { reply: prReplies({ triage: { touches: [] } }) },
+    );
+    assert.ok(!labels(nothing.calls).includes('draft:boot'));
+    assert.match(
+      find(nothing.calls, 'draft:backend').prompt,
+      /\(none — this diff needs nothing started\)/,
+    );
+    assert.match(
+      nothing.result.checklist,
+      /^_Triage: [^\n]*_\n\n---\n\n## Agent-Runnable Backend Checks/,
+    );
   });
 
   it('tells every drafter and verifier never to run anything', async () => {

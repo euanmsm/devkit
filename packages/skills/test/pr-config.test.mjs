@@ -369,7 +369,10 @@ describe('pr config — refusals', () => {
       minimal({ boot: { start: [{ run: 'x', if: ['page'] }] } }),
       /unknown key "if" in boot\.start\[0\]/,
     );
-    rejects(minimal({ boot: { stop: ['x'] } }), /boot\.stop must be a string/);
+    rejects(
+      minimal({ boot: { stop: ['x'] } }),
+      /boot\.stop must be a string or \{ run, when \}/,
+    );
     rejects(
       minimal({ boot: { variables: { port: 'x' } } }),
       /upper-case shell variable name/,
@@ -466,6 +469,7 @@ describe('pr config — refusals', () => {
     );
 
     assert.deepEqual(resolved.layers[0].touches, ['api', 'database']);
+    assert.deepEqual(resolved.boot.stop, { run: '', when: [] });
     assert.deepEqual(resolved.boot.start, [
       { run: 'docker ps', when: [] },
       { run: 'npm run db:start', when: ['database'] },

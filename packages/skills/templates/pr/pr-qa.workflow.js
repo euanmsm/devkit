@@ -337,16 +337,24 @@ Hard rules:
 - Never run a command while drafting. Drafting reads code; running the steps
   is the manual tester's job.`;
 
-const BOOT_VARIABLES = CONFIG.boot.variables;
+/**
+ * Tells whether a boot command or variable is needed for this diff.
+ *
+ * @param when - What it is needed for, empty for always
+ * @returns Whether the triage found the diff touches any of it
+ */
+function bootNeeds(when) {
+  return when.length === 0 || when.some((touch) => triage.touches.includes(touch));
+}
 
 /**
  * Describes the boot variables a section may assume.
  *
- * @param needsBackend - Whether the checklist has a backend section
  * @returns The variable names, as `$NAME` joined with commas
  */
-function bootVariableNames(needsBackend) {
-  return BOOT_VARIABLES.filter((variable) => needsBackend || variable.when.length === 0)
+function bootVariableNames() {
+  return CONFIG.boot.variables
+    .filter((variable) => bootNeeds(variable.when))
     .map((variable) => `$${variable.name}`)
     .join(', ');
 }
@@ -356,15 +364,14 @@ function bootVariableNames(needsBackend) {
  * what the environment really defines instead of guessing at it.
  *
  * @param input - Workflow args plus derived paths, with the verified `bootMarkdown`
- * @param needsBackend - Whether the checklist has a backend section
  * @returns The prompt fragment
  */
-function draftEnvironment(input, needsBackend) {
+function draftEnvironment(input) {
   return `
 ## Boot block — already run before every section
-${input.bootMarkdown || '(none)'}
+${input.bootMarkdown || '(none — this diff needs nothing started)'}
 
-It defines ${bootVariableNames(needsBackend)}. Use ONLY the variables, helpers,
+It defines ${bootVariableNames() || 'no variables'}. Use ONLY the variables, helpers,
 ports and commands it defines, exactly as it writes them — never a variant,
 never a shell helper of your own wrapping them. Anything else a step needs is
 defined inline in that step's own Setup, never in an earlier step, so every
@@ -694,7 +701,7 @@ out of reach — e.g. ${BACKEND.gapExamples}). Never silently drop one.
 
 ## Step shape
 ${STEP_FORMAT}
-${draftEnvironment(input, true)}
+${draftEnvironment(input)}
 
 Order steps cheapest-and-highest-signal first, blocking before if-time. Give
 each step the minutes a tester needs for it.`;
@@ -762,7 +769,7 @@ a coveredByTests resolution in this section, and never silently dropped.
 
 ## Step shape
 ${STEP_FORMAT}
-${draftEnvironment(input, Boolean(input.sections.backend))}
+${draftEnvironment(input)}
 
 ${opening} Read the seed and env files the facts file
 lists for the real values. Each step names ${section.stepNames}. Judgement
@@ -823,10 +830,19 @@ server log. Never walk through every screen; this is a smoke check.
 
 ## Step shape
 ${STEP_FORMAT}
-${draftEnvironment(input, triage.touches.includes('api'))}
+${draftEnvironment(input)}
 
 Return the steps, with empty coveredByTests, and a gap only for something the
 move could break that no step can reach.`;
+}
+
+/**
+ * Lists the boot commands this diff needs.
+ *
+ * @returns The commands, in the config's order
+ */
+function bootCommands() {
+  return CONFIG.boot.start.filter((entry) => bootNeeds(entry.when)).map((entry) => entry.run);
 }
 
 /**
@@ -836,31 +852,29 @@ move could break that no step can reach.`;
  * @returns The prompt
  */
 function bootDraftPrompt(input) {
-  const needsBackend = Boolean(input.sections.backend);
-  const variables = BOOT_VARIABLES.filter(
-    (variable) => needsBackend || variable.when.length === 0,
-  );
+  const variables = CONFIG.boot.variables.filter((variable) => bootNeeds(variable.when));
 
   return `
 Draft the BOOT BLOCK for a Manual QA checklist — the one place the environment
 is set up and explained. Every section's steps assume it already ran.
 ${packRule(input)}
 
-Boot the stack once, ahead of every section. From the repo root:
+The triage found this diff needs ${triage.touches.join(', ') || 'nothing'} running, so
+boot only this, once, ahead of every section. From the repo root:
 
 \`\`\`bash
-${CONFIG.boot.start.map((entry) => entry.run).join('\n')}
+${bootCommands().join('\n')}
 \`\`\`
 
 Then ONE line deriving what the sections need:
 ${bullets(variables.map((variable) => `\\$${variable.name} — ${variable.from}`))}
 
 Read the real names from the repo, never invent them. Run each section in a
-single shell: variables from its earlier steps carry forward. Every
-environment caveat that changes what testers see (${PROMPTS.bootCaveats}) is
-stated HERE once, never repeated in steps. Check the branch for
-${PROMPTS.gating} and state the caveat here once. End with what confirms the
-boot worked. Return only the markdown.`;
+single shell: variables from its earlier steps carry forward. Check the
+branch for ${PROMPTS.gating}. State an environment caveat (${PROMPTS.bootCaveats})
+HERE once, never in steps — and only one that changes what a tester sees in
+an Expect line. FIVE caveat lines at most; no preamble, no explanation of
+the stack. End with what confirms the boot worked. Return only the markdown.`;
 }
 
 /**
@@ -957,8 +971,9 @@ then gets a manual step drafted for it. Never run the test.`);
     reduced.push(`
 For the boot block the checks reduce to: every command is real and in the
 right order, the derivations produce what sections use, every flag, setting
-or env caveat for the touched code is stated (and none invented), and nothing
-here belongs in a step (no step-specific state).`);
+or env caveat for the touched code that changes an Expect line is stated
+(and none invented), there are five caveat lines at most, and nothing here
+belongs in a step (no step-specific state).`);
   }
 
   const runnerCheck = units.some((unit) => unit.runner) ? RUNNER_CHECK : '';
@@ -1055,7 +1070,7 @@ Tests that exist: ${JSON.stringify(testFiles.map((test) => test.file))}
 
 ## Step shape
 ${STEP_FORMAT}
-${draftEnvironment(input, true)}
+${draftEnvironment(input)}
 
 Return it as a section with exactly one step (priority: your judgment) and
 empty coveredByTests and gaps.`;
@@ -1653,6 +1668,11 @@ if (triage.kind === 'tooling') {
  * @returns The boot block's verification outcome, or null when no draft came back
  */
 function startBoot(context, phaseName) {
+  if (bootCommands().length === 0) {
+    log('The diff needs nothing started — no boot block');
+    return Promise.resolve(null);
+  }
+
   return agent(bootDraftPrompt(context), {
     label: 'draft:boot',
     phase: phaseName,
@@ -2142,9 +2162,9 @@ if (storybookItems.length > 0) {
   );
 }
 
-if (CONFIG.boot.stop) {
+if (CONFIG.boot.stop.run && boot.body && bootNeeds(CONFIG.boot.stop.when)) {
   sectionsMd.push(
-    `---\n\n**When you're finished**, stop the stack: \`${CONFIG.boot.stop}\``,
+    `---\n\n**When you're finished**, stop the stack: \`${CONFIG.boot.stop.run}\``,
   );
 }
 
@@ -2160,7 +2180,7 @@ sectionsMd.unshift(
 
 return {
   summary: (await summaryRun)?.markdown ?? '',
-  checklist: sectionsMd.join('\n\n'),
+  checklist: sectionsMd.filter(Boolean).join('\n\n'),
   gaps,
   unresolved: unresolvedLabels(allVerified),
   trapCandidates: ((await trapRun)?.traps ?? []).filter(

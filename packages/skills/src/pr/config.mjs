@@ -385,22 +385,11 @@ function resolveBoot(raw = {}, fail) {
   if (!Array.isArray(start)) fail('boot.start must be a list');
 
   return {
-    start: start.map((entry, i) => {
-      const where = `boot.start[${i}]`;
-      if (typeof entry === 'string') return { run: entry, when: [] };
-
-      if (!isPlainObject(entry))
-        fail(`${where} must be a string or { run, when }`);
-      unknownKeys(entry, START_KEYS, where, fail);
-      if (typeof entry.run !== 'string' || !entry.run) {
-        fail(`${where}.run must be a string`);
-      }
-      return {
-        run: entry.run,
-        when: touchList(entry.when, `${where}.when`, fail),
-      };
-    }),
-    stop: optionalString(raw.stop, 'boot.stop', fail) ?? '',
+    start: start.map((entry, i) => command(entry, `boot.start[${i}]`, fail)),
+    stop:
+      raw.stop === undefined
+        ? { run: '', when: [] }
+        : command(raw.stop, 'boot.stop', fail),
     variables: Object.entries(variables).map(([name, value]) => {
       const where = `boot.variables.${name}`;
       if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
@@ -425,6 +414,25 @@ function resolveBoot(raw = {}, fail) {
     }),
     read: stringList(raw.read, 'boot.read', fail) ?? [],
   };
+}
+
+/**
+ * Reads a boot command, which runs always or only when the diff needs it.
+ *
+ * @param entry - A command string, or `{ run, when }`
+ * @param where - Its location, for the message
+ * @param fail - Throws with the config's path
+ * @returns The command and what it is `when` needed, empty for always
+ */
+function command(entry, where, fail) {
+  if (typeof entry === 'string') return { run: entry, when: [] };
+
+  if (!isPlainObject(entry)) fail(`${where} must be a string or { run, when }`);
+  unknownKeys(entry, START_KEYS, where, fail);
+  if (typeof entry.run !== 'string' || !entry.run) {
+    fail(`${where}.run must be a string`);
+  }
+  return { run: entry.run, when: touchList(entry.when, `${where}.when`, fail) };
 }
 
 /**
