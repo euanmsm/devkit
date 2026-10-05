@@ -25,6 +25,10 @@ const afterTriage = (checklist) =>
   checklist.replace(/^_Triage: [^\n]*_\n\n/, '');
 const gapText = (result) =>
   result.gaps.map((g) => `- ${g.gap} — ${g.why}`).join('\n');
+const noteText = (result) =>
+  result.reportNotes
+    .map((n) => `- [${n.kind}] ${n.item} — ${n.why}`)
+    .join('\n');
 
 describe('pr workflow — what runs', () => {
   it('writes only a summary when no section is touched', async () => {
@@ -411,6 +415,10 @@ describe('pr workflow — prune', () => {
     assert.deepEqual(unitNames(find(calls, 'verify:pruned')), ['claim:be-5']);
     assert.match(result.checklist, /\*\*Covered by:\*\* `src\/a\.test\.ts`/);
     assert.equal(result.stats.pruned, 3);
+    assert.match(
+      noteText(result),
+      /- \[pruned\] backend behaviour 4 \(src\/service\/file0\.ts:13\) — would pass on main — only a comment moved/,
+    );
   });
 
   it('keeps the whole inventory when the pruner returns nothing', async () => {
@@ -506,8 +514,8 @@ describe('pr workflow — verification', () => {
     assert.doesNotMatch(result.checklist, /Check be-2/);
     assert.match(result.checklist, /\*\*Covered by:\*\* `src\/a\.test\.ts`/);
     assert.match(
-      gapText(result),
-      /backend behaviour 2 \(src\/service\/file1\.ts:11\) — no test proves it after all, so it is a test gap for code review — no such assertion/,
+      noteText(result),
+      /- \[test gap\] backend behaviour 2 \(src\/service\/file1\.ts:11\) — no test proves it, so it is a test gap for code review — no such assertion/,
     );
     assert.equal(result.stats.claimsChecked, 2);
     assert.equal(result.stats.claimsFailed, 1);
@@ -600,8 +608,8 @@ describe('pr workflow — verification', () => {
 
     assert.doesNotMatch(result.checklist, /Check be-3\*\*/);
     assert.match(
-      gapText(result),
-      /backend:Check be-3 — no accurate manual version — unreachable by hand/,
+      noteText(result),
+      /- \[deleted\] backend:Check be-3 — unreachable by hand/,
     );
     assert.equal(result.stats.deleted, 1);
     assert.ok(logs.some((line) => line.startsWith('Deleted')));
@@ -642,8 +650,8 @@ describe('pr workflow — verification', () => {
     assert.equal(result.stats.exhausted, 1);
     assert.doesNotMatch(result.checklist, /Backend \d — Check be-1/);
     assert.match(
-      gapText(result),
-      /- backend:Check be-1 — failed verification 2 times — still wrong/,
+      noteText(result),
+      /- \[left out\] backend:Check be-1 — failed verification 2 times — still wrong/,
     );
     assert.ok(
       logs.includes(
@@ -1008,8 +1016,11 @@ describe('pr workflow — the assembled checklist', () => {
       gapText(result),
       /- screen reader output — needs a screen reader/,
     );
-    // The published checklist holds only steps; gaps stay in the result.
-    assert.doesNotMatch(text, /Not covered|screen reader output/);
+    // A tester's gap is one line in the checklist, just above Local CI.
+    assert.match(
+      text,
+      /---\n\n\*\*Not covered here:\*\*\n\n- screen reader output — needs a screen reader\n\n---/,
+    );
     assert.match(
       text,
       /- \[ \] Review agents \(run locally before merge\)\n- \[ \] Full test suite passes/,
@@ -1373,8 +1384,8 @@ describe('pr workflow — edges', () => {
     );
 
     assert.match(
-      gapText(result),
-      /- a rejected caller \(src\/service\/file0\.ts:99\) — no checklist section drafts it, since the backend section is off/,
+      noteText(result),
+      /- \[not drafted\] a rejected caller \(src\/service\/file0\.ts:99\) — no checklist section drafts it, since the backend section is off/,
     );
     assert.ok(
       logs.includes('1 entries have no section to draft them — listed as gaps'),
@@ -1412,8 +1423,8 @@ describe('pr workflow — edges', () => {
     assert.equal(result.stats.unverified, 1);
     assert.doesNotMatch(result.checklist, /Backend \d — Check be-1/);
     assert.match(
-      gapText(result),
-      /- backend:Check be-1 — never verified — the checker gave no verdict for it/,
+      noteText(result),
+      /- \[left out\] backend:Check be-1 — never verified — the checker gave no verdict for it/,
     );
     assert.ok(
       logs.includes(
@@ -1436,8 +1447,8 @@ describe('pr workflow — edges', () => {
     ]);
     assert.doesNotMatch(result.checklist, /## Human Browser Checks/);
     assert.match(
-      gapText(result),
-      /- frontend:See frontend-2 — never verified — the checker returned nothing/,
+      noteText(result),
+      /- \[left out\] frontend:See frontend-2 — never verified — the checker returned nothing/,
     );
   });
 
@@ -1452,8 +1463,8 @@ describe('pr workflow — edges', () => {
     });
 
     assert.match(
-      gapText(result),
-      /- src\/ui\/Orphan\.tsx — a changed file no surface could be traced to/,
+      noteText(result),
+      /- \[no surface\] src\/ui\/Orphan\.tsx — a changed file no surface could be traced to/,
     );
   });
 
@@ -1564,8 +1575,8 @@ describe('pr workflow — edges', () => {
 
     assert.doesNotMatch(result.checklist, /## Human Browser Checks/);
     assert.match(
-      gapText(result),
-      /frontend:See frontend-1 — no accurate manual version/,
+      noteText(result),
+      /- \[deleted\] frontend:See frontend-1 — needs a screen reader/,
     );
   });
 
@@ -1813,6 +1824,10 @@ describe('pr workflow — stronger checks', () => {
     assert.doesNotMatch(result.checklist, /Check be-10\b/);
     assert.match(result.checklist, /Check be-1\b/);
     assert.equal(result.stats.duplicates, 1);
+    assert.match(
+      noteText(result),
+      /- \[duplicate\] backend:Check be-10 — repeats "Check be-1" — same status code/,
+    );
     assert.equal(result.stats.steps, 10);
   });
 
@@ -1864,12 +1879,12 @@ describe('pr workflow — budget', () => {
     assert.doesNotMatch(result.checklist, /\[if-time\]/);
     assert.match(result.checklist, /\[blocking\] Backend 3/);
     assert.match(
-      gapText(result),
-      /frontend:See frontend-4 — cut to keep the checklist within 3 steps and 100 minutes/,
+      noteText(result),
+      /- \[cut for budget\] frontend:See frontend-4 — cut to keep the checklist within 3 steps and 100 minutes/,
     );
     assert.match(
-      gapText(result),
-      /the checklist is over budget — its blocking steps alone come to 4 steps and about 9 minutes, over the budget of 3 steps and 100 minutes/,
+      noteText(result),
+      /- \[over budget\] the checklist — its blocking steps alone come to 4 steps and about 9 minutes, over the budget of 3 steps and 100 minutes/,
     );
   });
 

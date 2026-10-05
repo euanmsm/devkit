@@ -30,7 +30,7 @@ export const COMMENT_LIMIT = 60000;
  * @param root - The repository root
  * @param config - The resolved PR config
  * @param options - `result` path, `base` branch, the `head` commit the prepass checked, `setBase` to move an open PR onto `base`, and a `gh` stand-in for tests
- * @returns The PR `url` and `number`, whether it was `created`, the comment `parts`, the result's `unresolved` units, `trapCandidates` and gap count, and `baseMismatch` naming an open PR's base when it is not `base`
+ * @returns The PR `url` and `number`, whether it was `created`, the comment `parts`, the result's `unresolved` units, `trapCandidates`, tester gap count and `reportNotes`, and `baseMismatch` naming an open PR's base when it is not `base`
  * @throws When the result file is unreadable or has a blank summary, when the PR's head on GitHub is not `head`, or when a `gh` call fails
  */
 export function publish(
@@ -137,6 +137,7 @@ export function publish(
       unresolved: result.unresolved ?? [],
       trapCandidates: result.trapCandidates ?? [],
       gaps: (result.gaps ?? []).length,
+      reportNotes: result.reportNotes ?? [],
       baseMismatch:
         open && !setBase && open.baseRefName && open.baseRefName !== base
           ? open.baseRefName

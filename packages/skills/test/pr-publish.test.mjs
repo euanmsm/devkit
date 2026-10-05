@@ -46,6 +46,7 @@ const RESULT = {
   checklist:
     'boot\n\n---\n\n## Agent-Runnable Backend Checks\n\n- [ ] **Backend 1**\n\n---\n\n### Local CI\n\n- [ ] Tests',
   gaps: [{ gap: 'a', why: 'b' }],
+  reportNotes: [{ kind: 'test gap', item: 'c', why: 'd' }],
   unresolved: ['backend:x'],
   stats: {},
 };
@@ -274,6 +275,7 @@ describe('pr publish — against a fake gh', () => {
       unresolved: ['backend:x'],
       trapCandidates: [],
       gaps: 1,
+      reportNotes: [{ kind: 'test gap', item: 'c', why: 'd' }],
       baseMismatch: null,
     });
 

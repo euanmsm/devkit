@@ -1780,6 +1780,7 @@ function summaryOnly(summary, why, lead = []) {
     summary: summary?.markdown ?? '',
     checklist: [...lead, `_No manual checks needed — ${why}._`, `---\n\n${localCiBlock(input.branch)}`].join('\n\n'),
     gaps: [],
+    reportNotes: [],
     unresolved: [],
     trapCandidates: [],
     stats: { entries: 0, steps: 0, verified: 0 },
@@ -1935,27 +1936,63 @@ function settleBoot(outcome) {
 }
 
 /**
- * Turns the units verification left out into gaps the author hears about.
+ * Turns the units verification left out into notes for the author's report.
  *
  * @param outcomes - Verification outcomes
- * @returns One gap per deleted, exhausted or unverified unit
+ * @returns One note per deleted, exhausted or unverified unit
  */
-function outcomeGaps(outcomes) {
+function outcomeNotes(outcomes) {
   return outcomes.flatMap((o) => {
     if (o.fate === 'deleted') {
-      log(`Deleted (no accurate version): ${o.unit.label}`);
-      return [{ gap: o.unit.label, why: `no accurate manual version — ${oneLine(o.reason)}` }];
+      log(`Deleted: ${o.unit.label}`);
+      return [{ kind: 'deleted', item: o.unit.label, why: oneLine(o.reason) }];
     }
     if (o.fate === 'exhausted') {
       log(`Left out, still failing after ${MAX_VERIFY_ROUNDS} rounds: ${o.unit.label}`);
-      return [{ gap: o.unit.label, why: `failed verification ${MAX_VERIFY_ROUNDS} times — ${oneLine(o.reason)}` }];
+      return [
+        {
+          kind: 'left out',
+          item: o.unit.label,
+          why: `failed verification ${MAX_VERIFY_ROUNDS} times — ${oneLine(o.reason)}`,
+        },
+      ];
     }
     if (o.fate === 'unverified') {
       log(`Left out, never verified (${o.reason}): ${o.unit.label}`);
-      return [{ gap: o.unit.label, why: `never verified — ${o.reason}` }];
+      return [{ kind: 'left out', item: o.unit.label, why: `never verified — ${o.reason}` }];
     }
     return [];
   });
+}
+
+/**
+ * Splits drafters' gaps into the ones a tester needs and the budget cuts,
+ * which belong in the author's report.
+ *
+ * @param drafted - The drafters' gaps, as `{ gap, why }`
+ * @returns The tester `gaps`, deduplicated, and the budget-cut `notes`
+ */
+function splitGaps(drafted) {
+  const unique = drafted.filter(
+    (gap, i, all) => all.findIndex((g) => g.gap === gap.gap && g.why === gap.why) === i,
+  );
+  const cut = (gap) => /cut for budget/i.test(gap.why);
+
+  return {
+    gaps: unique.filter((gap) => !cut(gap)).map((gap) => ({ gap: oneLine(gap.gap), why: oneLine(gap.why) })),
+    notes: unique.filter(cut).map((gap) => ({ kind: 'cut for budget', item: gap.gap, why: gap.why })),
+  };
+}
+
+/**
+ * Renders the tester's gaps as one line each.
+ *
+ * @param gaps - The tester gaps
+ * @returns The block, or an empty string when there are none
+ */
+function gapsMarkdown(gaps) {
+  if (gaps.length === 0) return '';
+  return `---\n\n**Not covered here:**\n\n${gaps.map((g) => `- ${g.gap} — ${g.why}`).join('\n')}`;
 }
 
 /**
@@ -2101,6 +2138,7 @@ if (triage.kind === 'move') {
     .map((o) => readStep(o.unit));
   const frame = sectionFrame(outcomes, 'smoke');
   const deployOutcomes = await deployRun;
+  const moveGaps = splitGaps(drafted?.gaps ?? []);
 
   const checklist = [
     triageLine(totalMinutes(steps)),
@@ -2109,15 +2147,17 @@ if (triage.kind === 'move') {
     steps.length > 0
       ? `---\n\n## Smoke Check\n\n${[timingLine(steps, true), frame.setup, numberSteps(steps, 'Smoke'), frame.teardown].filter(Boolean).join('\n\n')}`
       : '',
+    gapsMarkdown(moveGaps.gaps),
     `---\n\n${localCiBlock(input.branch, ['The type check and the production build pass'])}`,
   ].filter(Boolean);
 
   return {
     summary: (await summaryRun)?.markdown ?? '',
     checklist: checklist.join('\n\n'),
-    gaps: [
-      ...(drafted?.gaps ?? []),
-      ...outcomeGaps([...outcomes.filter((o) => o.unit.step), ...deployOutcomes]),
+    gaps: moveGaps.gaps,
+    reportNotes: [
+      ...moveGaps.notes,
+      ...outcomeNotes([...outcomes.filter((o) => o.unit.step), ...deployOutcomes]),
     ],
     unresolved: unresolvedLabels([...outcomes.filter((o) => o.unit.step), ...deployOutcomes]),
     trapCandidates: [],
@@ -2650,30 +2690,39 @@ function keep(section) {
 }
 
 // Drafters splitting one section can each report the same gap.
-const draftedGaps = [
+const drafterGaps = splitGaps([
   ...backendResults.flatMap((result) => result.section?.gaps ?? []),
   ...humanResults.flatMap((result) => result.section?.gaps ?? []),
-].filter(
-  (gap, i, all) => all.findIndex((g) => g.gap === gap.gap && g.why === gap.why) === i,
-);
+]);
+const gaps = drafterGaps.gaps;
 
-const gaps = [
-  ...draftedGaps,
+// What the author hears in the /pr report and the tester never sees.
+const reportNotes = [
   ...unresolvedSurfaces.map((file) => ({
-    gap: file,
+    kind: 'no surface',
+    item: file,
     why: 'a changed file no surface could be traced to',
   })),
   ...undrafted.map((entry) => ({
-    gap: `${entry.behaviour} (${entry.where})`,
+    kind: 'not drafted',
+    item: `${entry.behaviour} (${entry.where})`,
     why: 'no checklist section drafts it, since the backend section is off',
   })),
-  ...outcomeGaps(stepOutcomes),
-  ...budget.cut.map((c) => ({ gap: c.unit.label, why: c.reason })),
-  ...(budget.over ? [{ gap: 'the checklist is over budget', why: budget.over }] : []),
-  ...failedClaims.map((c) => ({
-    gap: c.unit.claim.entryText,
-    why: `no test proves it after all, so it is a test gap for code review — ${oneLine(c.reason ?? `\`${c.unit.claim.testFile}\` does not assert it`)}`,
+  ...pruned.passing.map(({ entry, why }) => ({
+    kind: 'pruned',
+    item: `${entry.behaviour} (${entry.where})`,
+    why: `would pass on main — ${oneLine(why)}`,
   })),
+  ...failedClaims.map((c) => ({
+    kind: 'test gap',
+    item: c.unit.claim.entryText,
+    why: `no test proves it, so it is a test gap for code review — ${oneLine(c.reason ?? `\`${c.unit.claim.testFile}\` does not assert it`)}`,
+  })),
+  ...outcomeNotes(stepOutcomes),
+  ...duplicates.map((d) => ({ kind: 'duplicate', item: d.unit.label, why: d.reason })),
+  ...drafterGaps.notes,
+  ...budget.cut.map((c) => ({ kind: 'cut for budget', item: c.unit.label, why: c.reason })),
+  ...(budget.over ? [{ kind: 'over budget', item: 'the checklist', why: budget.over }] : []),
 ];
 
 const sectionsMd = [boot.published.trim(), deployMarkdown(deployVerified)];
@@ -2770,6 +2819,8 @@ if (storybookItems.length > 0) {
   );
 }
 
+sectionsMd.push(gapsMarkdown(gaps));
+
 if (CONFIG.boot.stop.run && boot.body && bootNeeds(CONFIG.boot.stop.when)) {
   sectionsMd.push(
     `---\n\n**When you're finished**, stop the stack: \`${CONFIG.boot.stop.run}\``,
@@ -2790,6 +2841,7 @@ return {
   summary: (await summaryRun)?.markdown ?? '',
   checklist: sectionsMd.filter(Boolean).join('\n\n'),
   gaps,
+  reportNotes,
   unresolved: unresolvedLabels(stepOutcomes),
   trapCandidates: ((await trapRun)?.traps ?? []).filter(
     (trap) => trap.units >= TRAP_MIN_UNITS,
