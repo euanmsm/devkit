@@ -202,8 +202,10 @@ const SPLIT_STEP = {
 
 const SECTION_SCHEMA = {
   type: 'object',
-  required: ['steps', 'coveredByTests', 'gaps'],
+  required: ['setup', 'teardown', 'steps', 'coveredByTests', 'gaps'],
   properties: {
+    setup: str,
+    teardown: str,
     steps: { type: 'array', items: STEP },
     coveredByTests: {
       type: 'array',
@@ -343,26 +345,28 @@ const DIMENSIONS = Object.entries(CONFIG.dimensions)
 const STEP_FORMAT = `
 Every step is the same labelled parts and nothing else, in this order:
 
-- **Setup:** only when state must exist first, carrying its own copy-pasteable
-  fenced block when a command creates it.
+- **Setup:** only the state THIS step adds on top of the section's setup and
+  the steps before it — its own row or ID — with a copy-pasteable fenced
+  block when a command creates it.
 - The command(s) or actions. A command goes in a fenced block and leads; no
   paragraph explaining what it is about to do — the step title says that.
 - **Expect:** the literal expected result, quoted — a block of expected output
   or the exact values, never sentences describing fields.
+- **On main:** what the tester would see doing the same with this PR
+  reverted. When that matches Expect the step proves nothing, so it must not
+  exist. Leave this line out only for a step that needs a person's judgement.
 - **If wrong:** one line, the likely diagnostic case only. No three-branch
   essays.
-- **Teardown:** only when the step mutates state, with the full statement
-  written out in the step (a confirming read included where cheap). Absent
-  means none — never write "Teardown: none".
 
 Hard rules:
+- NO per-step teardown. The section's one teardown undoes everything its
+  setup and steps change.
 - NO rationale in steps ("nothing in the suite asserts this…" belongs to the
   inventory, not the tester). One clause of context is allowed only when the
   tester cannot act without it.
 - NO environment re-derivation. The boot block owns ports, tokens and env
-  caveats; assume one shell per section, so variables from earlier steps in
-  the SAME section carry forward. A step's own state and IDs are still always
-  inline.
+  caveats. A section's steps run in order in one shell, so a step may rely on
+  the section's setup and on what earlier steps in the SAME section did.
 - Plain language: one instruction per sentence, real UI and output strings
   quoted verbatim, warnings above the action they apply to, a codebase-local
   name explained in a clause on first use.
@@ -407,9 +411,14 @@ ${input.bootMarkdown || '(none — this diff needs nothing started)'}
 
 It defines ${bootVariableNames() || 'no variables'}. Use ONLY the variables, helpers,
 ports and commands it defines, exactly as it writes them — never a variant,
-never a shell helper of your own wrapping them. Anything else a step needs is
-defined inline in that step's own Setup, never in an earlier step, so every
-step runs on its own.
+never a shell helper of your own wrapping them.
+
+## Section setup and teardown
+Return what your steps need before the first one runs as \`setup\`, written
+once: the seeded rows, accounts and settings, with fenced commands for
+anything a command creates. Return what undoes it all as \`teardown\`, with
+the full statements and a confirming read where cheap. Either is an empty
+string when there is nothing to set up or undo.
 
 ## Known traps
 Read \`${CONFIG.traps}\` in full before drafting. Every step is checked against
@@ -430,10 +439,12 @@ const EIGHT_CHECKS = `
 6. IDENTIFIERS — confirm every ${CONFIG.verify.identifiers.join(', ')} exists IN
    THE REPO. Grep; never trust the pack or recall.
 7. TRAPS — check the step against every entry in the traps file.
-8. FORMAT — the step follows the micro-format: Setup/command/Expect/If
-   wrong/Teardown only, no rationale paragraphs, no environment re-derivation,
-   one instruction per sentence, real strings quoted, setup and teardown
-   commands fenced and inline. A violation is a FAIL like any other.
+8. FORMAT — the step follows the micro-format: Setup/command/Expect/On
+   main/If wrong only, no per-step teardown, no rationale paragraphs, no
+   environment re-derivation, one instruction per sentence, real strings
+   quoted, setup commands fenced and inline. A step that needs no person's
+   judgement and has no On main line is a FAIL; write one from the code. A
+   violation is a FAIL like any other.
 
 A claimed result that does not reproduce from the code is a FAIL.
 Verification is CODE-READING ONLY. Never execute a step, never start or touch
@@ -1022,6 +1033,22 @@ function unitsBlock(units, withFindings) {
 }
 
 /**
+ * Shows a checker the section setup its steps rely on.
+ *
+ * @param units - The units under verification
+ * @returns The prompt fragment, empty when no unit relies on a setup
+ */
+function setupsFor(units) {
+  const setups = [...new Set(units.map((unit) => unit.setup).filter(Boolean))];
+  if (setups.length === 0) return '';
+
+  return `
+## Section setup these steps may rely on (checked on its own; do not re-check it)
+${setups.join('\n\n')}
+`;
+}
+
+/**
  * Builds the prompt verifying a batch of checklist units against the code.
  *
  * @param input - Workflow args plus derived paths
@@ -1048,6 +1075,13 @@ and line in findings. PASS when it does. FAIL with rewrite null when the file
 is missing, or the assertion is absent or narrower than the claim; the entry
 is then reported to code review as a test gap. Never run the test.`);
   }
+  if (kinds.has('setup')) {
+    reduced.push(`
+For a section setup the checks reduce to: every command, row, account and
+setting it names is real, it creates what the section's steps rely on, the
+teardown undoes everything the setup and the steps change, and nothing in it
+belongs to one step alone.`);
+  }
   if (kinds.has('boot')) {
     reduced.push(`
 For the boot block the checks reduce to: every command is real and in the
@@ -1072,6 +1106,7 @@ Full diff: \`${input.diffPath}\`. ${packRule(input)}
 ## Boot block these units may rely on (steps assume it ran; do not re-check it)
 ${kinds.has('boot') ? '(the boot block is one of the units below)' : input.bootMarkdown || '(none)'}
 
+${setupsFor(units)}
 ## Known traps
 Read \`${CONFIG.traps}\` in full before judging.
 
@@ -1102,7 +1137,7 @@ PASS a unit only when every problem in its \`previousFindings\` is fixed from
 the code, not by assertion, and the rewrite introduces no new identifier,
 command or expected value you have not confirmed in the repo. Verification is
 CODE-READING ONLY — never run anything.${units.some((unit) => unit.runner) ? RUNNER_CHECK : ''}
-${VERDICT_OUTPUT}
+${setupsFor(units)}${VERDICT_OUTPUT}
 
 ${unitsBlock(units, true)}`;
 }
@@ -1162,7 +1197,7 @@ ${JSON.stringify(failures, null, 1)}`;
 // Format check
 // =============================================================================
 
-const LABELS = ['**Setup:**', '**Expect:**', '**If wrong:**', '**Teardown:**'];
+const LABELS = ['**Setup:**', '**Expect:**', '**On main:**', '**If wrong:**'];
 
 /**
  * Finds the step-format problems a script can see without reading code.
@@ -1177,8 +1212,10 @@ function formatProblems(unit) {
   const body = unit.body;
 
   if (!body.includes('**Expect:**')) problems.push('no **Expect:** line');
-  if (/Teardown:\**\s*none/i.test(body)) {
-    problems.push('says "Teardown: none" — leave Teardown out instead');
+  if (body.includes('**Teardown:**')) {
+    problems.push(
+      "has its own **Teardown:** — the section's one teardown undoes it, so drop the line",
+    );
   }
   if (unit.kind === 'backend' && !/```/.test(body)) {
     problems.push('a terminal step with no fenced command block');
@@ -1188,7 +1225,7 @@ function formatProblems(unit) {
     (index) => index !== -1,
   );
   if (positions.some((index, i) => i > 0 && index < positions[i - 1])) {
-    problems.push('labels out of order — Setup, command, Expect, If wrong, Teardown');
+    problems.push('labels out of order — Setup, command, Expect, On main, If wrong');
   }
 
   return problems;
@@ -1458,9 +1495,10 @@ function timingLine(steps, paste, runs = '') {
  *
  * @param section - The section, with its `agent` half
  * @param steps - Every verified step, each with its `runner`
+ * @param frame - The section's `setup`, opening the first half with steps, and its `teardown`, closing the section
  * @returns The two halves' markdown, each opening with `---`
  */
-function splitSectionMarkdown(section, steps) {
+function splitSectionMarkdown(section, steps, frame = { setup: '', teardown: '' }) {
   const agentSteps = steps.filter((step) => step.runner === 'agent');
   const humanSteps = steps.filter((step) => step.runner !== 'agent');
   const note = section.agent.note
@@ -1471,14 +1509,28 @@ function splitSectionMarkdown(section, steps) {
         .join('\n')}`
     : '';
 
+  const agentSetup = agentSteps.length > 0 ? frame.setup : '';
+  const humanSetup = agentSteps.length > 0 ? '' : frame.setup;
+  const join = (...parts) => parts.filter(Boolean).join('\n\n');
+
   const agentBody =
     agentSteps.length > 0
-      ? `${timingLine(agentSteps, true, section.agent.runs)}${note}\n\n${numberSteps(agentSteps, section.label)}`
+      ? join(
+          `${timingLine(agentSteps, true, section.agent.runs)}${note}`,
+          agentSetup,
+          numberSteps(agentSteps, section.label),
+        )
       : '_No step here can be run by an agent._';
-  const humanBody =
+  const humanBody = join(
     humanSteps.length > 0
-      ? `${timingLine(humanSteps, false)}\n\n${numberSteps(humanSteps, section.label, agentSteps.length)}`
-      : "_Every check above can be run by an agent; nothing here needs a person's judgement._";
+      ? join(
+          timingLine(humanSteps, false),
+          humanSetup,
+          numberSteps(humanSteps, section.label, agentSteps.length),
+        )
+      : "_Every check above can be run by an agent; nothing here needs a person's judgement._",
+    steps.length > 0 ? frame.teardown : '',
+  );
 
   return [
     `---\n\n## ${section.agent.title}\n\n${agentBody}`,
@@ -1787,6 +1839,41 @@ function totalMinutes(steps) {
   return steps.reduce((sum, step) => sum + (Number(step.minutes) || 0), 0);
 }
 
+/**
+ * Collects a section's verified setups and teardowns into one of each.
+ *
+ * Several drafters can each write one for their share of the section. A
+ * setup that failed verification is kept with a warning, since the steps
+ * after it rely on it.
+ *
+ * @param outcomes - Verification outcomes, setup units among them
+ * @param key - The section key
+ * @returns The section's `setup` and `teardown` markdown, each empty when it has none
+ */
+function sectionFrame(outcomes, key) {
+  const setups = [];
+  const teardowns = [];
+
+  for (const outcome of outcomes) {
+    if (outcome.unit.kind !== 'setup' || outcome.unit.section !== key) continue;
+
+    const [setup, teardown = ''] = outcome.unit.body.split('**Teardown:**');
+    const warning =
+      outcome.fate === 'pass'
+        ? ''
+        : `> [!WARNING]\n> **This setup did not pass verification** — ${oneLine(outcome.reason) || BOOT_WARNINGS[outcome.fate]}. Check it against the repository before relying on it.\n\n`;
+
+    const own = setup.replace('**Setup:**', '').trim();
+    if (own) setups.push(`${warning}${own}`);
+    if (teardown.trim()) teardowns.push(teardown.trim());
+  }
+
+  return {
+    setup: setups.length > 0 ? `**Setup:**\n\n${setups.join('\n\n')}` : '',
+    teardown: teardowns.length > 0 ? `**Teardown:**\n\n${teardowns.join('\n\n')}` : '',
+  };
+}
+
 if (triage.kind === 'move') {
   phase('Draft and verify');
   log('Triage found a pure move — one smoke check instead of a full checklist');
@@ -1805,15 +1892,22 @@ if (triage.kind === 'move') {
   const outcomes = await verifyUnits(
     moveInput,
     'smoke',
-    (drafted?.steps ?? []).slice(0, CONFIG.budget.move).map((step) => stepUnit('smoke', step)),
+    groupUnits(
+      'smoke',
+      { ...drafted, steps: (drafted?.steps ?? []).slice(0, CONFIG.budget.move), coveredByTests: [] },
+      'setup:smoke',
+    ),
   );
-  const steps = outcomes.filter((o) => o.fate === 'pass').map((o) => readStep(o.unit));
+  const steps = outcomes
+    .filter((o) => o.unit.step && o.fate === 'pass')
+    .map((o) => readStep(o.unit));
+  const frame = sectionFrame(outcomes, 'smoke');
 
   const checklist = [
     triageLine(totalMinutes(steps)),
     boot.published.trim(),
     steps.length > 0
-      ? `---\n\n## Smoke Check\n\n${timingLine(steps, true)}\n\n${numberSteps(steps, 'Smoke')}`
+      ? `---\n\n## Smoke Check\n\n${[timingLine(steps, true), frame.setup, numberSteps(steps, 'Smoke'), frame.teardown].filter(Boolean).join('\n\n')}`
       : '',
     `---\n\n${localCiBlock(input.branch, ['The type check and the production build pass'])}`,
   ].filter(Boolean);
@@ -1821,8 +1915,8 @@ if (triage.kind === 'move') {
   return {
     summary: (await summaryRun)?.markdown ?? '',
     checklist: checklist.join('\n\n'),
-    gaps: [...(drafted?.gaps ?? []), ...outcomeGaps(outcomes)],
-    unresolved: unresolvedLabels(outcomes),
+    gaps: [...(drafted?.gaps ?? []), ...outcomeGaps(outcomes.filter((o) => o.unit.step))],
+    unresolved: unresolvedLabels(outcomes.filter((o) => o.unit.step)),
     trapCandidates: [],
     stats: { entries: 0, steps: steps.length, checkerAgents },
   };
@@ -2023,6 +2117,42 @@ const backendEntries = entries.filter((entry) => sectionFor(entry) === 'backend'
 const backendChunks = input.sections.backend ? chunkEntries(backendEntries) : [];
 
 /**
+ * Wraps a drafted section's setup and teardown as one verification unit.
+ *
+ * @param key - The section key
+ * @param drafted - The drafter's answer, with its `setup` and `teardown`
+ * @param label - The unit's label
+ * @returns The unit, or null when the drafter needs nothing set up or undone
+ */
+function setupUnit(key, drafted, label) {
+  const parts = [
+    drafted?.setup?.trim() ? `**Setup:**\n\n${drafted.setup.trim()}` : '',
+    drafted?.teardown?.trim() ? `**Teardown:**\n\n${drafted.teardown.trim()}` : '',
+  ].filter(Boolean);
+
+  return parts.length > 0 ? { kind: 'setup', section: key, label, body: parts.join('\n\n') } : null;
+}
+
+/**
+ * Lays out one drafter's work as the units its checkers verify together:
+ * its setup, its steps (each carrying that setup), then its claims.
+ *
+ * @param key - The section key
+ * @param drafted - The drafter's answer
+ * @param label - The setup unit's label
+ * @returns The units
+ */
+function groupUnits(key, drafted, label) {
+  const setup = setupUnit(key, drafted, label);
+
+  return [
+    ...(setup ? [setup] : []),
+    ...(drafted?.steps ?? []).map((step) => ({ ...stepUnit(key, step), setup: setup?.body ?? '' })),
+    ...claimUnits(key, drafted?.coveredByTests),
+  ];
+}
+
+/**
  * Wraps a drafter's coverage claims as verification units.
  *
  * @param key - The section key the claims belong to
@@ -2063,10 +2193,11 @@ async function draftAndVerifyBackend(chunk, index) {
     },
   );
 
-  const verified = await verifyUnits(input, `backend${suffix}`, [
-    ...(section?.steps ?? []).map((step) => stepUnit('backend', step)),
-    ...claimUnits('backend', section?.coveredByTests),
-  ]);
+  const verified = await verifyUnits(
+    input,
+    `backend${suffix}`,
+    groupUnits('backend', section, `setup:backend${suffix}`),
+  );
 
   return { section, verified };
 }
@@ -2092,10 +2223,11 @@ async function draftAndVerifyHuman({ key, entries: chunk, index, count }) {
     },
   );
 
-  const verified = await verifyUnits(input, `${key}${suffix}`, [
-    ...(section?.steps ?? []).map((step) => stepUnit(key, step)),
-    ...claimUnits(key, section?.coveredByTests),
-  ]);
+  const verified = await verifyUnits(
+    input,
+    `${key}${suffix}`,
+    groupUnits(key, section, `setup:${key}${suffix}`),
+  );
 
   return { key, section, verified };
 }
@@ -2176,7 +2308,9 @@ const allVerified = [
 
 // A claim is not a step: one upheld cites its test, one that fails is a test gap.
 const claimOutcomes = allVerified.filter((v) => v.unit.kind === 'claim');
-const stepOutcomes = allVerified.filter((v) => v.unit.kind !== 'claim');
+const stepOutcomes = allVerified.filter(
+  (v) => v.unit.kind !== 'claim' && v.unit.kind !== 'setup',
+);
 const failedClaims = claimOutcomes.filter((v) => v.fate !== 'pass');
 
 for (const c of failedClaims) {
@@ -2275,12 +2409,29 @@ function coveredOnly(title, key) {
 const backendSteps = keep('backend');
 stepCount += backendSteps.length;
 
+/**
+ * Renders an unsplit section: timing, setup, steps, then teardown.
+ *
+ * @param title - The section heading
+ * @param key - The section key
+ * @param steps - The section's verified steps
+ * @param prefix - The name leading each step number
+ * @param paste - Whether the tester pastes what they observed
+ * @returns The section's markdown block
+ */
+function sectionMarkdown(title, key, steps, prefix, paste) {
+  const frame = sectionFrame(allVerified, key);
+  const body = [timingLine(steps, paste), frame.setup, numberSteps(steps, prefix), frame.teardown]
+    .filter(Boolean)
+    .join('\n\n');
+
+  return `---\n\n## ${title}\n\n${body}`;
+}
+
 if (backendSteps.length > 0) {
   sectionsMd.push(
     ...withCovered(
-      [
-        `---\n\n## ${BACKEND.title}\n\n${timingLine(backendSteps, true)}\n\n${numberSteps(backendSteps, BACKEND.label)}`,
-      ],
+      [sectionMarkdown(BACKEND.title, 'backend', backendSteps, BACKEND.label, true)],
       'backend',
     ),
   );
@@ -2294,15 +2445,12 @@ for (const key of HUMAN_KEYS.filter((k) => input.sections[k])) {
   stepCount += steps.length;
 
   if (section.agent && humanKeys.includes(key)) {
-    sectionsMd.push(...withCovered(splitSectionMarkdown(section, steps), key));
+    sectionsMd.push(
+      ...withCovered(splitSectionMarkdown(section, steps, sectionFrame(allVerified, key)), key),
+    );
   } else if (steps.length > 0) {
     sectionsMd.push(
-      ...withCovered(
-        [
-          `---\n\n## ${section.title}\n\n${timingLine(steps, false)}\n\n${numberSteps(steps, section.label)}`,
-        ],
-        key,
-      ),
+      ...withCovered([sectionMarkdown(section.title, key, steps, section.label, false)], key),
     );
   } else if (humanKeys.includes(key)) {
     sectionsMd.push(...coveredOnly(section.title, key));

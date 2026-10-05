@@ -122,7 +122,8 @@ export function promptUnits(prompt) {
  * function, `badFormat` human steps, the number of `stories`, and a `runner`
  * function naming who runs each human step, as `(entry, i) => 'agent' | 'human'`,
  * the `triage` answer, merged over a large behaviour change touching everything,
- * and the `prune` answer, which keeps everything by default.
+ * the `prune` answer, which keeps everything by default, and a `setup` function
+ * giving each drafter's `{ setup, teardown }` from its label.
  *
  * A claim's checker upholds it unless its entry id is in `failClaims`. `verify`
  * is asked about every other unit one at a time, as `verify:<unit name>` with
@@ -147,6 +148,7 @@ export function prReplies(scenario = {}) {
     triage = {},
     humanClaims = [],
     prune = { merge: [], drop: [] },
+    setup = () => ({ setup: '', teardown: '' }),
   } = scenario;
 
   return (label, prompt) => {
@@ -269,6 +271,7 @@ export function prReplies(scenario = {}) {
             coversEntryIds: [entry.id],
             minutes: 2,
           })),
+        ...setup(label),
         coveredByTests: entries
           .filter((entry) => claims.includes(entry.id))
           .map((entry) => ({
@@ -310,6 +313,7 @@ export function prReplies(scenario = {}) {
             minutes: 3,
             ...(runner ? { runner: runner(entry, i) } : {}),
           })),
+        ...setup(label),
         coveredByTests: entries
           .filter((entry) => humanClaims.includes(entry.id))
           .map((entry) => ({

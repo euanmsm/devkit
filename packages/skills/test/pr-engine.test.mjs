@@ -1627,6 +1627,96 @@ describe('pr workflow — edges', () => {
   });
 });
 
+describe('pr workflow — section setup and the On main line', () => {
+  it('asks for an On main line and one setup per section, never a step that stands alone', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies(),
+    });
+    const draft = find(calls, 'draft:backend').prompt;
+
+    assert.match(draft, /\*\*On main:\*\* what the tester would see/);
+    assert.match(draft, /NO per-step teardown/);
+    assert.match(
+      draft,
+      /Return what your steps need before the first one runs as `setup`/,
+    );
+    assert.doesNotMatch(draft, /every\s+step runs on its own/);
+    assert.deepEqual(find(calls, 'draft:backend').schema.required.slice(0, 2), [
+      'setup',
+      'teardown',
+    ]);
+    assert.match(
+      find(calls, 'verify:backend').prompt,
+      /no On main line is a FAIL/,
+    );
+  });
+
+  it('verifies each drafter’s setup with its steps, and renders one setup and teardown per section', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({
+          backend: 10,
+          files: 1,
+          setup: (label) => ({
+            setup: `\`\`\`sql\ninsert into seats -- ${label}\n\`\`\``,
+            teardown: `\`\`\`sql\ndelete from seats -- ${label}\n\`\`\``,
+          }),
+        }),
+      },
+    );
+    const first = find(calls, 'verify:backend:1:b1');
+
+    assert.deepEqual(unitNames(first).slice(0, 2), [
+      'setup:backend:1',
+      'backend:Check be-1',
+    ]);
+    assert.match(first.prompt, /For a section setup the checks reduce to/);
+    assert.match(
+      first.prompt,
+      /## Section setup these steps may rely on[^\n]*\n\*\*Setup:\*\*\n\n```sql\ninsert into seats -- draft:backend:1/,
+    );
+
+    const section = result.checklist.split(
+      '## Agent-Runnable Backend Checks',
+    )[1];
+    assert.match(
+      section,
+      /each step\._\n\n\*\*Setup:\*\*\n\n```sql\ninsert into seats -- draft:backend:1\n```\n\n```sql\ninsert into seats -- draft:backend:2\n```\n\n- \[ \] /,
+    );
+    assert.match(
+      section,
+      /\*\*Teardown:\*\*\n\n```sql\ndelete from seats -- draft:backend:1\n```\n\n```sql\ndelete from seats -- draft:backend:2\n```/,
+    );
+    assert.equal(
+      (result.checklist.match(/\*\*Teardown:\*\*/g) ?? []).length,
+      1,
+    );
+    assert.ok(!result.gaps.some((gap) => gap.gap.startsWith('setup:')));
+  });
+
+  it('keeps a setup that failed verification, under a warning', async () => {
+    const source = await prWorkflow('webapp');
+    const { result } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        setup: () => ({ setup: 'insert a seat', teardown: '' }),
+        verify: (label) =>
+          label === 'verify:setup:backend'
+            ? { verdict: 'DELETE', findings: 'no seats table' }
+            : { verdict: 'PASS', findings: '' },
+      }),
+    });
+
+    assert.match(
+      result.checklist,
+      /\*\*Setup:\*\*\n\n> \[!WARNING\]\n> \*\*This setup did not pass verification\*\* — no seats table\. Check it against the repository before relying on it\.\n\ninsert a seat/,
+    );
+  });
+});
+
 describe('pr workflow — format check and grouping rules', () => {
   it('names every format problem a script can see', async () => {
     const source = await prWorkflow('webapp');
@@ -1639,7 +1729,7 @@ describe('pr workflow — format check and grouping rules', () => {
             {
               title: 'Messy',
               priority: 'blocking',
-              body: 'curl x\n\n**Teardown:** none\n\n**Expect:** `200`',
+              body: 'curl x\n\n**If wrong:** x\n\n**Expect:** `200`\n\n**Teardown:** `delete`',
               coversEntryIds: ['be-1'],
               minutes: 1,
             },
@@ -1650,7 +1740,7 @@ describe('pr workflow — format check and grouping rules', () => {
     });
 
     const fix = find(calls, 'format:backend:Messy');
-    assert.match(fix.prompt, /says "Teardown: none"/);
+    assert.match(fix.prompt, /has its own \*\*Teardown:\*\*/);
     assert.match(fix.prompt, /a terminal step with no fenced command block/);
     assert.match(fix.prompt, /labels out of order/);
     assert.doesNotMatch(fix.prompt, /no \*\*Expect:\*\* line/);
