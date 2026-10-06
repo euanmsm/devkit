@@ -63,12 +63,22 @@ const OBSERVATION_PATTERN = /^[ \t]*>[ \t]*\*\*(?:Observed|Failed)\*\*/;
 /** A quoted line, which continues the observation above it. */
 const QUOTE_PATTERN = /^[ \t]*>/;
 
-/** A repo path cited in backticks, with an optional `:line`. */
-const CITED_PATH_PATTERN = /`([\w.@-]+(?:\/[\w.@-]+)+)(?::\d+)?`/g;
+/**
+ * A repo path cited in backticks, with an optional `:line` or `:from-to`.
+ * Segments may hold the `[id]`, `(group)`, `+page` and `$id` of route files.
+ */
+const CITED_PATH_PATTERN =
+  /`([\w.@$+~()[\]-]+(?:\/[\w.@$+~()[\]-]+)*)(?::\d+(?:[-:]\d+)?)?`/g;
 
-/** A step's checkbox line, captured down to its title. */
-const STEP_TITLE_PATTERN =
-  /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?: {1,4}|\t)\[[ xX]\][ \t]*(.*)$/;
+/**
+ * A line that ends the step above it: a heading, a rule, or the section's
+ * teardown, Covered by line or gaps, none of which belong to that step.
+ */
+const STEP_END_PATTERN =
+  /^(?:#{1,6}[ \t]|[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t\r]*$|[ \t]*\*\*(?:Teardown|Covered by|Not covered here):\*\*)/;
+
+/** The banner's lead-in to the steps a push may have made stale. */
+const STALE_LEAD = 'so they may be stale';
 
 /** The part count a split checklist's first heading carries. */
 const PART_COUNT_PATTERN =
@@ -313,7 +323,7 @@ function buildBanner({
   if (staleSteps.length > 0) {
     lines.push(
       '>',
-      `> This push changed files these steps cite, so they may be stale — re-run \`/${skill}\` to redraft them:`,
+      `> Pushes since this checklist was drafted changed files these steps cite, ${STALE_LEAD} — re-run \`/${skill}\` to redraft them:`,
       ...staleSteps.map((title) => `> - ${title}`),
     );
   }
@@ -322,12 +332,34 @@ function buildBanner({
 }
 
 /**
+ * Reads the steps an earlier reset's banner already named as possibly stale.
+ *
+ * They stay named until the skill redrafts the checklist, which writes an
+ * empty banner, so a later push touching other files does not hide them.
+ *
+ * @param body - A checklist comment body
+ * @returns The step titles the banner lists, or none
+ */
+export function listedStaleSteps(body) {
+  const start = body.indexOf(BANNER_START);
+  const end = body.indexOf(BANNER_END);
+  if (start === -1 || end <= start) return [];
+
+  const lines = body.slice(start, end).split('\n');
+  const lead = lines.findIndex((line) => line.includes(STALE_LEAD));
+  if (lead === -1) return [];
+
+  return lines
+    .slice(lead + 1)
+    .map((line) => /^>[ \t]*-[ \t]+(.+?)[ \t\r]*$/.exec(line)?.[1])
+    .filter(Boolean);
+}
+
+/**
  * Clears a checklist comment back to untested.
  *
  * Un-ticks every box outside a fenced block, and restamps the hidden SHA
  * marker, the visible heading and, when the body has one, the banner block.
- *
- * @param body - The current comment body
  * Each step also keeps only its latest **Observed** or **Failed** note, so
  * notes from earlier passes do not pile up under it.
  *
@@ -383,7 +415,10 @@ export function resetBody(
  * the last.
  *
  * An observation is its `> **Observed**` or `> **Failed**` line plus the
- * quoted lines continuing it, and the blank line after it.
+ * quoted lines continuing it, the fenced output pasted right under it, and
+ * the blank line after it. A step's notes end at the next box, or at a line
+ * that is no part of the step, so a note under a section's teardown or setup
+ * never replaces the step's own.
  *
  * @param lines - The body split on newlines
  * @param fenced - Which lines sit inside a fenced block
@@ -399,10 +434,11 @@ function olderObservations(lines, fenced) {
     }
     notes = [];
   };
+  const blank = (index) => index < lines.length && lines[index].trim() === '';
 
   for (let i = 0; i < lines.length; i += 1) {
     if (fenced[i]) continue;
-    if (BOX_PATTERN.test(lines[i])) {
+    if (BOX_PATTERN.test(lines[i]) || STEP_END_PATTERN.test(lines[i])) {
       settle();
       continue;
     }
@@ -417,7 +453,19 @@ function olderObservations(lines, fenced) {
     ) {
       note.push((i += 1));
     }
-    if (i + 1 < lines.length && lines[i + 1].trim() === '') note.push(i + 1);
+
+    // Output pasted in a fence under the note, at most one blank line below it, is the note's.
+    const fence = fenced[i + 1]
+      ? i + 1
+      : blank(i + 1) && fenced[i + 2]
+        ? i + 2
+        : -1;
+    if (fence !== -1) {
+      while (i + 1 < fence) note.push((i += 1));
+      while (i + 1 < lines.length && fenced[i + 1]) note.push((i += 1));
+    }
+
+    if (blank(i + 1)) note.push(i + 1);
     notes.push(note);
   }
   settle();
@@ -427,6 +475,10 @@ function olderObservations(lines, fenced) {
 
 /**
  * Names the steps that cite a file a push changed.
+ *
+ * A step runs from its box to the next box or the next line that is no part
+ * of it, such as a heading or the section's teardown, so a citation there is
+ * never charged to the step above it.
  *
  * @param body - A checklist comment body
  * @param changed - The repo paths the push changed
@@ -443,20 +495,30 @@ export function staleSteps(body, changed) {
 
   const close = () => {
     if (title && cited) titles.push(title);
+    title = null;
   };
+  // A bare file name only matches a file at the root; a path also matches a longer path's tail.
+  const changes = (path) =>
+    changed.some(
+      (file) =>
+        file === path || (path.includes('/') && file.endsWith(`/${path}`)),
+    );
 
   lines.forEach((line, index) => {
-    if (!fenced[index] && BOX_PATTERN.test(line)) {
+    if (fenced[index]) return;
+    if (BOX_PATTERN.test(line)) {
       close();
-      title = STEP_TITLE_PATTERN.exec(line)[1].replace(/\*\*/g, '').trim();
+      // The same grammar as the box itself, so a CRLF line cannot slip between two patterns.
+      title = line.replace(BOX_PATTERN, '').replace(/\*\*/g, '').trim();
       cited = false;
+    } else if (STEP_END_PATTERN.test(line)) {
+      close();
+      return;
     }
-    if (!title || cited || fenced[index]) return;
+    if (!title || cited) return;
 
     for (const [, path] of line.matchAll(CITED_PATH_PATTERN)) {
-      if (changed.some((file) => file === path || file.endsWith(`/${path}`))) {
-        cited = true;
-      }
+      if (changes(path)) cited = true;
     }
   });
   close();
@@ -465,7 +527,12 @@ export function staleSteps(body, changed) {
 }
 
 /**
- * Lists the files changed between two commits.
+ * Lists the files that differ between two commits.
+ *
+ * GitHub's compare diffs from the merge base. After a plain push that is the
+ * old commit, so its files are exactly what changed. After a force-push it is
+ * not: both commits are compared with the merge base, and a path counts when
+ * its version differs between them.
  *
  * @param api - The GitHub client
  * @param repo - `owner/repo`
@@ -475,14 +542,43 @@ export function staleSteps(body, changed) {
  */
 async function changedFiles(api, repo, from, to) {
   try {
-    const answer = await api(`/repos/${repo}/compare/${from}...${to}`);
-    return (answer?.files ?? []).flatMap((file) =>
-      [file.filename, file.previous_filename].filter(Boolean),
+    const forward = await api(`/repos/${repo}/compare/${from}...${to}`);
+    if (!['behind', 'diverged'].includes(forward?.status)) {
+      return (forward?.files ?? []).flatMap((file) =>
+        [file.filename, file.previous_filename].filter(Boolean),
+      );
+    }
+
+    const back = await api(`/repos/${repo}/compare/${to}...${from}`);
+    const before = fileVersions(back);
+    const after = fileVersions(forward);
+    return [...new Set([...before.keys(), ...after.keys()])].filter(
+      (file) => before.get(file) !== after.get(file),
     );
   } catch {
     // A force-push can drop the old commit; the reset goes ahead without the list.
     return [];
   }
+}
+
+/**
+ * Maps each path a compare touched to its version on the compare's head side.
+ *
+ * @param answer - A compare response
+ * @returns Each path's blob SHA, or `removed` for a path gone on that side
+ */
+function fileVersions(answer) {
+  const versions = new Map();
+
+  for (const file of answer?.files ?? []) {
+    versions.set(
+      file.filename,
+      file.status === 'removed' ? 'removed' : file.sha,
+    );
+    if (file.previous_filename) versions.set(file.previous_filename, 'removed');
+  }
+
+  return versions;
 }
 
 /**
@@ -715,9 +811,15 @@ export async function runGate(
         stale.length > 0 && previous
           ? await changedFiles(api, repo, previous, head)
           : [];
-      const possiblyStale = checklist.flatMap((comment) =>
-        staleSteps(comment.body ?? '', changed),
-      );
+      // Steps an earlier push flagged stay flagged until the skill redrafts them.
+      const possiblyStale = [
+        ...new Set([
+          ...listedStaleSteps(main.body ?? ''),
+          ...checklist.flatMap((comment) =>
+            staleSteps(comment.body ?? '', changed),
+          ),
+        ]),
+      ];
 
       for (const comment of checklist) {
         if (!stale.includes(comment)) {

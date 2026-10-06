@@ -432,7 +432,14 @@ function command(entry, where, fail) {
   if (typeof entry.run !== 'string' || !entry.run) {
     fail(`${where}.run must be a string`);
   }
-  return { run: entry.run, when: touchList(entry.when, `${where}.when`, fail) };
+  // Leaving `when` out means always, as it does for a plain string or a variable.
+  return {
+    run: entry.run,
+    when:
+      entry.when === undefined
+        ? []
+        : touchList(entry.when, `${where}.when`, fail),
+  };
 }
 
 /**

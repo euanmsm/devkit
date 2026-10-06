@@ -580,11 +580,13 @@ describe('pr prepass — triage hints', () => {
       'diff --git a/src/a.ts b/src/a.ts',
       '--- a/src/a.ts',
       '+++ b/src/a.ts',
+      '@@ -1 +1 @@',
       "-import { x } from './old/x';",
       "+import { x } from './new/x';",
       'diff --git a/src/b.ts b/src/b.ts',
       '--- a/src/b.ts',
       '+++ b/src/b.ts',
+      '@@ -1,3 +1,4 @@',
       '-import {',
       '+import {',
       '   x,',
@@ -594,11 +596,67 @@ describe('pr prepass — triage hints', () => {
       'diff --git a/src/c.ts b/src/c.ts',
       '--- a/src/c.ts',
       '+++ b/src/c.ts',
+      '@@ -1 +1 @@',
       '-const x = 1;',
       '+const x = 2;',
+      'diff --git a/src/list.ts b/src/list.ts',
+      '--- a/src/list.ts',
+      '+++ b/src/list.ts',
+      '@@ -4,5 +4,5 @@ import {',
+      '   a,',
+      '   b,',
+      '-  c,',
+      '+  d,',
+      '   e,',
+      " } from './x';",
+      'diff --git a/src/old.ts b/src/new.ts',
+      'similarity index 100%',
+      'rename from src/old.ts',
+      'rename to src/new.ts',
     ].join('\n');
 
-    assert.deepEqual([...importOnlyFiles(diff)], ['src/a.ts', 'src/b.ts']);
+    assert.deepEqual(
+      [...importOnlyFiles(diff)],
+      ['src/a.ts', 'src/b.ts', 'src/list.ts', 'src/new.ts'],
+    );
+  });
+
+  it('never takes a behaviour edit, a comment line or a binary file for import rewiring', () => {
+    const diff = [
+      'diff --git a/db/x.sql b/db/x.sql',
+      '--- a/db/x.sql',
+      '+++ b/db/x.sql',
+      '@@ -1,2 +1 @@',
+      '--- drop the seats cap',
+      ' select 1;',
+      'diff --git a/src/loop.ts b/src/loop.ts',
+      '--- a/src/loop.ts',
+      '+++ b/src/loop.ts',
+      '@@ -1,3 +1,3 @@',
+      '   if (done) {',
+      '-    return',
+      '+    continue',
+      '   }',
+      'diff --git a/src/flags.ts b/src/flags.ts',
+      '--- a/src/flags.ts',
+      '+++ b/src/flags.ts',
+      '@@ -1,3 +1,3 @@',
+      ' const flags = [',
+      '-  false,',
+      '+  true,',
+      ' ];',
+      'diff --git a/src/meta.ts b/src/meta.ts',
+      '--- a/src/meta.ts',
+      '+++ b/src/meta.ts',
+      '@@ -1 +1 @@',
+      '-import.meta.env.OLD;',
+      '+import.meta.env.NEW;',
+      'diff --git a/public/logo.png b/public/logo.png',
+      'index 1111111..2222222 100644',
+      'Binary files a/public/logo.png and b/public/logo.png differ',
+    ].join('\n');
+
+    assert.deepEqual([...importOnlyFiles(diff)], []);
   });
 });
 

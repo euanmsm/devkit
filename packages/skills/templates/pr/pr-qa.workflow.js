@@ -383,9 +383,9 @@ const DIMENSIONS = Object.entries(CONFIG.dimensions)
 const STEP_FORMAT = `
 Every step is the same labelled parts and nothing else, in this order:
 
-- **Setup:** only the state THIS step adds on top of the section's setup and
-  the steps before it — its own row or ID — with a copy-pasteable fenced
-  block when a command creates it.
+- **Setup:** only the state THIS step adds on top of the section's setup —
+  its own row or ID — with a copy-pasteable fenced block when a command
+  creates it.
 - The command(s) or actions. A command goes in a fenced block and leads; no
   paragraph explaining what it is about to do — the step title says that.
 - **Expect:** the literal expected result, quoted — a block of expected output
@@ -403,8 +403,10 @@ Hard rules:
   inventory, not the tester). One clause of context is allowed only when the
   tester cannot act without it.
 - NO environment re-derivation. The boot block owns ports, tokens and env
-  caveats. A section's steps run in order in one shell, so a step may rely on
-  the section's setup and on what earlier steps in the SAME section did.
+  caveats. A step may rely on the boot block and its section's setup, but
+  NEVER on what another step did: steps are deleted, merged, cut for budget
+  and reordered after they are checked, so each must still run when the
+  steps around it are gone.
 - Plain language: one instruction per sentence, real UI and output strings
   quoted verbatim, warnings above the action they apply to, a codebase-local
   name explained in a clause on first use.
@@ -429,10 +431,29 @@ function bootNeeds(when) {
  * @returns The variable names, as `$NAME` joined with commas
  */
 function bootVariableNames() {
-  return CONFIG.boot.variables
-    .filter((variable) => bootNeeds(variable.when))
+  return bootVariables()
     .map((variable) => `$${variable.name}`)
     .join(', ');
+}
+
+/**
+ * Lists the boot variables this diff needs.
+ *
+ * @returns The variables, in the config's order
+ */
+function bootVariables() {
+  return CONFIG.boot.variables.filter((variable) => bootNeeds(variable.when));
+}
+
+/**
+ * Tells whether this diff needs a boot block: a command to start or a
+ * variable to derive. A variable that always applies needs one even when
+ * nothing is started.
+ *
+ * @returns Whether the boot block is drafted
+ */
+function bootNeeded() {
+  return bootCommands().length > 0 || bootVariables().length > 0;
 }
 
 /**
@@ -443,11 +464,17 @@ function bootVariableNames() {
  * @returns The prompt fragment
  */
 function draftEnvironment(input) {
+  // Only a boot block defines variables: with none, a step derives what it needs.
+  const none = bootNeeded()
+    ? '(none — the boot block could not be drafted, so derive in the step anything it needs)'
+    : '(none — this diff needs nothing started)';
+  const names = input.bootMarkdown ? bootVariableNames() : '';
+
   return `
 ## Boot block — already run before every section
-${input.bootMarkdown || '(none — this diff needs nothing started)'}
+${input.bootMarkdown || none}
 
-It defines ${bootVariableNames() || 'no variables'}. Use ONLY the variables, helpers,
+It defines ${names || 'no variables'}. Use ONLY the variables, helpers,
 ports and commands it defines, exactly as it writes them — never a variant,
 never a shell helper of your own wrapping them.
 
@@ -840,6 +867,20 @@ searching files.`;
 }
 
 /**
+ * Tells one of several drafters of a section that their setups share one block.
+ *
+ * @param group - This drafter's position, as `{ index, count }`
+ * @returns The prompt fragment, empty for a section's only drafter
+ */
+function sharedSetupRule(group) {
+  if (group.count < 2) return '';
+
+  return `Your setup and teardown are published in one block with the other
+drafters', so give every row, account and shell variable you create a name of
+your own ending \`_${group.index + 1}\`, and undo only your own.`;
+}
+
+/**
  * Builds the prompt drafting one group of the agent-runnable backend checks.
  *
  * @param input - Workflow args plus derived paths
@@ -853,7 +894,7 @@ function backendDraftPrompt(input, entries, testFiles, group) {
     group.count > 1
       ? `\nThe backend entries are split across ${group.count} drafters; you are
 number ${group.index + 1}. Cover ONLY the entries below — the others are
-covered elsewhere.\n`
+covered elsewhere. ${sharedSetupRule(group)}\n`
       : '';
 
   return `
@@ -892,15 +933,16 @@ ${budgetRule(entries.length)}`;
  */
 function humanDraftPrompt(input, key, entries, surfaces, testFiles, group) {
   const section = SECTIONS[key];
+  // Getting to the product works the same on main, so it opens the setup: as a step it would be deleted.
   const opening =
     group.index === 0
-      ? `Step 1 is ${section.firstStep}.`
-      : `Another drafter writes the section's opening step (${section.firstStep}); assume the tester has done it, and do not repeat it.`;
+      ? `Open the section's setup with ${section.firstStep}. It works the same on main, so it is setup, never a step.`
+      : `Another drafter's setup opens the section with ${section.firstStep}; assume the tester has done it, and do not repeat it.`;
   const shared =
     group.count > 1
       ? `\nThis section's entries are split across ${group.count} drafters; you are
 number ${group.index + 1}. Cover ONLY the entries below — the others are
-covered elsewhere.\n`
+covered elsewhere. ${sharedSetupRule(group)}\n`
       : '';
   const split = section.agent
     ? `
@@ -909,7 +951,10 @@ covered elsewhere.\n`
 This section is published as two headings: ${section.agent.title}, which an
 agent runs, then ${section.title}, which a person runs. Give every step a
 \`runner\`:
-${RUNNER_RULES}`
+${RUNNER_RULES}
+The agent runs its half first and a person runs theirs after, in another shell
+and browser, so the setup and teardown never hand a shell variable from one to
+the other: write the literal value, or a lookup that finds the row again.`
     : '';
 
   return `
@@ -998,8 +1043,9 @@ merge and another be confirmed after deploy. Each step:
   **Expect:** the exact value, setting or result to see; **If wrong:** one
   line. Name the real variable, setting, file or migration from the repo.
 
-Skip anything a deploy of this PR alone cannot break: there are no
-production users yet, and API changes ship in the same PR as their callers.
+Skip anything a deploy of this PR alone cannot break, such as an API change
+that ships in the same PR as every caller. Read the repo for whether it has
+production data and users; never assume it has none.
 Never run a command other than reading and searching files.`;
 }
 
@@ -1027,6 +1073,8 @@ server log. Never walk through every screen; this is a smoke check.
 
 ## Step shape
 ${STEP_FORMAT}
+A smoke step behaves exactly as it does on main — that is what a move must
+keep — so it has no **On main:** line and is never vacuous for passing there.
 ${draftEnvironment(input)}
 
 Return the steps, with empty coveredByTests, and a gap only for something the
@@ -1049,25 +1097,29 @@ function bootCommands() {
  * @returns The prompt
  */
 function bootDraftPrompt(input) {
-  const variables = CONFIG.boot.variables.filter((variable) => bootNeeds(variable.when));
+  const commands = bootCommands();
+  const start =
+    commands.length > 0
+      ? `The triage found this diff needs ${triage.touches.join(', ') || 'nothing'} running, so
+boot only this, once, ahead of every section. From the repo root:
+
+\`\`\`bash
+${commands.join('\n')}
+\`\`\``
+      : 'The config starts nothing for what this diff needs, so write no start commands.';
 
   return `
 Draft the BOOT BLOCK for a Manual QA checklist — the one place the environment
 is set up and explained. Every section's steps assume it already ran.
 ${packRule(input)}
 
-The triage found this diff needs ${triage.touches.join(', ') || 'nothing'} running, so
-boot only this, once, ahead of every section. From the repo root:
-
-\`\`\`bash
-${bootCommands().join('\n')}
-\`\`\`
+${start}
 
 Then ONE line deriving what the sections need:
-${bullets(variables.map((variable) => `\\$${variable.name} — ${variable.from}`))}
+${bullets(bootVariables().map((variable) => `\\$${variable.name} — ${variable.from}`))}
 
 Read the real names from the repo, never invent them. Run each section in a
-single shell: variables from its earlier steps carry forward. Check the
+single shell: variables from the boot block and its setup carry forward. Check the
 branch for ${PROMPTS.gating}. State an environment caveat (${PROMPTS.bootCaveats})
 HERE once, never in steps — and only one that changes what a tester sees in
 an Expect line. FIVE caveat lines at most; no preamble, no explanation of
@@ -1148,8 +1200,16 @@ function setupsFor(units) {
   const setups = [...new Set(units.map((unit) => unit.setup).filter(Boolean))];
   if (setups.length === 0) return '';
 
+  // The setup is checked with its steps when it shares their batch.
+  const checking = new Set(
+    units.filter((unit) => unit.kind === 'setup').map((unit) => unit.body),
+  );
+  const note = setups.every((setup) => checking.has(setup))
+    ? 'it is also one of the units below: check it there'
+    : 'checked on its own; do not re-check it';
+
   return `
-## Section setup these steps may rely on (checked on its own; do not re-check it)
+## Section setup these steps may rely on (${note})
 ${setups.join('\n\n')}
 `;
 }
@@ -1171,6 +1231,13 @@ For a storybook item the checks reduce to: the meta title matches its story
 file's \`title:\` exactly (\`storyFile\` below), every listed export exists, the
 what-changed line matches what the story actually renders, and the format holds
 (title + exports + one line, nothing else).`);
+  }
+  if (kinds.has('smoke')) {
+    reduced.push(`
+For a smoke step the branch only moves code, so the step must behave exactly as
+it does on main: check 4 and the On main line do not apply, and passing on main
+is never a reason to DELETE it. Check that it reaches the moved code at its new
+path, and every other check as usual.`);
   }
   if (kinds.has('claim')) {
     reduced.push(`
@@ -1343,11 +1410,11 @@ const LABELS = ['**Setup:**', '**Expect:**', '**On main:**', '**If wrong:**'];
 /**
  * Finds the step-format problems a script can see without reading code.
  *
- * @param unit - A backend or human step unit
+ * @param unit - A backend, human or smoke step unit
  * @returns One line per problem, empty when the format holds
  */
 function formatProblems(unit) {
-  if (!['backend', 'human'].includes(unit.kind)) return [];
+  if (!['backend', 'human', 'smoke'].includes(unit.kind)) return [];
 
   const problems = [];
   const body = unit.body;
@@ -1457,6 +1524,8 @@ async function verifyUnits(input, group, units, { model = DEEP, onRound = () => 
 
     const failed = [];
     const settled = [];
+    // A rewritten setup replaces the copy its steps carry, so their re-check reads the new one.
+    const setups = new Map();
 
     batches.forEach((batch, i) => {
       const verdicts = new Map();
@@ -1488,11 +1557,17 @@ async function verifyUnits(input, group, units, { model = DEEP, onRound = () => 
           });
         } else if (verdict.verdict === 'PASS') {
           settled.push({ unit, fate: 'pass' });
-        } else if (verdict.verdict === 'DELETE' || !verdict.rewrite) {
+        } else if (
+          verdict.verdict === 'DELETE' ||
+          !verdict.rewrite ||
+          // A claim names its test, so one that fails is a test gap, never rewritten to cite another.
+          unit.kind === 'claim'
+        ) {
           settled.push({ unit, fate: 'deleted', reason: verdict.findings });
         } else if (round === MAX_VERIFY_ROUNDS) {
           settled.push({ unit, fate: 'exhausted', reason: verdict.findings });
         } else {
+          if (unit.kind === 'setup') setups.set(unit.body, verdict.rewrite);
           failed.push({ ...unit, body: verdict.rewrite, findings: verdict.findings });
         }
       }
@@ -1500,7 +1575,11 @@ async function verifyUnits(input, group, units, { model = DEEP, onRound = () => 
 
     outcomes.push(...settled);
     onRound(settled);
-    pending = await Promise.all(failed.map(fixFormat));
+    pending = await Promise.all(
+      failed.map((unit) =>
+        fixFormat(setups.has(unit.setup) ? { ...unit, setup: setups.get(unit.setup) } : unit),
+      ),
+    );
   }
 
   return outcomes.sort((a, b) => a.unit.order - b.unit.order);
@@ -1576,7 +1655,8 @@ function stepUnit(kind, step, origin = kind) {
   const split = Boolean(SECTIONS[kind]?.agent);
 
   return {
-    kind: kind === 'backend' ? 'backend' : 'human',
+    // A smoke step gets its own checks: it must behave as it does on main.
+    kind: kind === 'backend' || kind === 'smoke' ? kind : 'human',
     section: kind,
     ...(split
       ? { runner: RUNNERS.includes(step.runner) ? step.runner : 'human' }
@@ -1636,7 +1716,7 @@ function timingLine(steps, paste, runs = '') {
  *
  * @param section - The section, with its `agent` half
  * @param steps - Every verified step, each with its `runner`
- * @param frame - The section's `setup`, opening the first half with steps, and its `teardown`, closing the section
+ * @param frame - The section's `setup`, opening the first half with steps, and its `teardown`, closing the last half with steps
  * @returns The two halves' markdown, each opening with `---`
  */
 function splitSectionMarkdown(section, steps, frame = { setup: '', teardown: '' }) {
@@ -1650,9 +1730,17 @@ function splitSectionMarkdown(section, steps, frame = { setup: '', teardown: '' 
         .join('\n')}`
     : '';
 
+  // The agent half runs first, so it opens with the setup when it has steps,
+  // and the teardown closes whichever half runs last.
   const agentSetup = agentSteps.length > 0 ? frame.setup : '';
   const humanSetup = agentSteps.length > 0 ? '' : frame.setup;
+  const agentTeardown = humanSteps.length > 0 ? '' : frame.teardown;
+  const humanTeardown = humanSteps.length > 0 ? frame.teardown : '';
   const join = (...parts) => parts.filter(Boolean).join('\n\n');
+  const after =
+    agentSteps.length > 0 && frame.setup
+      ? '_Run these after the agent half: they rely on its setup._'
+      : '';
 
   const agentBody =
     agentSteps.length > 0
@@ -1660,18 +1748,19 @@ function splitSectionMarkdown(section, steps, frame = { setup: '', teardown: '' 
           `${timingLine(agentSteps, true, section.agent.runs)}${note}`,
           agentSetup,
           numberSteps(agentSteps, section.label),
+          agentTeardown,
         )
       : '_No step here can be run by an agent._';
-  const humanBody = join(
+  const humanBody =
     humanSteps.length > 0
       ? join(
           timingLine(humanSteps, false),
+          after,
           humanSetup,
           numberSteps(humanSteps, section.label, agentSteps.length),
+          humanTeardown,
         )
-      : "_Every check above can be run by an agent; nothing here needs a person's judgement._",
-    steps.length > 0 ? frame.teardown : '',
-  );
+      : "_Every check above can be run by an agent; nothing here needs a person's judgement._";
 
   return [
     `---\n\n## ${section.agent.title}\n\n${agentBody}`,
@@ -1766,28 +1855,45 @@ input.sections = input.sections ?? {};
 const touched = Object.keys(SECTIONS).filter((key) => input.sections[key]);
 
 /**
- * Builds the result for a diff that needs no manual steps.
+ * Builds the result for a diff that needs no checks in the product.
  *
- * The Local CI boxes stay, so a push the gate resets still needs a tick.
+ * The Local CI boxes stay, so a push the gate resets still needs a tick. The
+ * deploy checks stay too: what a diff needs outside the repo is checked
+ * however little of it runs in the product.
  *
  * @param summary - The summary agent's answer
  * @param why - What the checklist says instead of steps
  * @param lead - Lines to open the checklist with, such as the triage line
+ * @param deployOutcomes - The deploy checks' verification outcomes, if any were drafted
  * @returns The workflow result
  */
-function summaryOnly(summary, why, lead = []) {
+function summaryOnly(summary, why, lead = [], deployOutcomes = []) {
+  const deploy = deployMarkdown(deployOutcomes);
+  const none = deploy
+    ? `_No checks in the product needed — ${why}._`
+    : `_No manual checks needed — ${why}._`;
+
   return {
     summary: summary?.markdown ?? '',
-    checklist: [...lead, `_No manual checks needed — ${why}._`, `---\n\n${localCiBlock(input.branch)}`].join('\n\n'),
+    checklist: [...lead, none, deploy, `---\n\n${localCiBlock(input.branch)}`]
+      .filter(Boolean)
+      .join('\n\n'),
     gaps: [],
-    reportNotes: [],
-    unresolved: [],
+    reportNotes: outcomeNotes(deployOutcomes),
+    unresolved: unresolvedLabels(deployOutcomes),
     trapCandidates: [],
-    stats: { entries: 0, steps: 0, verified: 0 },
+    stats: {
+      entries: 0,
+      steps: 0,
+      verified: 0,
+      deployChecks: deployOutcomes.filter((o) => o.fate === 'pass').length,
+    },
   };
 }
 
-if (touched.length === 0) {
+// A changed path the prepass matched to an outside-the-repo question still
+// needs its deploy check, so only a branch with none stops here.
+if (touched.length === 0 && !input.triage?.outsideRepo?.length) {
   phase('Draft and verify');
   log('No runtime surface touched — summary only');
 
@@ -1875,9 +1981,22 @@ function triageLine(minutes) {
 
 log(`Triage: ${triageLine(0)}`);
 
-if (triage.kind === 'tooling') {
-  log('Triage found nothing that runs in the product — summary only');
-  return summaryOnly(await summaryRun, 'nothing this branch changes runs in the product', [triageLine(0)]);
+if (triage.kind === 'tooling' || touched.length === 0) {
+  const why =
+    touched.length === 0
+      ? 'no runtime surface touched'
+      : 'nothing this branch changes runs in the product';
+  log(`No checks in the product (${why}) — summary and any deploy checks only`);
+  if (triage.outsideRepo.length > 0) phase('Draft and verify');
+
+  // No context pack is written on this path.
+  const deployOutcomes = await draftDeployChecks({ ...input, packPath: null });
+  return summaryOnly(
+    await summaryRun,
+    why,
+    touched.length === 0 ? [] : [triageLine(0)],
+    deployOutcomes,
+  );
 }
 
 /**
@@ -1888,8 +2007,8 @@ if (triage.kind === 'tooling') {
  * @returns The boot block's verification outcome, or null when no draft came back
  */
 function startBoot(context, phaseName) {
-  if (bootCommands().length === 0) {
-    log('The diff needs nothing started — no boot block');
+  if (!bootNeeded()) {
+    log('The diff needs nothing started or derived — no boot block');
     return Promise.resolve(null);
   }
 
@@ -2059,18 +2178,49 @@ function deployMarkdown(outcomes) {
       const line = /^\*\*\[(pre-merge|post-deploy)\] ([^\n]+?)\*\*[ \t]*(?:\n|$)/.exec(o.unit.body.trimStart());
       return {
         when: line?.[1] ?? o.unit.deploy.when,
-        title: line?.[2] ?? o.unit.deploy.title,
+        title: (line?.[2] ?? o.unit.deploy.title).trim(),
         body: o.unit.body.trimStart().replace(/^\*\*\[[^\]]+\][^\n]*\*\*\n+/, ''),
       };
     })
     .sort((a, b) => DEPLOY_WHEN.indexOf(a.when) - DEPLOY_WHEN.indexOf(b.when));
   if (checks.length === 0) return '';
 
+  // The gate holds the merge until every box is ticked, and nobody can tick a
+  // post-deploy check before merging, so those are listed without a box.
   const list = checks
-    .map((c, i) => `- [ ] **[${c.when}] Deploy ${i + 1} — ${c.title}**\n\n${c.body.trim()}\n`)
+    .map(
+      (c, i) =>
+        `- ${c.when === 'post-deploy' ? '' : '[ ] '}**[${c.when}] Deploy ${i + 1} — ${c.title}**\n\n${c.body.trim()}\n`,
+    )
     .join('\n');
 
-  return `---\n\n## Deploy and Config Checks\n\n_For someone with access to the hosted dashboards. Pre-merge checks must hold before merging; post-deploy ones once it is live._\n\n${list}`;
+  return `---\n\n## Deploy and Config Checks\n\n_For someone with access to the hosted dashboards. Pre-merge checks must hold before merging. Post-deploy ones have no box, since the merge cannot wait for them: run them once it is live._\n\n${list}`;
+}
+
+/**
+ * Writes the line telling the tester to stop what the boot block started.
+ *
+ * @param boot - The settled boot block
+ * @returns The line, or an empty string when nothing was booted or nothing stops it
+ */
+function stopLine(boot) {
+  return CONFIG.boot.stop.run && boot.body && bootNeeds(CONFIG.boot.stop.when)
+    ? `---\n\n**When you're finished**, stop the stack: \`${CONFIG.boot.stop.run}\``
+    : '';
+}
+
+/**
+ * Strips the bold label a setup or teardown may already open with.
+ *
+ * @param text - The setup or teardown markdown
+ * @param label - `Setup` or `Teardown`
+ * @returns The text without its leading label, trimmed
+ */
+function unlabel(text, label) {
+  return String(text ?? '')
+    .trim()
+    .replace(new RegExp(`^(?:\\*\\*${label}(?::\\*\\*|\\*\\*:)\\s*)+`), '')
+    .trim();
 }
 
 /**
@@ -2078,7 +2228,8 @@ function deployMarkdown(outcomes) {
  *
  * Several drafters can each write one for their share of the section. A
  * setup that failed verification is kept with a warning, since the steps
- * after it rely on it.
+ * after it rely on it; one whose steps were all deleted, cut or dropped is
+ * left out, since nothing relies on it.
  *
  * @param outcomes - Verification outcomes, setup units among them
  * @param key - The section key
@@ -2087,19 +2238,25 @@ function deployMarkdown(outcomes) {
 function sectionFrame(outcomes, key) {
   const setups = [];
   const teardowns = [];
+  const used = (group) =>
+    outcomes.some((o) => o.unit.group === group && o.unit.step && o.fate === 'pass');
 
   for (const outcome of outcomes) {
     if (outcome.unit.kind !== 'setup' || outcome.unit.section !== key) continue;
+    if (!used(outcome.unit.group)) continue;
 
-    const [setup, teardown = ''] = outcome.unit.body.split('**Teardown:**');
-    const warning =
+    // Everything after the first teardown label is the teardown, however a
+    // checker's rewrite spells the label or repeats it.
+    const [setup, ...rest] = outcome.unit.body.split(/\*\*Teardown(?::\*\*|\*\*:)/);
+    const warning = (part) =>
       outcome.fate === 'pass'
         ? ''
-        : `> [!WARNING]\n> **This setup did not pass verification** — ${oneLine(outcome.reason) || BOOT_WARNINGS[outcome.fate]}. Check it against the repository before relying on it.\n\n`;
+        : `> [!WARNING]\n> **This ${part} did not pass verification** — ${oneLine(outcome.reason) || BOOT_WARNINGS[outcome.fate]}. Check it against the repository before relying on it.\n\n`;
 
-    const own = setup.replace('**Setup:**', '').trim();
-    if (own) setups.push(`${warning}${own}`);
-    if (teardown.trim()) teardowns.push(teardown.trim());
+    const own = unlabel(setup, 'Setup');
+    const undo = unlabel(rest.join(''), 'Teardown');
+    if (own) setups.push(`${warning('setup')}${own}`);
+    if (undo) teardowns.push(`${warning('teardown')}${undo}`);
   }
 
   return {
@@ -2124,12 +2281,21 @@ if (triage.kind === 'move') {
     schema: SECTION_SCHEMA,
     model: DEEP,
   });
+  // A drafter over its budget loses its if-time steps first, each noted for the author.
+  const ranked = [...(drafted?.steps ?? [])].sort(
+    (a, b) => Number(b.priority === 'blocking') - Number(a.priority === 'blocking'),
+  );
+  const overBudget = ranked.slice(CONFIG.budget.move).map((step) => ({
+    kind: 'cut for budget',
+    item: `smoke:${step.title.slice(0, 40)}`,
+    why: `cut to keep a pure move within ${CONFIG.budget.move} smoke step(s)`,
+  }));
   const outcomes = await verifyUnits(
     moveInput,
     'smoke',
     groupUnits(
       'smoke',
-      { ...drafted, steps: (drafted?.steps ?? []).slice(0, CONFIG.budget.move), coveredByTests: [] },
+      { ...drafted, steps: ranked.slice(0, CONFIG.budget.move), coveredByTests: [] },
       'setup:smoke',
     ),
   );
@@ -2148,6 +2314,7 @@ if (triage.kind === 'move') {
       ? `---\n\n## Smoke Check\n\n${[timingLine(steps, true), frame.setup, numberSteps(steps, 'Smoke'), frame.teardown].filter(Boolean).join('\n\n')}`
       : '',
     gapsMarkdown(moveGaps.gaps),
+    stopLine(boot),
     `---\n\n${localCiBlock(input.branch, ['The type check and the production build pass'])}`,
   ].filter(Boolean);
 
@@ -2157,6 +2324,7 @@ if (triage.kind === 'move') {
     gaps: moveGaps.gaps,
     reportNotes: [
       ...moveGaps.notes,
+      ...overBudget,
       ...outcomeNotes([...outcomes.filter((o) => o.unit.step), ...deployOutcomes]),
     ],
     unresolved: unresolvedLabels([...outcomes.filter((o) => o.unit.step), ...deployOutcomes]),
@@ -2268,30 +2436,21 @@ phase('Prune');
 /**
  * Applies the pruner's merges and drops, ignoring any id it made up.
  *
+ * Drops go first, so an entry the pruner both keeps for a merge and drops
+ * never takes the entries merged into it along: that merge is skipped and
+ * they stay. Entries sharing an id stay apart.
+ *
  * @param list - The inventory after the audit
  * @param answer - The pruner's answer, or null when it returned nothing
- * @returns The kept `entries`, the `covered` drops to verify as claims, and the `passing` drops
+ * @returns The kept `entries`, the `merged` keepers as they now read, the `covered` drops to verify as claims, and the `passing` drops
  */
 function applyPrune(list, answer) {
-  const byId = new Map(list.map((entry) => [entry.id, entry]));
+  const byId = new Map();
+  for (const entry of list) if (!byId.has(entry.id)) byId.set(entry.id, entry);
   const removed = new Set();
+  const merged = new Map();
   const covered = [];
   const passing = [];
-
-  for (const group of answer?.merge ?? []) {
-    if (!byId.has(group.keep) || removed.has(group.keep)) continue;
-    const others = (group.ids ?? []).filter(
-      (id) => id !== group.keep && byId.has(id) && !removed.has(id),
-    );
-    if (others.length === 0) continue;
-
-    for (const id of others) removed.add(id);
-    const kept = byId.get(group.keep);
-    byId.set(group.keep, {
-      ...kept,
-      behaviour: group.inputs ? `${kept.behaviour} — stands for ${group.inputs}` : kept.behaviour,
-    });
-  }
 
   for (const drop of answer?.drop ?? []) {
     if (!byId.has(drop.id) || removed.has(drop.id)) continue;
@@ -2306,8 +2465,35 @@ function applyPrune(list, answer) {
     }
   }
 
+  // Only entries bound for the same section merge: a person's check folded
+  // into a terminal one would leave the section that shows it.
+  const sameSection = (a, b) =>
+    Boolean(a.visible) === Boolean(b.visible) && (a.section ?? null) === (b.section ?? null);
+
+  for (const group of answer?.merge ?? []) {
+    if (!byId.has(group.keep) || removed.has(group.keep)) continue;
+    const others = (group.ids ?? []).filter(
+      (id) =>
+        id !== group.keep &&
+        byId.has(id) &&
+        !removed.has(id) &&
+        sameSection(byId.get(id), byId.get(group.keep)),
+    );
+    if (others.length === 0) continue;
+
+    for (const id of others) removed.add(id);
+    const kept = merged.get(group.keep) ?? byId.get(group.keep);
+    merged.set(group.keep, {
+      ...kept,
+      behaviour: group.inputs ? `${kept.behaviour} — stands for ${group.inputs}` : kept.behaviour,
+    });
+  }
+
   return {
-    entries: list.filter((entry) => !removed.has(entry.id)).map((entry) => byId.get(entry.id)),
+    entries: list
+      .filter((entry) => !removed.has(entry.id))
+      .map((entry) => (entry === byId.get(entry.id) ? (merged.get(entry.id) ?? entry) : entry)),
+    merged: [...merged.values()],
     covered,
     passing,
   };
@@ -2328,6 +2514,8 @@ log(
 );
 const auditedCount = entries.length;
 entries = pruned.entries;
+// A claim or note about a merged entry describes it as drafted, inputs merged in included.
+for (const entry of pruned.merged) everyEntry.set(entry.id, entry);
 
 phase('Draft and verify');
 
@@ -2372,9 +2560,12 @@ const backendChunks = input.sections.backend ? chunkEntries(backendEntries) : []
  * @returns The unit, or null when the drafter needs nothing set up or undone
  */
 function setupUnit(key, drafted, label) {
+  // A drafter may label its own text; the label is written here once.
+  const setup = unlabel(drafted?.setup, 'Setup');
+  const teardown = unlabel(drafted?.teardown, 'Teardown');
   const parts = [
-    drafted?.setup?.trim() ? `**Setup:**\n\n${drafted.setup.trim()}` : '',
-    drafted?.teardown?.trim() ? `**Teardown:**\n\n${drafted.teardown.trim()}` : '',
+    setup ? `**Setup:**\n\n${setup}` : '',
+    teardown ? `**Teardown:**\n\n${teardown}` : '',
   ].filter(Boolean);
 
   return parts.length > 0 ? { kind: 'setup', section: key, label, body: parts.join('\n\n') } : null;
@@ -2392,9 +2583,14 @@ function setupUnit(key, drafted, label) {
 function groupUnits(key, drafted, label) {
   const setup = setupUnit(key, drafted, label);
 
+  // `group` ties a setup to its steps, so a setup none of them survived is never published.
   return [
-    ...(setup ? [setup] : []),
-    ...(drafted?.steps ?? []).map((step) => ({ ...stepUnit(key, step), setup: setup?.body ?? '' })),
+    ...(setup ? [{ ...setup, group: label }] : []),
+    ...(drafted?.steps ?? []).map((step) => ({
+      ...stepUnit(key, step),
+      setup: setup?.body ?? '',
+      group: label,
+    })),
     ...claimUnits(key, drafted?.coveredByTests),
   ];
 }
@@ -2556,6 +2752,20 @@ const allVerified = [
 ];
 
 /**
+ * Raises a verified step to blocking, keeping its verified text.
+ *
+ * @param unit - A verified step unit
+ * @returns The unit, blocking
+ */
+function asBlocking(unit) {
+  return {
+    ...unit,
+    step: { ...unit.step, priority: 'blocking' },
+    body: unit.body.replace(/^(\s*\*\*\[)if-time\]/, '$1blocking]'),
+  };
+}
+
+/**
  * Has one light agent see a whole section's passing steps and drop the ones
  * repeating another, which no checker could see across its batches.
  *
@@ -2586,12 +2796,18 @@ async function dropDuplicates(key) {
   for (const drop of answer?.drop ?? []) {
     const outcome = ids.get(drop.id);
     const keeper = ids.get(drop.duplicateOf);
-    // A step kept for another can never itself go, so a pair cannot vanish together.
-    if (!outcome || !keeper || drop.id === drop.duplicateOf || keeper.fate !== 'pass') continue;
+    // A step kept for another can never itself go, so a pair cannot vanish
+    // together, and a step already dropped is not dropped again.
+    if (!outcome || !keeper || outcome === keeper) continue;
+    if (outcome.fate !== 'pass' || keeper.fate !== 'pass') continue;
     if (dropped.some((d) => d.keeper === outcome)) continue;
+    // An agent's step and a person's are split on purpose, so neither repeats the other.
+    if (outcome.unit.runner !== keeper.unit.runner) continue;
 
     outcome.fate = 'duplicate';
     outcome.reason = `repeats "${readStep(keeper.unit).title}" — ${oneLine(drop.why)}`;
+    // The keeper now stands for both, so it is blocking when either was, and the budget never cuts it.
+    if (readStep(outcome.unit).priority === 'blocking') keeper.unit = asBlocking(keeper.unit);
     dropped.push({ outcome, keeper });
   }
 
@@ -2792,7 +3008,11 @@ for (const key of HUMAN_KEYS.filter((k) => input.sections[k])) {
   const steps = keep(key);
   stepCount += steps.length;
 
-  if (section.agent && humanKeys.includes(key)) {
+  // With no step left, a test that proves the section's changes is what it shows,
+  // drafted or not, split or not.
+  if (steps.length === 0 && coveredLine(key)) {
+    sectionsMd.push(...coveredOnly(section.title, key));
+  } else if (section.agent && humanKeys.includes(key)) {
     sectionsMd.push(
       ...withCovered(splitSectionMarkdown(section, steps, sectionFrame(allVerified, key)), key),
     );
@@ -2800,9 +3020,7 @@ for (const key of HUMAN_KEYS.filter((k) => input.sections[k])) {
     sectionsMd.push(
       ...withCovered([sectionMarkdown(section.title, key, steps, section.label, false)], key),
     );
-  } else if (humanKeys.includes(key)) {
-    sectionsMd.push(...coveredOnly(section.title, key));
-  } else {
+  } else if (!humanKeys.includes(key)) {
     sectionsMd.push(
       `---\n\n## ${section.title}\n\n_Nothing ${section.audience} could notice changed on this branch._`,
     );
@@ -2819,13 +3037,7 @@ if (storybookItems.length > 0) {
   );
 }
 
-sectionsMd.push(gapsMarkdown(gaps));
-
-if (CONFIG.boot.stop.run && boot.body && bootNeeds(CONFIG.boot.stop.when)) {
-  sectionsMd.push(
-    `---\n\n**When you're finished**, stop the stack: \`${CONFIG.boot.stop.run}\``,
-  );
-}
+sectionsMd.push(gapsMarkdown(gaps), stopLine(boot));
 
 sectionsMd.push(`---\n\n${localCiBlock(input.branch)}`);
 sectionsMd.unshift(

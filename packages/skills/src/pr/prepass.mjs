@@ -12,7 +12,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import path from 'node:path';
 
-import { splitPatches } from '../review/prepass.mjs';
+import { findChunkPath, splitPatches } from '../review/prepass.mjs';
 import { TOUCHES } from './defaults.mjs';
 
 /** The most importers listed for one file, so a shared module cannot flood the facts. */
@@ -28,17 +28,26 @@ const MOVE_SIMILARITY = 90;
 
 /**
  * A changed line that only rewires an import or re-export, or is blank: the
- * kinds of edit a move forces on the files around it.
+ * kinds of edit a move forces on the files around it. `import.meta` and a
+ * dynamic `import(` are code, not declarations.
  */
 const IMPORT_LINE = new RegExp(
   [
     String.raw`^\s*$`,
-    String.raw`^\s*import\b`,
+    String.raw`^\s*import\b(?!\s*[.(])`,
     String.raw`^\s*export\b.*\bfrom\s+['"]`,
     String.raw`^\s*\}\s*from\s+['"]`,
-    String.raw`^\s*(type\s+)?[\w$]+(\s+as\s+[\w$]+)?,?\s*$`,
   ].join('|'),
 );
+
+/** One name in a multi-line import or export list, such as `type Foo as Bar,`. */
+const SPECIFIER_LINE = /^\s*(type\s+)?[\w$]+(\s+as\s+[\w$]+)?,?\s*$/;
+
+/** The line opening a multi-line import or export list. */
+const LIST_OPEN = /^\s*(?:import|export)\b[^'"]*\{\s*$/;
+
+/** The line closing a multi-line import or re-export list. */
+const LIST_CLOSE = /^\s*\}\s*from\s+['"]/;
 
 // Pins the diff's output format, whatever the user's git config says.
 const DIFF_ARGS = [
@@ -300,32 +309,64 @@ export function parseNameStatus(stdout) {
 /**
  * Finds the files whose every changed line only rewires an import.
  *
+ * Only hunk lines are read, so a removed `-- comment` or an added `++i` is
+ * never mistaken for a file header. A binary change has no lines to read, so
+ * it never counts, and a lone name counts only inside an import or export
+ * list.
+ *
  * @param diff - The branch's full diff
  * @returns The new paths of those files
  */
 export function importOnlyFiles(diff) {
   const result = new Set();
-  let file = null;
-  let clean = true;
+  const chunks = diff
+    .split(/^(?=diff --git )/m)
+    .filter((chunk) => chunk.startsWith('diff --git '));
 
-  const close = () => {
-    if (file && clean) result.add(file);
-  };
+  for (const chunk of chunks) {
+    const file = findChunkPath(chunk);
+    const [head, ...hunks] = chunk.split(/^(?=@@)/m);
+    if (!file || /^(?:Binary files |GIT binary patch)/m.test(head)) continue;
 
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('diff --git ')) {
-      close();
-      file = /^diff --git a\/.+ b\/(.+)$/.exec(line)?.[1] ?? null;
-      clean = true;
-    } else if (line.startsWith('+++') || line.startsWith('---')) {
-      continue;
-    } else if (/^[+-]/.test(line) && !IMPORT_LINE.test(line.slice(1))) {
-      clean = false;
-    }
+    const clean = hunks.every((hunk) => {
+      const lines = hunk
+        .split('\n')
+        .slice(1)
+        .filter((line) => /^[ +-]/.test(line));
+
+      return lines.every(
+        (line, index) =>
+          line[0] === ' ' ||
+          IMPORT_LINE.test(line.slice(1)) ||
+          (SPECIFIER_LINE.test(line.slice(1)) && inImportList(lines, index)),
+      );
+    });
+    if (clean) result.add(file);
   }
-  close();
 
   return result;
+}
+
+/**
+ * Tells whether a hunk line sits in a multi-line import or export list: the
+ * nearest line above it that is not another name opens one, or the nearest
+ * below closes one.
+ *
+ * @param lines - The hunk's lines, each with its ` `, `+` or `-` marker
+ * @param index - The line to check
+ * @returns Whether the line is one name in such a list
+ */
+function inImportList(lines, index) {
+  const text = (i) => lines[i].slice(1);
+  const name = (i) => SPECIFIER_LINE.test(text(i)) || !text(i).trim();
+
+  let above = index - 1;
+  while (above >= 0 && name(above)) above -= 1;
+  if (above >= 0 && LIST_OPEN.test(text(above))) return true;
+
+  let below = index + 1;
+  while (below < lines.length && name(below)) below += 1;
+  return below < lines.length && LIST_CLOSE.test(text(below));
 }
 
 /**
@@ -795,7 +836,7 @@ export function renderFacts({
       [
         '## Triage hints\n',
         `- Needs running to test: ${triage.touches.join(', ') || 'nothing'}`,
-        `- Pure move candidate: ${triage.pureMoveCandidate ? 'yes — every change is a rename or an import rewiring' : 'no'}`,
+        `- Pure move candidate: ${triage.pureMoveCandidate ? `yes — every change is a rename at least ${MOVE_SIMILARITY}% similar or an import rewiring; read a near-identical rename's own diff before calling it a move` : 'no'}`,
         ...answers,
       ].join('\n'),
     );

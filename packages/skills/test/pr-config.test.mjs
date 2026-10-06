@@ -484,6 +484,19 @@ describe('pr config — refusals', () => {
     );
     assert.equal(resolved.outsideRepo.length, 1);
     assert.deepEqual(resolved.budget, { ...DEFAULT_BUDGET, small: 5 });
+
+    // A command object without `when` always runs, like a plain string.
+    const always = resolvePrConfig(
+      minimal({
+        boot: {
+          start: [{ run: 'npm run dev' }],
+          stop: { run: 'docker compose down' },
+        },
+      }),
+      context,
+    ).boot;
+    assert.deepEqual(always.start, [{ run: 'npm run dev', when: [] }]);
+    assert.deepEqual(always.stop, { run: 'docker compose down', when: [] });
     assert.deepEqual(
       resolvePrConfig(minimal({ outsideRepo: [] }), context).outsideRepo,
       [],

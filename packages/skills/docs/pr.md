@@ -110,14 +110,17 @@ every agent only reads code.
 A branch touching no section gets a summary and a checklist of the line
 `_No manual checks needed — no runtime surface touched._` plus the Local CI
 boxes, and nothing else runs. The boxes are there so the gate's reset still
-leaves something to tick after a push.
+leaves something to tick after a push. The exception is a changed path the
+prepass matched to an `outsideRepo` question, such as `vercel.json`: that branch
+is triaged too, and keeps its deploy checks.
 
 Otherwise a Sonnet triage agent runs first, beside the summary. It can only add
 to the prepass hints: what the diff touches and which outside-the-repo questions
-are yes. A **tooling-only** diff then gets the same summary-only checklist. A
-**pure move** gets a sized boot block, at most `budget.move` smoke steps, any
-deploy checks, and a Local CI box for the type check and build; none of the
-stages below run. A **behaviour change** runs them all:
+are yes. A **tooling-only** diff then gets the same summary-only checklist, plus
+any deploy checks. A **pure move** gets a sized boot block, at most
+`budget.move` smoke steps (checked as steps that must behave as they do on
+main), any deploy checks, and a Local CI box for the type check and build; none
+of the stages below run. A **behaviour change** runs them all:
 
 | Stage           | Agents                                                                                                  | Starts when               |
 | --------------- | ------------------------------------------------------------------------------------------------------- | ------------------------- |
@@ -126,7 +129,7 @@ stages below run. A **behaviour change** runs them all:
 | Surfaces        | one per touched human section: every place a person can see the change                                  | the triage is in          |
 | Storybook draft | one, Sonnet, when Storybook is on and the branch has stories                                            | the triage is in          |
 | Context pack    | one: a map of the branch every later agent reads                                                        | the triage is in          |
-| Boot draft      | one, when the diff needs anything started: only those commands; verified as soon as it is drafted       | the pack is written       |
+| Boot draft      | one, when the diff needs anything started or derived: only that; verified as soon as it is drafted      | the pack is written       |
 | Deploy draft    | one, when the triage found anything outside the repo; verified as soon as it is drafted                 | the pack is written       |
 | Inventory       | one for the backend, one per human section with a visible change, one for cross-cutting dimensions      | the pack is written       |
 | Audit           | two: every hunk has an entry; every dimension is explored                                               | the inventory is in       |
@@ -148,14 +151,18 @@ Ids it makes up are ignored, and an entry it does not mention is kept.
 
 Every drafter is given the verified boot block, its share of the step budget,
 and told to read the traps file. It returns its steps, its claims, its gaps, and
-one `setup` and `teardown` for its share of the section: steps in a section run
-in order and may rely on the setup and earlier steps, so the same SQL is not
-repeated on every step. Each step also carries an **On main:** line, what a
-tester would see with the PR reverted, unless it needs a person's judgement.
-Most first-round failures in recorded runs were the same environment mistake
-repeated across steps — a variable the boot block never defines, a rate limiter,
-mail that never reaches the local inbox — so drafting against the real boot
-block and the known traps saves a rewrite and a re-check for each of them.
+one `setup` and `teardown` for its share of the section, so the same SQL is not
+repeated on every step. A step may rely on the setup but never on another step,
+since steps are deleted, merged, cut and reordered after they are checked. The
+first drafter of a human section opens its setup with the section's `firstStep`,
+which works the same on main and so is never a step. Several drafters of one
+section name what their setups create apart. Each step also carries an **On
+main:** line, what a tester would see with the PR reverted, unless it needs a
+person's judgement. Most first-round failures in recorded runs were the same
+environment mistake repeated across steps — a variable the boot block never
+defines, a rate limiter, mail that never reaches the local inbox — so drafting
+against the real boot block and the known traps saves a rewrite and a re-check
+for each of them.
 
 Before a step reaches a checker, a script checks its format — an `Expect:` line,
 labels in order, a fenced command in a terminal step, no per-step `Teardown:`. A
@@ -402,7 +409,7 @@ section. Every human section needs a layer pointing at it.
 | `surface`        | a place in the product, and the state it must be in     | What one surface is, for the surfaces agent                     |
 | `surfacesBrief`  | none                                                    | Extra instructions for the surfaces agent                       |
 | `inventoryBrief` | every noticeable surface, copy, states and interactions | The inventory agent's scope                                     |
-| `firstStep`      | getting to the product as one seeded user               | What step 1 of the section does                                 |
+| `firstStep`      | getting to the product as one seeded user               | What the section's setup opens with                             |
 | `stepNames`      | where it happens and how to get there                   | What every step must name                                       |
 | `coveredBy`      | `an end-to-end test`                                    | The automated tests a step there may be cited as covered by     |
 | `agent`          | none                                                    | Splits the section in two, below                                |
@@ -474,17 +481,20 @@ boot: {
 `start` is the boot block's command list, and `stop` the line closing the
 checklist. `variables` are what the boot block derives for the steps. Each may
 be a plain string, which always applies, or carry `when`: the `touches` it is
-needed for. The triage decides what the diff touches, and the boot block holds
-only what that needs; when nothing applies there is no boot block at all. The
-older `backendOnly: true` still works on a variable and means
-`when: ['database', 'api']`. `read` lists globs for the seed, fixture and env
-files agents read real values from.
+needed for, with `when` left out meaning always. The triage decides what the
+diff touches, and the boot block holds only what that needs; a variable that
+applies gets a boot block even when no command does, and when nothing applies
+there is no boot block at all. The older `backendOnly: true` still works on a
+variable and means `when: ['database', 'api']`. `read` lists globs for the seed,
+fixture and env files agents read real values from.
 
 ### `outsideRepo`
 
 The questions every diff is asked about what it depends on outside the
 repository. Each yes becomes a check in the Deploy and Config Checks section,
-for someone with dashboard access, marked pre-merge or post-deploy.
+for someone with dashboard access, marked pre-merge or post-deploy. A
+post-deploy check has no box: the gate holds the merge until every box is
+ticked, and it cannot be done before merging.
 
 ```js
 outsideRepo: [
@@ -560,10 +570,12 @@ the checklist honest about which commit was tested:
 - **On every push** it un-ticks every box outside a code block, restamps the
   comment with the new head commit, and writes a banner saying how many boxes
   the previous pass had ticked and against which commit. It keeps only the
-  latest `> **Observed**` or `> **Failed**` note under each step. It also asks
-  GitHub which files changed since the stamped commit, and the banner names
-  every step citing one of them in backticks as possibly stale, with a
-  suggestion to re-run the skill.
+  latest `> **Observed**` or `> **Failed**` note under each step, with any
+  fenced output pasted under an older one going too. It also asks GitHub which
+  files differ from the stamped commit, a force-push included, and the banner
+  names every step citing one of them in backticks as possibly stale, with a
+  suggestion to re-run the skill. A step stays named after later pushes until
+  the skill redrafts the checklist.
 - **On a push to a checklist with no boxes at all**, it leaves the stamp on the
   old commit and posts red with `checklist predates <sha>, re-run /pr`, so new
   code is never passed on a checklist nobody could tick.
