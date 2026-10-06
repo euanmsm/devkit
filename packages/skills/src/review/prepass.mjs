@@ -127,7 +127,7 @@ export async function splitPatches(root, { base, target, out }) {
  * @param chunk - One `diff --git` chunk
  * @returns The path, or null when no header names one
  */
-function findChunkPath(chunk) {
+export function findChunkPath(chunk) {
   // Only the header lines, so a `+++` inside the patch body is never read as one.
   const head = chunk.split(/^@@/m)[0];
 

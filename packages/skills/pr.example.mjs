@@ -13,18 +13,22 @@ export default {
       title: 'Data Model',
       paths: ['migrations/'],
       section: 'backend',
+      // What a change here needs running to test: database, api or page.
+      touches: ['database'],
     },
     {
       key: 'api',
       title: 'API',
       paths: [/^src\/app\/api\//],
       section: 'backend',
+      touches: ['api', 'database'],
     },
     {
       key: 'frontend',
       title: 'Frontend',
       paths: [/^src\/app\/(?!api\/)/, 'src/components/'],
       section: 'frontend',
+      touches: ['page'],
     },
   ],
 
@@ -53,18 +57,40 @@ export default {
       'data scoped to one organisation needs a cross-organisation negative',
   },
 
+  // Each command and variable runs only when the diff touches what it is for.
   boot: {
-    start: ['docker compose up -d', 'npm run db:migrate', 'npm run dev'],
-    stop: 'docker compose down',
+    start: [
+      { run: 'docker compose up -d', when: ['database'] },
+      { run: 'npm run db:migrate', when: ['database'] },
+      { run: 'npm run dev', when: ['api', 'page'] },
+    ],
+    stop: { run: 'docker compose down', when: ['database'] },
     variables: {
-      PORT: 'the port `npm run dev` prints',
-      TOKEN: {
-        from: 'a bearer token for the seeded admin',
-        backendOnly: true,
-      },
+      PORT: { from: 'the port `npm run dev` prints', when: ['api', 'page'] },
+      TOKEN: { from: 'a bearer token for the seeded admin', when: ['api'] },
     },
     read: ['db/seed/**', '.env.example'],
   },
+
+  // What a diff can depend on outside the repo; each yes becomes a deploy check.
+  outsideRepo: [
+    {
+      ask: 'Does it change vercel.json or a Vercel project setting?',
+      paths: [/(^|\/)vercel\.json$/],
+    },
+    {
+      ask: 'Does it add an env var that needs a production value?',
+      paths: ['.env.example'],
+    },
+    {
+      ask: 'Does it add a migration that will run on production data?',
+      paths: ['migrations/'],
+    },
+    { ask: 'Does it call an external service it did not call before?' },
+  ],
+
+  // Optional: the step cap per size of diff, and the minutes target.
+  // budget: { move: 2, small: 8, large: 20, minutes: 30 },
 
   localCi: ['`npm run lint && npm run typecheck`', '`npm test`'],
 };

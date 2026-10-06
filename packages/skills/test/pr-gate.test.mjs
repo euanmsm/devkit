@@ -21,6 +21,8 @@ import {
   readStampedSha,
   resetBody,
   runGate,
+  listedStaleSteps,
+  staleSteps,
 } from '../src/pr/gate.mjs';
 
 const HEAD_SHA = 'def5678def5678def5678def5678def5678def56';
@@ -475,6 +477,208 @@ describe('resetBody', () => {
   });
 });
 
+describe('resetBody — observations', () => {
+  const steps = [
+    '- [x] **Backend 1 — Seat cap**',
+    '',
+    '  > **Observed** (agent, `abc1234`): 403 first time.',
+    '',
+    '  > **Failed** (agent, `bcd2345`): 500.',
+    '  > Stack trace in the server log.',
+    '',
+    '  > **Observed** (agent, `cde3456`): 403 with `{"error":"cap"}`.',
+    '',
+    '- [ ] **Backend 2 — Invite**',
+    '',
+    '  > **Observed** (person, `abc1234`): sent.',
+    '',
+    '```markdown',
+    '> **Observed** (agent, `abc1234`): a sample in a fence.',
+    '> **Observed** (agent, `abc1234`): another sample.',
+    '```',
+  ].join('\n');
+
+  it('keeps only the latest note under each step, continuation lines and all', () => {
+    const result = resetBody(steps, { headSha: HEAD_SHA, now: NOW });
+
+    assert.equal(
+      result,
+      [
+        '- [ ] **Backend 1 — Seat cap**',
+        '',
+        '  > **Observed** (agent, `cde3456`): 403 with `{"error":"cap"}`.',
+        '',
+        '- [ ] **Backend 2 — Invite**',
+        '',
+        '  > **Observed** (person, `abc1234`): sent.',
+        '',
+        '```markdown',
+        '> **Observed** (agent, `abc1234`): a sample in a fence.',
+        '> **Observed** (agent, `abc1234`): another sample.',
+        '```',
+      ].join('\n'),
+    );
+  });
+
+  it('names a step citing a changed file as possibly stale in the banner', () => {
+    const result = resetBody(checklist(), {
+      headSha: HEAD_SHA,
+      now: NOW,
+      staleSteps: ['[blocking] Sign in as an admin'],
+      skill: 'ship',
+    });
+
+    assert.match(
+      result,
+      /> they are ticked again\.\n>\n> Pushes since this checklist was drafted changed files these steps cite, so they may be stale — re-run `\/ship` to redraft them:\n> - \[blocking\] Sign in as an admin\n/,
+    );
+    assert.deepEqual(listedStaleSteps(result), [
+      '[blocking] Sign in as an admin',
+    ]);
+  });
+
+  it('keeps a step’s own note when a later one sits under the section’s teardown or the next setup', () => {
+    const body = [
+      '- [x] **Backend 2 — Invite**',
+      '',
+      '  > **Observed** (agent, `abc1234`): 201, one row.',
+      '',
+      '**Teardown:**',
+      '',
+      '> **Observed** (agent, `abc1234`): DELETE 1',
+      '',
+      '---',
+      '',
+      '## Frontend',
+      '',
+      '**Setup:**',
+      '',
+      '> **Observed** (person, `abc1234`): seeded.',
+      '',
+      '- [x] **Frontend 1 — Toast**',
+    ].join('\n');
+
+    assert.equal(
+      resetBody(body, { headSha: HEAD_SHA, now: NOW }),
+      body.replace(/- \[x\]/g, '- [ ]'),
+    );
+  });
+
+  it('drops the fenced output pasted under an older note along with it', () => {
+    const body = [
+      '- [x] **Backend 3 — Errors**',
+      '',
+      '> **Observed** (agent, `abc1234`): response body:',
+      '',
+      '```json',
+      '{"error":"internal"}',
+      '```',
+      '',
+      '> **Observed** (agent, `bcd2345`): 403.',
+    ].join('\n');
+
+    assert.equal(
+      resetBody(body, { headSha: HEAD_SHA, now: NOW }),
+      [
+        '- [ ] **Backend 3 — Errors**',
+        '',
+        '> **Observed** (agent, `bcd2345`): 403.',
+      ].join('\n'),
+    );
+  });
+});
+
+describe('staleSteps', () => {
+  const body = [
+    '- [ ] **[blocking] Backend 1 — Seat cap**',
+    '',
+    '```bash',
+    'curl `src/not/a/citation.ts`',
+    '```',
+    'Reads `apps/main/src/api/seats/route.ts:42`.',
+    '- [ ] **[if-time] Backend 2 — Invite**',
+    '',
+    'See `lib/invite.ts`.',
+    '- [ ] **[blocking] Frontend 3 — Toast**',
+  ].join('\n');
+
+  it('names the steps citing a file the push changed, matching a path tail too', () => {
+    assert.deepEqual(
+      staleSteps(body, [
+        'apps/main/src/api/seats/route.ts',
+        'apps/main/src/lib/invite.ts',
+      ]),
+      ['[blocking] Backend 1 — Seat cap', '[if-time] Backend 2 — Invite'],
+    );
+  });
+
+  it('ignores citations inside a fence, and returns nothing for no changes', () => {
+    assert.deepEqual(staleSteps(body, ['src/not/a/citation.ts']), []);
+    assert.deepEqual(staleSteps(body, []), []);
+  });
+
+  it('reads a CRLF body, as GitHub’s web editor saves it', () => {
+    assert.deepEqual(
+      staleSteps(body.replace(/\n/g, '\r\n'), ['apps/main/src/lib/invite.ts']),
+      ['[if-time] Backend 2 — Invite'],
+    );
+  });
+
+  it('charges no step for a citation in a teardown, a Covered by line, a heading’s setup or the gaps', () => {
+    const section = [
+      '- [ ] **[blocking] Backend 1 — Seat cap**',
+      '',
+      '**Teardown:**',
+      '',
+      'Delete what `db/seed/seats.sql` added.',
+      '',
+      '**Covered by:** `src/api/seats.test.ts`',
+      '',
+      '---',
+      '',
+      '## Frontend',
+      '',
+      '**Setup:** seed from `db/seed/users.sql`.',
+      '',
+      '**Not covered here:**',
+      '',
+      '- `src/lib/mail.ts` retries — needs production',
+    ].join('\n');
+
+    assert.deepEqual(
+      staleSteps(section, [
+        'db/seed/seats.sql',
+        'src/api/seats.test.ts',
+        'db/seed/users.sql',
+        'src/lib/mail.ts',
+      ]),
+      [],
+    );
+  });
+
+  it('matches route files, line ranges and root files', () => {
+    const routes = [
+      '- [ ] **Frontend 1 — Booking**',
+      'Open `app/(app)/bookings/[id]/page.tsx:10-20`.',
+      '- [ ] **Frontend 2 — Home**',
+      'Open `src/routes/+page.svelte`.',
+      '- [ ] **Deploy 1 — Host**',
+      'Check `vercel.json`.',
+    ].join('\n');
+
+    assert.deepEqual(
+      staleSteps(routes, [
+        'apps/web/app/(app)/bookings/[id]/page.tsx',
+        'src/routes/+page.svelte',
+        'vercel.json',
+      ]),
+      ['Frontend 1 — Booking', 'Frontend 2 — Home', 'Deploy 1 — Host'],
+    );
+    // A bare name matches only the file at the root.
+    assert.deepEqual(staleSteps(routes, ['apps/web/vercel.json']), []);
+  });
+});
+
 describe('computeStatus', () => {
   it('fails when no comment carries the marker', () => {
     assert.deepEqual(computeStatus({ main: null, headSha: HEAD_SHA }), {
@@ -621,7 +825,7 @@ describe('computeStatus', () => {
  * @param head - The PR's head SHA
  * @returns The `api` function, its `calls`, and the live `comments`
  */
-function fakeApi(comments, head = HEAD_SHA) {
+function fakeApi(comments, head = HEAD_SHA, compare = null) {
   const calls = [];
   const store = comments.map((comment) => ({
     html_url: `https://x/${comment.id}`,
@@ -636,6 +840,10 @@ function fakeApi(comments, head = HEAD_SHA) {
     });
 
     if (path.startsWith('/repos/o/r/pulls/')) return { head: { sha: head } };
+    if (path.includes('/compare/')) {
+      if (compare instanceof Error) throw compare;
+      return typeof compare === 'function' ? compare(path) : compare;
+    }
     const who = /\/collaborators\/([^/]+)\/permission$/.exec(path);
     if (who) {
       const answer = ROLES[decodeURIComponent(who[1])];
@@ -683,6 +891,143 @@ describe('runGate', () => {
       context: 'Manual QA',
       target_url: 'https://x/7',
     });
+  });
+
+  it('names the steps a push may have made stale, from the files GitHub says changed', async () => {
+    const body = checklist({
+      extra: '\n- [ ] **Backend 9 — Seats**\n\nReads `src/api/seats.ts:3`.',
+    });
+    const { api, calls, comments } = fakeApi([{ id: 7, body }], HEAD_SHA, {
+      files: [
+        { filename: 'src/api/seats.ts' },
+        { filename: 'README.md', previous_filename: 'docs/old.md' },
+      ],
+    });
+
+    await runGate('reset', {
+      api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+      now: NOW,
+      skill: 'pr',
+    });
+
+    assert.ok(
+      calls.some(
+        (c) => c.path === `/repos/o/r/compare/${OLD_SHA}...${HEAD_SHA}`,
+      ),
+    );
+    assert.match(
+      comments[0].body,
+      /may be stale — re-run `\/pr` to redraft them:\n> - Backend 9 — Seats/,
+    );
+  });
+
+  it('after a force-push, names only the files that differ between the two commits', async () => {
+    const body = checklist({
+      extra: [
+        '',
+        '- [ ] **Backend 8 — Same**',
+        '',
+        'Reads `src/same.ts`.',
+        '',
+        '- [ ] **Backend 9 — Seats**',
+        '',
+        'Reads `src/api/seats.ts:3`.',
+        '',
+        '- [ ] **Backend 10 — Gone**',
+        '',
+        'Reads `src/gone.ts`.',
+      ].join('\n'),
+    });
+    // Each side as compared with the merge base: src/same.ts is identical in both.
+    const { api, comments } = fakeApi([{ id: 7, body }], HEAD_SHA, (path) =>
+      path.endsWith(`${OLD_SHA}...${HEAD_SHA}`)
+        ? {
+            status: 'diverged',
+            files: [
+              { filename: 'src/same.ts', sha: 's1' },
+              { filename: 'src/api/seats.ts', sha: 'new' },
+            ],
+          }
+        : {
+            status: 'diverged',
+            files: [
+              { filename: 'src/same.ts', sha: 's1' },
+              { filename: 'src/api/seats.ts', sha: 'old' },
+              { filename: 'src/gone.ts', sha: 'g1' },
+            ],
+          },
+    );
+
+    await runGate('reset', {
+      api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+      now: NOW,
+    });
+
+    assert.match(
+      comments[0].body,
+      /redraft them:\n> - Backend 9 — Seats\n> - Backend 10 — Gone\n/,
+    );
+    assert.doesNotMatch(comments[0].body, /> - Backend 8/);
+  });
+
+  it('keeps naming a step a push flagged until the checklist is redrafted', async () => {
+    const body = checklist({
+      extra: '\n- [ ] **Backend 9 — Seats**\n\nReads `src/api/seats.ts:3`.',
+    });
+    const first = fakeApi([{ id: 7, body }], HEAD_SHA, {
+      files: [{ filename: 'src/api/seats.ts' }],
+    });
+    await runGate('reset', {
+      api: first.api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+      now: NOW,
+    });
+
+    const NEXT_SHA = '9876543987654398765439876543987654398765';
+    const second = fakeApi(
+      [{ id: 7, body: first.comments[0].body }],
+      NEXT_SHA,
+      {
+        files: [{ filename: 'README.md' }],
+      },
+    );
+    await runGate('reset', {
+      api: second.api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: NEXT_SHA,
+      now: NOW,
+    });
+
+    assert.equal(readStampedSha(second.comments[0].body), NEXT_SHA);
+    assert.match(second.comments[0].body, /> - Backend 9 — Seats\n/);
+  });
+
+  it('still resets when GitHub cannot compare the commits', async () => {
+    const { api, comments } = fakeApi(
+      [{ id: 7, body: checklist() }],
+      HEAD_SHA,
+      new Error('404'),
+    );
+
+    await runGate('reset', {
+      api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+      now: NOW,
+    });
+
+    assert.equal(readStampedSha(comments[0].body), HEAD_SHA);
+    assert.doesNotMatch(comments[0].body, /may be stale/);
   });
 
   it('leaves a checklist already stamped against the head alone', async () => {

@@ -21,8 +21,14 @@ import { runWorkflow } from './workflow.mjs';
 const labels = (calls) => calls.map((call) => call.label);
 const find = (calls, label) => calls.find((call) => call.label === label);
 const unitNames = (call) => promptUnits(call.prompt).map((unit) => unit.name);
+const afterTriage = (checklist) =>
+  checklist.replace(/^_Triage: [^\n]*_\n\n/, '');
 const gapText = (result) =>
   result.gaps.map((g) => `- ${g.gap} — ${g.why}`).join('\n');
+const noteText = (result) =>
+  result.reportNotes
+    .map((n) => `- [${n.kind}] ${n.item} — ${n.why}`)
+    .join('\n');
 
 describe('pr workflow — what runs', () => {
   it('writes only a summary when no section is touched', async () => {
@@ -167,6 +173,365 @@ describe('pr workflow — what runs', () => {
   });
 });
 
+describe('pr workflow — triage', () => {
+  it('triages on Sonnet first, alongside the summary, and opens the checklist with its line', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      { reply: prReplies({ triage: { size: 'small', touches: ['page'] } }) },
+    );
+
+    assert.deepEqual(labels(calls).slice(0, 2), ['draft:summary', 'triage']);
+    assert.equal(find(calls, 'triage').model, 'sonnet');
+    assert.ok(
+      find(calls, 'triage').ended < find(calls, 'context-pack').started,
+    );
+    // No prepass hints, so anything could need running.
+    assert.match(
+      result.checklist,
+      /^_Triage: behaviour change \(small\) · needs database, api, page · about \d+ minutes_\n\n/,
+    );
+  });
+
+  it('adds to what the prepass found, never takes from it', async () => {
+    const source = await prWorkflow('webapp', {
+      outsideRepo: [
+        { ask: 'Hosting config?', paths: ['vercel.json'] },
+        { ask: 'New service?' },
+        { ask: 'New env var?' },
+      ],
+    });
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs(
+        { frontend: true },
+        {
+          triage: {
+            touches: ['page'],
+            pureMoveCandidate: false,
+            outsideRepo: [{ ask: 'Hosting config?', files: ['vercel.json'] }],
+          },
+        },
+      ),
+      {
+        reply: prReplies({
+          triage: {
+            touches: ['api'],
+            outsideRepo: [
+              { ask: 'Hosting config?', yes: false, why: 'no' },
+              {
+                ask: 'New service?',
+                yes: true,
+                why: 'calls Stripe',
+                files: ['src/pay.ts'],
+              },
+              { ask: 'New env var?', yes: false, why: 'none' },
+            ],
+          },
+        }),
+      },
+    );
+
+    assert.match(result.checklist, /needs api, page/);
+    assert.match(
+      find(calls, 'triage').prompt,
+      /1\. Hosting config\?\n2\. New service\?\n3\. New env var\?/,
+    );
+
+    // The script's yes stands though the agent said no; the agent adds its own.
+    const deploy = find(calls, 'draft:deploy');
+    assert.equal(deploy.model, 'opus');
+    assert.match(
+      deploy.prompt,
+      /"ask": "Hosting config\?",\n  "why": "a changed file matches it",\n  "files": \[\n   "vercel\.json"/,
+    );
+    assert.match(
+      deploy.prompt,
+      /"ask": "New service\?",\n  "why": "calls Stripe"/,
+    );
+    assert.doesNotMatch(deploy.prompt, /"ask": "New env var\?"/);
+    assert.match(
+      find(calls, 'verify:deploy').prompt,
+      /For a deploy or config check the checks reduce to/,
+    );
+    assert.match(
+      result.checklist,
+      /\n\n---\n\n## Deploy and Config Checks\n\n_For someone with access to the hosted dashboards\.[^\n]*_\n\n- \[ \] \*\*\[pre-merge\] Deploy 1 — Confirm New service\?\*\*\n\n\*\*Where:\*\* the dashboard\n\n\*\*Expect:\*\* set \(src\/pay\.ts\)\n\n- \*\*\[post-deploy\] Deploy 2 — Confirm Hosting config\?\*\*/,
+    );
+    // Deploy checks sit right after the boot block, ahead of every other section.
+    assert.ok(
+      result.checklist.indexOf('## Deploy and Config Checks') <
+        result.checklist.indexOf('## Human Browser Checks'),
+    );
+    assert.equal(result.stats.deployChecks, 2);
+  });
+
+  it('matches outside-the-repo answers by number, though the model reworded the question', async () => {
+    const source = await prWorkflow('webapp', {
+      outsideRepo: [{ ask: 'Does it call a new external service?' }],
+    });
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        triage: {
+          outsideRepo: [
+            {
+              question: 1,
+              ask: 'Calls a new external service',
+              yes: true,
+              why: 'Stripe',
+              files: [],
+            },
+          ],
+        },
+      }),
+    });
+
+    assert.match(
+      find(calls, 'draft:deploy').prompt,
+      /"ask": "Does it call a new external service\?"/,
+    );
+  });
+
+  it('overrules a move or tooling label the prepass hints contradict, and says so', async () => {
+    const source = await prWorkflow('webapp');
+    for (const [kind, hint] of [
+      ['move', { pureMoveCandidate: false }],
+      ['tooling', { toolingCandidate: false }],
+    ]) {
+      const { result, calls } = await runWorkflow(
+        source,
+        prArgs(
+          { backend: true },
+          { triage: { touches: ['api'], outsideRepo: [], ...hint } },
+        ),
+        { reply: prReplies({ triage: { kind } }) },
+      );
+
+      assert.ok(
+        labels(calls).includes('context-pack'),
+        `${kind} ran the full pipeline`,
+      );
+      assert.match(result.checklist, /^_Triage: behaviour change/);
+      assert.ok(
+        result.reportNotes.some(
+          (n) =>
+            n.kind === 'triage' &&
+            n.item.includes(kind === 'move' ? 'pure move' : 'tooling only'),
+        ),
+      );
+    }
+
+    // A hint that agrees lets the label stand.
+    const { calls } = await runWorkflow(
+      source,
+      prArgs(
+        { backend: true },
+        {
+          triage: {
+            touches: ['api'],
+            outsideRepo: [],
+            pureMoveCandidate: true,
+          },
+        },
+      ),
+      { reply: prReplies({ triage: { kind: 'move' } }) },
+    );
+    assert.ok(labels(calls).includes('draft:smoke'));
+  });
+
+  it('counts pre-merge deploy check minutes in the triage line, not post-deploy ones', async () => {
+    const source = await prWorkflow('webapp', {
+      outsideRepo: [
+        { ask: 'A?', paths: ['a'] },
+        { ask: 'B?', paths: ['b'] },
+      ],
+    });
+    const { result } = await runWorkflow(
+      source,
+      prArgs(
+        { backend: true },
+        {
+          triage: {
+            touches: ['api'],
+            outsideRepo: [
+              { ask: 'A?', files: ['a'] },
+              { ask: 'B?', files: ['b'] },
+            ],
+          },
+        },
+      ),
+      { reply: prReplies({ backend: 1, triage: { outsideRepo: [] } }) },
+    );
+
+    // Two 2-minute backend steps, plus one 5-minute pre-merge check; the post-deploy one is not counted.
+    assert.match(result.checklist, /^_Triage: [^\n]*about 9 minutes_/);
+  });
+
+  it('writes no deploy checks when nothing lives outside the repo', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies(),
+      },
+    );
+
+    assert.ok(!labels(calls).includes('draft:deploy'));
+    assert.doesNotMatch(result.checklist, /Deploy and Config Checks/);
+  });
+
+  it('falls back to a large behaviour change when the triage returns nothing', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({ triage: null }),
+      },
+    );
+
+    assert.ok(labels(calls).includes('context-pack'));
+    assert.match(result.checklist, /^_Triage: behaviour change \(large\)/);
+  });
+
+  it('writes only a summary for a tooling-only diff', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({ triage: { kind: 'tooling' } }),
+      },
+    );
+
+    assert.deepEqual(labels(calls), ['draft:summary', 'triage']);
+    assert.match(
+      result.checklist,
+      /^_Triage: tooling only · needs database, api, page · time not estimated_\n\n_No manual checks needed — nothing this branch changes runs in the product\._\n\n---\n\n### Local CI/,
+    );
+  });
+
+  it('gives a pure move a smoke check within its budget, skipping the inventory', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      { reply: prReplies({ triage: { kind: 'move', touches: ['page'] } }) },
+    );
+    const names = labels(calls);
+
+    for (const label of [
+      'context-pack',
+      'inventory:backend',
+      'audit:hunks',
+      'surfaces:frontend',
+    ]) {
+      assert.ok(!names.includes(label), `${label} skipped`);
+    }
+    assert.ok(names.indexOf('verify:boot') < names.indexOf('draft:smoke'));
+    assert.equal(unitNames(find(calls, 'verify:smoke')).length, 2);
+    assert.doesNotMatch(find(calls, 'draft:boot').prompt, /Context pack:/);
+    assert.match(
+      result.checklist,
+      /^_Triage: pure move · needs database, api, page · about 5 minutes_/,
+    );
+    assert.match(
+      result.checklist,
+      /## Smoke Check\n\n.*\n\n- \[ \] \*\*\[blocking\] Smoke 1 — Load the moved page\*\*/,
+    );
+    assert.match(
+      result.checklist,
+      /- \[ \] The type check and the production build pass/,
+    );
+    assert.equal(result.stats.steps, 2);
+  });
+});
+
+describe('pr workflow — prune', () => {
+  it('prunes on Opus after both audits, before any drafter', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies(),
+    });
+    const prune = find(calls, 'prune');
+
+    assert.equal(prune.model, 'opus');
+    assert.ok(find(calls, 'audit:hunks').ended < prune.started);
+    assert.ok(find(calls, 'audit:dimensions').ended < prune.started);
+    assert.ok(prune.ended < find(calls, 'draft:backend').started);
+    assert.match(prune.prompt, /"id": "be-1"/);
+  });
+
+  it('merges and drops what it names, ignoring made-up ids and covered drops with no test', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({
+          backend: 5,
+          prune: {
+            merge: [
+              {
+                keep: 'be-1',
+                ids: ['be-1', 'be-2', 'be-99'],
+                inputs: 'every status code',
+              },
+              { keep: 'be-404', ids: ['be-3'], inputs: 'nothing' },
+            ],
+            drop: [
+              {
+                id: 'be-4',
+                reason: 'passes-on-main',
+                why: 'only a comment moved',
+              },
+              {
+                id: 'be-5',
+                reason: 'covered',
+                why: 'asserted',
+                testFile: 'src/a.test.ts',
+                assertion: 'it 5',
+              },
+              {
+                id: 'xc-1',
+                reason: 'covered',
+                why: 'probably',
+                testFile: null,
+              },
+              { id: 'nope', reason: 'passes-on-main', why: 'made up' },
+            ],
+          },
+        }),
+      },
+    );
+    const drafted = promptEntries(find(calls, 'draft:backend').prompt);
+
+    assert.deepEqual(drafted.map((e) => e.id).sort(), ['be-1', 'be-3', 'xc-1']);
+    assert.match(
+      drafted.find((e) => e.id === 'be-1').behaviour,
+      /backend behaviour 1 — stands for every status code/,
+    );
+    assert.deepEqual(unitNames(find(calls, 'verify:pruned')), ['claim:be-5']);
+    assert.match(result.checklist, /\*\*Covered by:\*\* `src\/a\.test\.ts`/);
+    assert.equal(result.stats.pruned, 3);
+    assert.match(
+      noteText(result),
+      /- \[pruned\] backend behaviour 4 \(src\/service\/file0\.ts:13\) — would pass on main — only a comment moved/,
+    );
+  });
+
+  it('keeps the whole inventory when the pruner returns nothing', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({ prune: null }),
+    });
+
+    assert.equal(promptEntries(find(calls, 'draft:backend').prompt).length, 4);
+  });
+});
+
 describe('pr workflow — the backend drafters', () => {
   it('splits backend entries across drafters, each entry exactly once', async () => {
     const source = await prWorkflow('webapp');
@@ -226,7 +591,7 @@ describe('pr workflow — the backend drafters', () => {
 });
 
 describe('pr workflow — verification', () => {
-  it('turns a failed coverage claim into a verified backend step', async () => {
+  it('cites an upheld claim under Covered by, and reports a failed one as a test gap', async () => {
     const source = await prWorkflow('webapp');
     const { result, calls } = await runWorkflow(
       source,
@@ -246,43 +611,49 @@ describe('pr workflow — verification', () => {
       find(calls, 'verify:backend').prompt,
       /For a claim the checks reduce to/,
     );
-    assert.ok(labels(calls).includes('convert:be-2'));
-    assert.ok(!labels(calls).includes('convert:be-1'));
-    assert.deepEqual(unitNames(find(calls, 'verify:converted')), [
-      'converted:Converted be-2',
-    ]);
-    assert.match(result.checklist, /Backend \d — Converted be-2/);
+    assert.ok(!labels(calls).some((label) => label.startsWith('convert:')));
+    assert.doesNotMatch(result.checklist, /Check be-2/);
+    assert.match(result.checklist, /\*\*Covered by:\*\* `src\/a\.test\.ts`/);
+    assert.match(
+      noteText(result),
+      /- \[test gap\] backend behaviour 2 \(src\/service\/file1\.ts:11\) — no test proves it, so it is a test gap for code review — no such assertion/,
+    );
     assert.equal(result.stats.claimsChecked, 2);
-    assert.equal(result.stats.claimsConverted, 1);
-    assert.equal(find(calls, 'convert:be-2').model, 'opus');
+    assert.equal(result.stats.claimsFailed, 1);
     assert.ok(!result.gaps.some((gap) => gap.gap.startsWith('claim:')));
   });
 
-  it('starts a conversion while other steps are still being re-checked', async () => {
+  it('lets a human section cite tests too, and tells drafters to cite rather than repeat', async () => {
     const source = await prWorkflow('webapp');
-    const slow = 'verify:backend:Check be-2';
-    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
-      reply: prReplies({
-        claims: ['be-1'],
-        failClaims: ['be-1'],
-        verify: (label) =>
-          label.startsWith(slow) && !label.endsWith(':r2')
-            ? {
-                verdict: 'FAIL',
-                findings: 'wrong port',
-                rewrite: '```bash\ncurl\n```\n\n**Expect:** `201`',
-              }
-            : { verdict: 'PASS', findings: 'holds' },
-      }),
-      delay: (label) => (label.startsWith('verify:backend') ? 15 : 0),
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ frontend: true }),
+      { reply: prReplies({ human: 2, humanClaims: ['frontend-2'] }) },
+    );
+    const draft = find(calls, 'draft:frontend').prompt;
+
+    assert.match(draft, /A manual step exists only for what no test proves/);
+    assert.match(draft, /never a judgement|is never covered by a test/);
+    assert.doesNotMatch(draft, /NO automated-test filter/);
+    assert.doesNotMatch(find(calls, 'draft:frontend').prompt, /When in doubt/);
+    assert.deepEqual(unitNames(find(calls, 'verify:frontend')), [
+      'frontend:See frontend-1',
+      'claim:frontend-2',
+    ]);
+    assert.match(result.checklist, /See frontend-1/);
+    assert.doesNotMatch(result.checklist, /See frontend-2/);
+    assert.match(result.checklist, /\*\*Covered by:\*\* `src\/a\.test\.ts`/);
+  });
+
+  it('renders a section whose every entry a test proves as just its Covered by line', async () => {
+    const source = await prWorkflow('webapp');
+    const { result } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({ backend: 2, claims: ['be-1', 'be-2', 'xc-1'] }),
     });
 
-    const convert = find(calls, 'convert:be-1');
-    const lastSlowRound = find(calls, 'verify:backend:r2');
-    assert.ok(lastSlowRound, 'the slow step took two rounds');
-    assert.ok(
-      convert.started < lastSlowRound.ended,
-      'the conversion did not wait for the slow step',
+    assert.match(
+      result.checklist,
+      /## Agent-Runnable Backend Checks\n\n_Every change here is proven by a test\._\n\n\*\*Covered by:\*\* `src\/a\.test\.ts`/,
     );
   });
 
@@ -338,8 +709,8 @@ describe('pr workflow — verification', () => {
 
     assert.doesNotMatch(result.checklist, /Check be-3\*\*/);
     assert.match(
-      gapText(result),
-      /backend:Check be-3 — no accurate manual version — unreachable by hand/,
+      noteText(result),
+      /- \[deleted\] backend:Check be-3 — unreachable by hand/,
     );
     assert.equal(result.stats.deleted, 1);
     assert.ok(logs.some((line) => line.startsWith('Deleted')));
@@ -380,8 +751,8 @@ describe('pr workflow — verification', () => {
     assert.equal(result.stats.exhausted, 1);
     assert.doesNotMatch(result.checklist, /Backend \d — Check be-1/);
     assert.match(
-      gapText(result),
-      /- backend:Check be-1 — failed verification 2 times — still wrong/,
+      noteText(result),
+      /- \[left out\] backend:Check be-1 — failed verification 2 times — still wrong/,
     );
     assert.ok(
       logs.includes(
@@ -586,12 +957,12 @@ describe('pr workflow — batched verification', () => {
     const second = find(calls, 'draft:frontend:2');
     assert.equal(promptEntries(first.prompt).length, 8);
     assert.equal(promptEntries(second.prompt).length, 2);
-    assert.match(first.prompt, /Step 1 is signing in/);
-    assert.doesNotMatch(second.prompt, /Step 1 is/);
-    assert.match(
-      second.prompt,
-      /Another drafter writes the section's opening step/,
-    );
+    assert.match(first.prompt, /Open the section's setup with signing in/);
+    assert.doesNotMatch(second.prompt, /Open the section's setup/);
+    assert.match(second.prompt, /Another drafter's setup opens the section/);
+    // Both drafters' setups land in one block, so each names what it creates apart.
+    assert.match(first.prompt, /ending `_1`/);
+    assert.match(second.prompt, /ending `_2`/);
     assert.match(second.prompt, /you are\nnumber 2/);
     assert.ok(find(calls, 'verify:frontend:2'));
     assert.equal(result.stats.humanDrafters, 2);
@@ -746,8 +1117,11 @@ describe('pr workflow — the assembled checklist', () => {
       gapText(result),
       /- screen reader output — needs a screen reader/,
     );
-    // The published checklist holds only steps; gaps stay in the result.
-    assert.doesNotMatch(text, /Not covered|screen reader output/);
+    // A tester's gap is one line in the checklist, just above Local CI.
+    assert.match(
+      text,
+      /---\n\n\*\*Not covered here:\*\*\n\n- screen reader output — needs a screen reader\n\n---/,
+    );
     assert.match(
       text,
       /- \[ \] Review agents \(run locally before merge\)\n- \[ \] Full test suite passes/,
@@ -864,7 +1238,7 @@ describe('pr workflow — a section split between an agent and a person', () => 
 
     assert.match(find(calls, 'draft:frontend').prompt, /## Who runs each step/);
     assert.doesNotMatch(find(calls, 'draft:backend').prompt, /Who runs/);
-    assert.match(find(calls, 'verify:frontend').prompt, /9\. RUNNER/);
+    assert.match(find(calls, 'verify:frontend').prompt, /11\. RUNNER/);
     assert.deepEqual(
       promptUnits(find(calls, 'verify:frontend').prompt).map((u) => u.runner),
       ['agent', 'human', 'agent'],
@@ -958,7 +1332,10 @@ describe('pr workflow — config reaches the prompts', () => {
       find(calls, 'surfaces:tui').prompt,
       /the `shared` package is the\s+contract/,
     );
-    assert.match(find(calls, 'draft:tui').prompt, /Step 1 is starting the TUI/);
+    assert.match(
+      find(calls, 'draft:tui').prompt,
+      /Open the section's setup with starting the TUI/,
+    );
     assert.match(find(calls, 'draft:boot').prompt, /npm run db:up/);
     const verify = find(calls, 'verify:backend');
     assert.match(
@@ -969,16 +1346,65 @@ describe('pr workflow — config reaches the prompts', () => {
     assert.match(verify.prompt, /the worker loop intercept first/);
   });
 
-  it('leaves backend-only boot variables out when there is no backend section', async () => {
+  it('leaves backend-only boot variables out when the diff needs only a page, backend section or not', async () => {
     const source = await prWorkflow('webapp');
-    const { calls } = await runWorkflow(source, prArgs({ frontend: true }), {
-      reply: prReplies(),
-    });
+    // The backend section is on, so only the triage's touches can keep TOKEN out.
+    const { calls } = await runWorkflow(
+      source,
+      prArgs(
+        { backend: true, frontend: true },
+        { triage: { touches: ['page'], outsideRepo: [] } },
+      ),
+      { reply: prReplies({ triage: { touches: [] } }) },
+    );
     const boot = find(calls, 'draft:boot').prompt;
 
     assert.match(boot, /\\\$PORT — the dev server port/);
-    assert.doesNotMatch(boot, /TOKEN/);
-    assert.match(boot, /db:reset/);
+    assert.doesNotMatch(boot, /TOKEN|DB_CONTAINER/);
+    assert.doesNotMatch(find(calls, 'draft:frontend').prompt, /TOKEN/);
+  });
+
+  it('boots only what the diff needs, and skips the boot block when that is nothing', async () => {
+    const boot = {
+      start: [
+        { run: 'npm run db:start', when: ['database'] },
+        { run: 'npm run dev', when: ['api', 'page'] },
+      ],
+      stop: { run: 'npm run db:stop', when: ['database'] },
+      variables: {
+        PORT: { from: 'the dev server port', when: ['api', 'page'] },
+      },
+    };
+    const source = await prWorkflow('webapp', { boot });
+    const pageOnly = await runWorkflow(
+      source,
+      prArgs(
+        { frontend: true },
+        { triage: { touches: ['page'], outsideRepo: [] } },
+      ),
+      { reply: prReplies({ triage: { touches: [] } }) },
+    );
+    const prompt = find(pageOnly.calls, 'draft:boot').prompt;
+
+    assert.match(prompt, /```bash\nnpm run dev\n```/);
+    assert.match(prompt, /needs page running/);
+    assert.match(prompt, /FIVE caveat lines at most/);
+    assert.doesNotMatch(pageOnly.result.checklist, /db:stop/);
+
+    const nothing = await runWorkflow(
+      source,
+      prArgs({ backend: true }, { triage: { touches: [], outsideRepo: [] } }),
+      { reply: prReplies({ triage: { touches: [] } }) },
+    );
+    assert.ok(!labels(nothing.calls).includes('draft:boot'));
+    assert.match(
+      find(nothing.calls, 'draft:backend').prompt,
+      /\(none — this diff needs nothing started\)/,
+    );
+    assert.match(
+      nothing.result.checklist,
+      /^_Triage: [^\n]*_\n\n---\n\n## Agent-Runnable Backend Checks/,
+    );
   });
 
   it('tells every drafter and verifier never to run anything', async () => {
@@ -1063,8 +1489,8 @@ describe('pr workflow — edges', () => {
     );
 
     assert.match(
-      gapText(result),
-      /- a rejected caller \(src\/service\/file0\.ts:99\) — no checklist section drafts it, since the backend section is off/,
+      noteText(result),
+      /- \[not drafted\] a rejected caller \(src\/service\/file0\.ts:99\) — no checklist section drafts it, since the backend section is off/,
     );
     assert.ok(
       logs.includes('1 entries have no section to draft them — listed as gaps'),
@@ -1102,8 +1528,8 @@ describe('pr workflow — edges', () => {
     assert.equal(result.stats.unverified, 1);
     assert.doesNotMatch(result.checklist, /Backend \d — Check be-1/);
     assert.match(
-      gapText(result),
-      /- backend:Check be-1 — never verified — the checker gave no verdict for it/,
+      noteText(result),
+      /- \[left out\] backend:Check be-1 — never verified — the checker gave no verdict for it/,
     );
     assert.ok(
       logs.includes(
@@ -1126,8 +1552,8 @@ describe('pr workflow — edges', () => {
     ]);
     assert.doesNotMatch(result.checklist, /## Human Browser Checks/);
     assert.match(
-      gapText(result),
-      /- frontend:See frontend-2 — never verified — the checker returned nothing/,
+      noteText(result),
+      /- \[left out\] frontend:See frontend-2 — never verified — the checker returned nothing/,
     );
   });
 
@@ -1142,8 +1568,8 @@ describe('pr workflow — edges', () => {
     });
 
     assert.match(
-      gapText(result),
-      /- src\/ui\/Orphan\.tsx — a changed file no surface could be traced to/,
+      noteText(result),
+      /- \[no surface\] src\/ui\/Orphan\.tsx — a changed file no surface could be traced to/,
     );
   });
 
@@ -1179,7 +1605,7 @@ describe('pr workflow — edges', () => {
     });
 
     assert.ok(
-      result.checklist.startsWith(
+      afterTriage(result.checklist).startsWith(
         '> [!WARNING]\n> **This boot block did not pass verification** — the checker found no accurate version: no port. Check each command against the repository before relying on it.\n\n```bash\nnpm run dev\n```',
       ),
     );
@@ -1208,7 +1634,7 @@ describe('pr workflow — edges', () => {
 
     assert.ok(find(calls, 'verify:boot:r2'));
     assert.match(
-      result.checklist,
+      afterTriage(result.checklist),
       /^> \[!WARNING\]\n> \*\*This boot block did not pass verification\*\* — it still failed after 2 rounds: still no port\./,
     );
     assert.match(result.checklist, /npm run dev -- --port 3000/);
@@ -1230,7 +1656,11 @@ describe('pr workflow — edges', () => {
       }),
     });
 
-    assert.ok(result.checklist.startsWith('```bash\nnpm run db:reset\n```'));
+    assert.ok(
+      afterTriage(result.checklist).startsWith(
+        '```bash\nnpm run db:reset\n```',
+      ),
+    );
   });
 
   it('leaves out a human section that ended with no steps', async () => {
@@ -1250,8 +1680,8 @@ describe('pr workflow — edges', () => {
 
     assert.doesNotMatch(result.checklist, /## Human Browser Checks/);
     assert.match(
-      gapText(result),
-      /frontend:See frontend-1 — no accurate manual version/,
+      noteText(result),
+      /- \[deleted\] frontend:See frontend-1 — needs a screen reader/,
     );
   });
 
@@ -1314,16 +1744,25 @@ describe('pr workflow — edges', () => {
     assert.match(result.checklist, /Cli 1 — See cli-1/);
   });
 
-  it('writes no stop line or note when the config has none', async () => {
+  it('writes no stop line or note when the config has none, though the stack booted', async () => {
     const source = await prWorkflow('webapp', {
-      boot: {},
+      boot: { start: ['npm run dev'] },
       localCiNote: '',
     });
-    const { result } = await runWorkflow(source, prArgs({ backend: true }), {
-      reply: prReplies(),
-    });
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies(),
+      },
+    );
 
-    assert.doesNotMatch(result.checklist, /When you're finished/);
+    assert.ok(labels(calls).includes('draft:boot'));
+    assert.match(result.checklist, /```bash\nnpm run dev\n```/);
+    assert.doesNotMatch(
+      result.checklist,
+      /When you're finished|stop the stack/,
+    );
     assert.match(
       result.checklist,
       /### Local CI\n\n- \[ \] Review agents \(run locally before merge\)\n- \[ \] Full test suite passes \(unit, integration, e2e — run locally\)$/,
@@ -1354,6 +1793,265 @@ describe('pr workflow — edges', () => {
   });
 });
 
+describe('pr workflow — section setup and the On main line', () => {
+  it('asks for an On main line and one setup per section, never a step that stands alone', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies(),
+    });
+    const draft = find(calls, 'draft:backend').prompt;
+
+    assert.match(draft, /\*\*On main:\*\* what the tester would see/);
+    assert.match(draft, /NO per-step teardown/);
+    assert.match(
+      draft,
+      /Return what your steps need before the first one runs as `setup`/,
+    );
+    assert.doesNotMatch(draft, /every\s+step runs on its own/);
+    assert.deepEqual(find(calls, 'draft:backend').schema.required.slice(0, 2), [
+      'setup',
+      'teardown',
+    ]);
+    assert.match(
+      find(calls, 'verify:backend').prompt,
+      /no On main line is a FAIL/,
+    );
+  });
+
+  it('verifies each drafter’s setup with its steps, and renders one setup and teardown per section', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({
+          backend: 10,
+          files: 1,
+          setup: (label) => ({
+            setup: `\`\`\`sql\ninsert into seats -- ${label}\n\`\`\``,
+            teardown: `\`\`\`sql\ndelete from seats -- ${label}\n\`\`\``,
+          }),
+        }),
+      },
+    );
+    const first = find(calls, 'verify:backend:1:b1');
+
+    assert.deepEqual(unitNames(first).slice(0, 2), [
+      'setup:backend:1',
+      'backend:Check be-1',
+    ]);
+    assert.match(first.prompt, /For a section setup the checks reduce to/);
+    assert.match(
+      first.prompt,
+      /## Section setup these steps may rely on[^\n]*\n\*\*Setup:\*\*\n\n```sql\ninsert into seats -- draft:backend:1/,
+    );
+
+    const section = result.checklist.split(
+      '## Agent-Runnable Backend Checks',
+    )[1];
+    assert.match(
+      section,
+      /each step\._\n\n\*\*Setup:\*\*\n\n```sql\ninsert into seats -- draft:backend:1\n```\n\n```sql\ninsert into seats -- draft:backend:2\n```\n\n- \[ \] /,
+    );
+    assert.match(
+      section,
+      /\*\*Teardown:\*\*\n\n```sql\ndelete from seats -- draft:backend:1\n```\n\n```sql\ndelete from seats -- draft:backend:2\n```/,
+    );
+    assert.equal(
+      (result.checklist.match(/\*\*Teardown:\*\*/g) ?? []).length,
+      1,
+    );
+    assert.ok(!result.gaps.some((gap) => gap.gap.startsWith('setup:')));
+  });
+
+  it('keeps a setup that failed verification, under a warning', async () => {
+    const source = await prWorkflow('webapp');
+    const { result } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        setup: () => ({ setup: 'insert a seat', teardown: '' }),
+        verify: (label) =>
+          label === 'verify:setup:backend'
+            ? { verdict: 'DELETE', findings: 'no seats table' }
+            : { verdict: 'PASS', findings: '' },
+      }),
+    });
+
+    assert.match(
+      result.checklist,
+      /\*\*Setup:\*\*\n\n> \[!WARNING\]\n> \*\*This setup did not pass verification\*\* — no seats table\. Check it against the repository before relying on it\.\n\ninsert a seat/,
+    );
+  });
+});
+
+describe('pr workflow — stronger checks', () => {
+  it('tells checkers to delete vacuous and covered steps and to fix fragile proofs', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies(),
+    });
+    const prompt = find(calls, 'verify:backend').prompt;
+
+    assert.match(
+      prompt,
+      /4\. DISCRIMINATING[\s\S]*proves\s+nothing: DELETE it/,
+    );
+    assert.match(
+      prompt,
+      /9\. COVERED[\s\S]*DELETE the step and name the test file/,
+    );
+    assert.match(prompt, /10\. FRAGILE[\s\S]*`grep -c`/);
+    assert.match(prompt, /## Tests that exist\n- `src\/a\.test\.ts` — a works/);
+  });
+
+  it('drops a step repeating another in its section, seen across checker batches', async () => {
+    const source = await prWorkflow('webapp');
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies({
+          backend: 10,
+          duplicates: (label, steps) => {
+            const id = (title) => steps.find((step) => step.title === title).id;
+            return [
+              {
+                id: id('Check be-10'),
+                duplicateOf: id('Check be-1'),
+                why: 'same status code',
+              },
+              // Keeping be-10 for be-1 as well would lose both; the second drop is refused.
+              {
+                id: id('Check be-1'),
+                duplicateOf: id('Check be-10'),
+                why: 'loop',
+              },
+              { id: 's99', duplicateOf: id('Check be-2'), why: 'made up' },
+            ];
+          },
+        }),
+      },
+    );
+    const pass = find(calls, 'duplicates:backend');
+
+    assert.equal(pass.model, 'sonnet');
+    assert.equal(JSON.parse(pass.prompt.split('## The steps\n')[1]).length, 11);
+    assert.doesNotMatch(result.checklist, /Check be-10\b/);
+    assert.match(result.checklist, /Check be-1\b/);
+    assert.equal(result.stats.duplicates, 1);
+    assert.match(
+      noteText(result),
+      /- \[duplicate\] backend:Check be-10 — repeats "Check be-1" — same status code/,
+    );
+    assert.equal(result.stats.steps, 10);
+  });
+
+  it('skips the duplicate pass for a section with one step', async () => {
+    const source = await prWorkflow('webapp', {
+      experiments: { dropCrossCutting: true },
+    });
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({ backend: 1 }),
+    });
+
+    assert.deepEqual(unitNames(find(calls, 'verify:backend')), [
+      'backend:Check be-1',
+    ]);
+    assert.ok(!labels(calls).includes('duplicates:backend'));
+  });
+});
+
+describe('pr workflow — budget', () => {
+  it('gives each drafter its share of the step cap for the triage size', async () => {
+    const source = await prWorkflow('webapp', { budget: { small: 4 } });
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({ backend: 7, triage: { size: 'small' } }),
+    });
+    const drafts = calls.filter((c) => c.label.startsWith('draft:backend'));
+
+    // Eight entries: seven backend plus the cross-cutting one, in one drafter.
+    assert.equal(drafts.length, 1);
+    assert.match(
+      drafts[0].prompt,
+      /a budget of 4 steps and 30\s+minutes, and your share is about 4 step\(s\)/,
+    );
+  });
+
+  it('cuts if-time steps, longest first, until the checklist fits, and never a blocking one', async () => {
+    const source = await prWorkflow('webapp', {
+      budget: { large: 3, minutes: 100 },
+    });
+    const { result } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      {
+        reply: prReplies({ backend: 2, human: 4 }),
+      },
+    );
+
+    // Three blocking backend steps and one blocking frontend step already exceed the cap of three.
+    assert.equal(result.stats.cutForBudget, 3);
+    assert.doesNotMatch(result.checklist, /\[if-time\]/);
+    assert.match(result.checklist, /\[blocking\] Backend 3/);
+    assert.match(
+      noteText(result),
+      /- \[cut for budget\] frontend:See frontend-4 — cut to keep the checklist within 3 steps and 100 minutes/,
+    );
+    assert.match(
+      noteText(result),
+      /- \[over budget\] the checklist — its blocking steps alone come to 4 steps and about 9 minutes, over the budget of 3 steps and 100 minutes/,
+    );
+  });
+
+  it('cuts for the minutes target too', async () => {
+    const source = await prWorkflow('webapp', { budget: { minutes: 10 } });
+    const { result } = await runWorkflow(source, prArgs({ frontend: true }), {
+      reply: prReplies({ human: 4 }),
+    });
+
+    // Four 3-minute steps: one if-time step goes to bring 12 minutes under 10.
+    assert.equal(result.stats.cutForBudget, 1);
+    assert.equal(result.stats.steps, 3);
+  });
+});
+
+describe('pr workflow — budget-cut gaps', () => {
+  it('keeps a gap the drafter flagged as cut for budget off the checklist, whatever its wording', async () => {
+    const source = await prWorkflow('webapp');
+    const replies = prReplies({ human: 1 });
+    const { result } = await runWorkflow(source, prArgs({ frontend: true }), {
+      reply: (label, prompt) => {
+        const reply = replies(label, prompt);
+        if (label === 'draft:frontend') {
+          reply.gaps = [
+            {
+              gap: 'the empty state',
+              why: 'left out to stay in budget',
+              cutForBudget: true,
+            },
+            {
+              gap: 'screen reader output',
+              why: 'needs a screen reader',
+              cutForBudget: false,
+            },
+          ];
+        }
+        return reply;
+      },
+    });
+
+    assert.match(
+      result.checklist,
+      /- screen reader output — needs a screen reader/,
+    );
+    assert.doesNotMatch(result.checklist, /the empty state/);
+    assert.ok(
+      result.reportNotes.some(
+        (n) => n.kind === 'cut for budget' && n.item === 'the empty state',
+      ),
+    );
+  });
+});
+
 describe('pr workflow — format check and grouping rules', () => {
   it('names every format problem a script can see', async () => {
     const source = await prWorkflow('webapp');
@@ -1366,7 +2064,7 @@ describe('pr workflow — format check and grouping rules', () => {
             {
               title: 'Messy',
               priority: 'blocking',
-              body: 'curl x\n\n**Teardown:** none\n\n**Expect:** `200`',
+              body: 'curl x\n\n**If wrong:** x\n\n**Expect:** `200`\n\n**Teardown:** `delete`',
               coversEntryIds: ['be-1'],
               minutes: 1,
             },
@@ -1377,7 +2075,7 @@ describe('pr workflow — format check and grouping rules', () => {
     });
 
     const fix = find(calls, 'format:backend:Messy');
-    assert.match(fix.prompt, /says "Teardown: none"/);
+    assert.match(fix.prompt, /has its own \*\*Teardown:\*\*/);
     assert.match(fix.prompt, /a terminal step with no fenced command block/);
     assert.match(fix.prompt, /labels out of order/);
     assert.doesNotMatch(fix.prompt, /no \*\*Expect:\*\* line/);
@@ -1393,5 +2091,524 @@ describe('pr workflow — format check and grouping rules', () => {
       .filter((c) => c.label.startsWith('draft:backend'))
       .map((c) => promptEntries(c.prompt).length);
     assert.deepEqual(sizes, [8, 3]);
+  });
+});
+
+describe('pr workflow — review fixes', () => {
+  const split = {
+    sections: {
+      ...webapp.sections,
+      frontend: {
+        ...webapp.sections.frontend,
+        title: 'Human UI / UX Checks',
+        agent: { title: 'Agent-Runnable Frontend Checks' },
+      },
+    },
+  };
+
+  it('drafts a boot block for a variable that always applies, though nothing is started', async () => {
+    const source = await prWorkflow('webapp', { boot: { read: [] } });
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies(),
+    });
+    const boot = find(calls, 'draft:boot');
+
+    assert.ok(boot, 'draft:boot runs');
+    assert.match(boot.prompt, /write no start commands/);
+    assert.match(boot.prompt, /\\\$PORT — the port the app serves on locally/);
+    assert.match(
+      find(calls, 'draft:backend').prompt,
+      /It defines \$PORT, \$TOKEN\./,
+    );
+  });
+
+  it('tells drafters the boot block defines nothing when its draft comes back empty', async () => {
+    const source = await prWorkflow('webapp');
+    const base = prReplies();
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: (label, prompt) =>
+        label === 'draft:boot' ? null : base(label, prompt),
+    });
+    const prompt = find(calls, 'draft:backend').prompt;
+
+    assert.match(prompt, /could not be drafted/);
+    assert.match(prompt, /It defines no variables\./);
+  });
+
+  it('keeps every step runnable without the steps around it', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies(),
+    });
+    const prompt = find(calls, 'draft:backend').prompt;
+
+    assert.match(prompt, /NEVER on what another step did/);
+    assert.doesNotMatch(prompt, /earlier steps in the SAME section/);
+  });
+
+  it('closes an all-agent split section with its teardown in the agent half', async () => {
+    const source = await prWorkflow('webapp', split);
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ frontend: true }),
+      {
+        reply: prReplies({
+          runner: () => 'agent',
+          setup: (label) =>
+            label.startsWith('draft:frontend')
+              ? { setup: 'insert a row', teardown: 'delete the row' }
+              : { setup: '', teardown: '' },
+        }),
+      },
+    );
+    const [agentHalf, humanHalf] = result.checklist.split(
+      '## Human UI / UX Checks',
+    );
+
+    assert.match(agentHalf, /\*\*Teardown:\*\*\n\ndelete the row/);
+    assert.doesNotMatch(humanHalf, /Teardown/);
+    assert.match(
+      find(calls, 'draft:frontend').prompt,
+      /never hand a shell variable from one to\nthe other/,
+    );
+  });
+
+  it('checks a pure move’s smoke steps as ones that must behave as on main, blocking first', async () => {
+    const source = await prWorkflow('webapp');
+    const base = prReplies({ triage: { kind: 'move' } });
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      {
+        reply: (label, prompt) => {
+          const answer = base(label, prompt);
+          // The blocking step comes last, past the budget of two.
+          if (label === 'draft:smoke') answer.steps.reverse();
+          return answer;
+        },
+      },
+    );
+    const verify = find(calls, 'verify:smoke');
+    const smoke = promptUnits(verify.prompt).filter((u) =>
+      u.name.startsWith('smoke:'),
+    );
+
+    assert.match(verify.prompt, /For a smoke step the branch only moves code/);
+    assert.deepEqual(
+      smoke.map((u) => [u.name, u.kind]),
+      [
+        ['smoke:Load the moved page', 'smoke'],
+        ['smoke:A third smoke step', 'smoke'],
+      ],
+    );
+    assert.match(
+      find(calls, 'draft:smoke').prompt,
+      /has no \*\*On main:\*\* line/,
+    );
+    assert.match(
+      noteText(result),
+      /- \[cut for budget\] smoke:A second smoke step — cut to keep a pure move within 2 smoke step\(s\)/,
+    );
+    assert.match(result.checklist, /stop the stack: `npm run db:stop`/);
+  });
+
+  it('keeps a duplicate’s blocking priority on its keeper, so the budget cannot cut the behaviour', async () => {
+    const source = await prWorkflow('webapp', { budget: { minutes: 2 } });
+    const { result } = await runWorkflow(source, prArgs({ frontend: true }), {
+      reply: prReplies({
+        human: 2,
+        duplicates: (label, steps) => {
+          const dropped = steps.find((s) => s.title.includes('frontend-1'));
+          const keeper = steps.find((s) => s.title.includes('frontend-2'));
+          return dropped && keeper
+            ? [
+                { id: dropped.id, duplicateOf: keeper.id, why: 'same' },
+                { id: dropped.id, duplicateOf: keeper.id, why: 'again' },
+              ]
+            : [];
+        },
+      }),
+    });
+
+    assert.match(
+      result.checklist,
+      /\*\*\[blocking\] Frontend 1 — See frontend-2\*\*/,
+    );
+    assert.equal(result.stats.duplicates, 1);
+    assert.match(noteText(result), /\[over budget\] the checklist/);
+  });
+
+  it('never drops an agent’s step as a repeat of a person’s', async () => {
+    const source = await prWorkflow('webapp', split);
+    const { result } = await runWorkflow(source, prArgs({ frontend: true }), {
+      reply: prReplies({
+        human: 2,
+        runner: (entry) => (entry.id === 'frontend-1' ? 'agent' : 'human'),
+        duplicates: (label, steps) => [
+          { id: steps[1].id, duplicateOf: steps[0].id, why: 'looks the same' },
+        ],
+      }),
+    });
+
+    assert.equal(result.stats.duplicates, 0);
+    assert.match(result.checklist, /See frontend-1/);
+    assert.match(result.checklist, /See frontend-2/);
+  });
+
+  it('keeps a teardown the drafter labelled itself, once', async () => {
+    const source = await prWorkflow('webapp');
+    const { result } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        setup: () => ({
+          setup: '**Setup:**\n\ninsert a seat',
+          teardown: "**Teardown:**\n\nDELETE FROM seats WHERE id = 'qa-1';",
+        }),
+      }),
+    });
+
+    assert.match(result.checklist, /\*\*Setup:\*\*\n\ninsert a seat\n/);
+    assert.doesNotMatch(result.checklist, /\*\*Setup:\*\*\n\n\*\*Setup:\*\*/);
+    assert.match(
+      result.checklist,
+      /\*\*Teardown:\*\*\n\nDELETE FROM seats WHERE id = 'qa-1';/,
+    );
+  });
+
+  it('warns on a teardown that failed verification, and keeps a rewritten one out of the setup', async () => {
+    const source = await prWorkflow('webapp');
+    const failed = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        setup: () => ({ setup: '', teardown: 'DELETE FROM bookings;' }),
+        verify: (label) =>
+          label === 'verify:setup:backend'
+            ? { verdict: 'DELETE', findings: 'deletes every booking' }
+            : { verdict: 'PASS', findings: '' },
+      }),
+    });
+    assert.match(
+      failed.result.checklist,
+      /\*\*Teardown:\*\*\n\n> \[!WARNING\]\n> \*\*This teardown did not pass verification\*\* — deletes every booking\./,
+    );
+
+    const rewritten = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        setup: () => ({ setup: 'insert a seat', teardown: 'delete it' }),
+        verify: (label) =>
+          label === 'verify:setup:backend'
+            ? {
+                verdict: 'FAIL',
+                findings: 'wrong row',
+                rewrite:
+                  '**Setup:**\n\ninsert seat 7\n\n**Teardown**:\n\ndelete seat 7',
+              }
+            : { verdict: 'PASS', findings: '' },
+      }),
+    });
+    const setup = rewritten.result.checklist
+      .split('**Setup:**')[1]
+      .split('- [ ]')[0];
+    assert.doesNotMatch(setup, /delete seat 7/);
+    assert.match(
+      rewritten.result.checklist,
+      /\*\*Teardown:\*\*\n\ndelete seat 7/,
+    );
+  });
+
+  it('leaves out a setup whose steps all went', async () => {
+    const source = await prWorkflow('webapp');
+    const { result } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        backend: 10,
+        files: 1,
+        setup: (label) => ({
+          setup: `insert for ${label}`,
+          teardown: `delete for ${label}`,
+        }),
+        verify: (label) =>
+          /be-9|be-10|xc-1/.test(label)
+            ? { verdict: 'DELETE', findings: 'vacuous' }
+            : { verdict: 'PASS', findings: '' },
+      }),
+    });
+
+    assert.match(result.checklist, /insert for draft:backend:1/);
+    assert.doesNotMatch(result.checklist, /draft:backend:2/);
+  });
+
+  it('still drafts deploy checks for a branch the prepass matched outside the repo', async () => {
+    const outsideRepo = [{ ask: 'Hosting config?', paths: ['vercel.json'] }];
+    const hint = { ask: 'Hosting config?', files: ['vercel.json'] };
+    const source = await prWorkflow('webapp', { outsideRepo });
+
+    const noSurface = await runWorkflow(
+      source,
+      prArgs({}, { triage: { touches: [], outsideRepo: [hint] } }),
+      { reply: prReplies() },
+    );
+    assert.ok(labels(noSurface.calls).includes('draft:deploy'));
+    assert.match(
+      noSurface.result.checklist,
+      /^_No checks in the product needed — no runtime surface touched\._\n\n---\n\n## Deploy and Config Checks/,
+    );
+
+    const tooling = await runWorkflow(
+      source,
+      prArgs(
+        { backend: true },
+        { triage: { touches: ['database'], outsideRepo: [hint] } },
+      ),
+      { reply: prReplies({ triage: { kind: 'tooling' } }) },
+    );
+    assert.match(
+      tooling.result.checklist,
+      /_No checks in the product needed — nothing this branch changes runs in the product\._\n\n---\n\n## Deploy and Config Checks/,
+    );
+    assert.equal(tooling.result.stats.deployChecks, 1);
+  });
+
+  it('never assumes the repository has no production users when drafting deploy checks', async () => {
+    const source = await prWorkflow('webapp', {
+      outsideRepo: [{ ask: 'Hosting config?', paths: ['vercel.json'] }],
+    });
+    const { calls } = await runWorkflow(
+      source,
+      prArgs(
+        { frontend: true },
+        {
+          triage: {
+            touches: ['page'],
+            outsideRepo: [{ ask: 'Hosting config?', files: ['vercel.json'] }],
+          },
+        },
+      ),
+      { reply: prReplies() },
+    );
+    const prompt = find(calls, 'draft:deploy').prompt;
+
+    assert.doesNotMatch(prompt, /no\s+production users yet/);
+    assert.match(prompt, /never assume it has none/);
+  });
+
+  it('treats a failed claim as a test gap even when its checker rewrites it', async () => {
+    const source = await prWorkflow('webapp');
+    const base = prReplies({ claims: ['be-1'] });
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: (label, prompt) => {
+          const answer = base(label, prompt);
+          if (label !== 'verify:backend') return answer;
+          const units = promptUnits(prompt);
+          answer.verdicts = answer.verdicts.map((verdict) =>
+            units.find((u) => u.id === verdict.id).kind === 'claim'
+              ? {
+                  ...verdict,
+                  verdict: 'FAIL',
+                  findings: 'a.test.ts does not assert it; b.test.ts does',
+                  rewrite: 'Claim: `src/b.test.ts` asserts it',
+                }
+              : verdict,
+          );
+          return answer;
+        },
+      },
+    );
+
+    assert.ok(!labels(calls).includes('verify:backend:r2'));
+    assert.doesNotMatch(result.checklist, /Covered by/);
+    assert.match(noteText(result), /\[test gap\] backend behaviour 1/);
+  });
+
+  it('re-checks a step against its setup as rewritten, not as drafted', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        setup: () => ({ setup: 'insert a seat OLD', teardown: '' }),
+        verify: (label) => {
+          if (label === 'verify:setup:backend') {
+            return {
+              verdict: 'FAIL',
+              findings: 'wrong table',
+              rewrite: '**Setup:**\n\ninsert into seat_assignments NEW',
+            };
+          }
+          if (label === 'verify:backend:Check be-1') {
+            return {
+              verdict: 'FAIL',
+              findings: 'wrong id',
+              rewrite:
+                '**[blocking] Check be-1**\n\n```bash\ncurl x\n```\n\n**Expect:** `200`',
+            };
+          }
+          return { verdict: 'PASS', findings: 'holds' };
+        },
+      }),
+    });
+    const recheck = find(calls, 'verify:backend:r2').prompt;
+
+    assert.match(
+      recheck,
+      /## Section setup these steps may rely on[^\n]*\n\*\*Setup:\*\*\n\ninsert into seat_assignments NEW/,
+    );
+    assert.doesNotMatch(recheck, /OLD/);
+  });
+
+  it('never lets a pruned keeper take the entries merged into it, and describes it merged', async () => {
+    const source = await prWorkflow('webapp');
+    const dropped = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        prune: {
+          merge: [
+            {
+              keep: 'be-1',
+              ids: ['be-1', 'be-2'],
+              inputs: 'every status code',
+            },
+          ],
+          drop: [
+            {
+              id: 'be-1',
+              reason: 'covered',
+              why: 'asserted',
+              testFile: 'src/a.test.ts',
+              assertion: 'it 1',
+            },
+          ],
+        },
+      }),
+    });
+    const drafted = promptEntries(
+      find(dropped.calls, 'draft:backend').prompt,
+    ).map((e) => e.id);
+    assert.ok(drafted.includes('be-2'));
+    assert.ok(!drafted.includes('be-1'));
+
+    const claimed = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        claims: ['be-1'],
+        prune: {
+          merge: [
+            {
+              keep: 'be-1',
+              ids: ['be-1', 'be-2'],
+              inputs: 'every status code',
+            },
+          ],
+          drop: [],
+        },
+      }),
+    });
+    const claim = promptUnits(
+      find(claimed.calls, 'verify:backend').prompt,
+    ).find((u) => u.kind === 'claim');
+    assert.match(claim.body, /stands for every status code/);
+  });
+
+  it('never merges a person’s check into a terminal one, and keeps entries sharing an id apart', async () => {
+    const source = await prWorkflow('webapp');
+    const crossed = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      {
+        reply: prReplies({
+          prune: {
+            merge: [
+              {
+                keep: 'be-1',
+                ids: ['be-1', 'frontend-1'],
+                inputs: 'the badge',
+              },
+            ],
+            drop: [],
+          },
+        }),
+      },
+    );
+    assert.ok(
+      promptEntries(find(crossed.calls, 'draft:frontend').prompt).some(
+        (e) => e.id === 'frontend-1',
+      ),
+    );
+
+    const base = prReplies({ prune: null });
+    const shared = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: (label, prompt) =>
+        label === 'audit:hunks'
+          ? {
+              entries: [
+                {
+                  id: 'be-1',
+                  behaviour: 'audit only',
+                  where: 'src/other.ts:77',
+                  reachable: 'POST /y',
+                  actors: 'API caller',
+                  visible: false,
+                  section: null,
+                },
+              ],
+            }
+          : base(label, prompt),
+    });
+    const behaviours = shared.calls
+      .filter((c) => c.label.startsWith('draft:backend'))
+      .flatMap((c) => promptEntries(c.prompt))
+      .map((e) => e.behaviour);
+    assert.ok(behaviours.includes('backend behaviour 1'));
+    assert.ok(behaviours.includes('audit only'));
+  });
+
+  it('shows a section whose changes are all proven by tests as covered, split or not drafted', async () => {
+    const splitSource = await prWorkflow('webapp', split);
+    const covered = await runWorkflow(splitSource, prArgs({ frontend: true }), {
+      reply: prReplies({ humanClaims: ['frontend-1', 'frontend-2'] }),
+    });
+    assert.match(
+      covered.result.checklist,
+      /## Human UI \/ UX Checks\n\n_Every change here is proven by a test\._\n\n\*\*Covered by:\*\* `src\/a\.test\.ts`/,
+    );
+    assert.doesNotMatch(
+      covered.result.checklist,
+      /No step here can be run by an agent/,
+    );
+
+    const source = await prWorkflow('webapp');
+    const base = prReplies({
+      visible: [],
+      prune: {
+        merge: [],
+        drop: [
+          {
+            id: 'aud-hunks-1',
+            reason: 'covered',
+            why: 'asserted',
+            testFile: 'e2e/banner.spec.ts',
+            assertion: 'shows the banner',
+          },
+        ],
+      },
+    });
+    const pruned = await runWorkflow(source, prArgs({ frontend: true }), {
+      reply: (label, prompt) =>
+        label === 'audit:hunks'
+          ? {
+              entries: [
+                {
+                  id: 'aud-hunks-1',
+                  behaviour: 'the banner shows',
+                  where: 'src/ui/banner.tsx:3',
+                  reachable: 'open home',
+                  actors: 'user',
+                  visible: true,
+                  section: 'frontend',
+                },
+              ],
+            }
+          : base(label, prompt),
+    });
+    assert.match(
+      pruned.result.checklist,
+      /## Human Browser Checks\n\n_Every change here is proven by a test\._\n\n\*\*Covered by:\*\* `e2e\/banner\.spec\.ts`/,
+    );
   });
 });

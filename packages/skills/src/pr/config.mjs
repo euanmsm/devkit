@@ -21,13 +21,16 @@ import {
   AGENT_HALF_DEFAULTS,
   BACKEND_SECTION,
   BUILT_IN_DIMENSIONS,
+  DEFAULT_BUDGET,
   DEFAULT_EXPERIMENTS,
   DEFAULT_LOCAL_CI,
+  DEFAULT_OUTSIDE_REPO,
   DEFAULT_PROMPTS,
   DEFAULT_TESTS,
   DEFAULT_VERIFY,
   HUMAN_SECTION_DEFAULTS,
   SUMMARY_MARKER,
+  TOUCHES,
 } from './defaults.mjs';
 
 /** The skill's folder and slash command when `skills.json` does not name it. */
@@ -49,11 +52,18 @@ const TOP_KEYS = [
   'traps',
   'template',
   'prompts',
+  'outsideRepo',
+  'budget',
   'experiments',
 ];
-const LAYER_KEYS = ['key', 'title', 'paths', 'section'];
+const LAYER_KEYS = ['key', 'title', 'paths', 'section', 'touches'];
 const BOOT_KEYS = ['start', 'stop', 'variables', 'read'];
-const VARIABLE_KEYS = ['from', 'backendOnly'];
+const START_KEYS = ['run', 'when'];
+const VARIABLE_KEYS = ['from', 'when', 'backendOnly'];
+const QUESTION_KEYS = ['ask', 'paths'];
+
+/** What a variable marked `backendOnly` is needed for. */
+const BACKEND_TOUCHES = ['database', 'api'];
 const BASES = ['branch', 'stack'];
 const STORY_MATCHES = ['stem', 'imports', 'both'];
 
@@ -70,7 +80,7 @@ const DEFAULT_VARIABLES = {
   PORT: 'the port the app serves on locally',
   TOKEN: {
     from: 'a bearer token for a seeded account',
-    backendOnly: true,
+    when: ['api'],
   },
 };
 
@@ -163,6 +173,8 @@ export function resolvePrConfig(
       optionalString(raw.template, 'template', fail) ??
       '.github/pull_request_template.md',
     prompts: resolvePrompts(raw.prompts, fail),
+    outsideRepo: resolveOutsideRepo(raw.outsideRepo, fail),
+    budget: resolveBudget(raw.budget, fail),
     experiments: resolveExperiments(raw.experiments, fail),
   };
 }
@@ -296,6 +308,10 @@ function resolveLayers(raw, sections, fail) {
       title: layer.title,
       paths,
       section: layer.section,
+      touches:
+        layer.touches === undefined
+          ? null
+          : touchList(layer.touches, `${where}.touches`, fail),
     };
   });
 }
@@ -365,30 +381,64 @@ function resolveBoot(raw = {}, fail) {
   const variables = raw.variables ?? DEFAULT_VARIABLES;
   if (!isPlainObject(variables)) fail('boot.variables must be an object');
 
+  const start = raw.start ?? [];
+  if (!Array.isArray(start)) fail('boot.start must be a list');
+
   return {
-    start: stringList(raw.start, 'boot.start', fail) ?? [],
-    stop: optionalString(raw.stop, 'boot.stop', fail) ?? '',
+    start: start.map((entry, i) => command(entry, `boot.start[${i}]`, fail)),
+    stop:
+      raw.stop === undefined
+        ? { run: '', when: [] }
+        : command(raw.stop, 'boot.stop', fail),
     variables: Object.entries(variables).map(([name, value]) => {
+      const where = `boot.variables.${name}`;
       if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
-        fail(
-          `boot.variables.${name} must be an upper-case shell variable name`,
-        );
+        fail(`${where} must be an upper-case shell variable name`);
       }
-      if (typeof value === 'string') {
-        return { name, from: value, backendOnly: false };
+      if (typeof value === 'string') return { name, from: value, when: [] };
+
+      unknownKeys(value, VARIABLE_KEYS, where, fail);
+      if (typeof value.from !== 'string')
+        fail(`${where}.from must be a string`);
+      if (value.when !== undefined && value.backendOnly !== undefined) {
+        fail(`${where} sets both when and backendOnly; keep when`);
       }
 
-      unknownKeys(value, VARIABLE_KEYS, `boot.variables.${name}`, fail);
-      if (typeof value.from !== 'string') {
-        fail(`boot.variables.${name}.from must be a string`);
-      }
-      return {
-        name,
-        from: value.from,
-        backendOnly: Boolean(value.backendOnly),
-      };
+      const when =
+        value.when !== undefined
+          ? touchList(value.when, `${where}.when`, fail)
+          : value.backendOnly
+            ? BACKEND_TOUCHES
+            : [];
+      return { name, from: value.from, when };
     }),
     read: stringList(raw.read, 'boot.read', fail) ?? [],
+  };
+}
+
+/**
+ * Reads a boot command, which runs always or only when the diff needs it.
+ *
+ * @param entry - A command string, or `{ run, when }`
+ * @param where - Its location, for the message
+ * @param fail - Throws with the config's path
+ * @returns The command and what it is `when` needed, empty for always
+ */
+function command(entry, where, fail) {
+  if (typeof entry === 'string') return { run: entry, when: [] };
+
+  if (!isPlainObject(entry)) fail(`${where} must be a string or { run, when }`);
+  unknownKeys(entry, START_KEYS, where, fail);
+  if (typeof entry.run !== 'string' || !entry.run) {
+    fail(`${where}.run must be a string`);
+  }
+  // Leaving `when` out means always, as it does for a plain string or a variable.
+  return {
+    run: entry.run,
+    when:
+      entry.when === undefined
+        ? []
+        : touchList(entry.when, `${where}.when`, fail),
   };
 }
 
@@ -431,6 +481,81 @@ function resolvePrompts(raw = {}, fail) {
   }
 
   return { ...DEFAULT_PROMPTS, ...raw };
+}
+
+/**
+ * Resolves the questions every diff is asked about what it needs outside
+ * the repository.
+ *
+ * @param raw - The config's `outsideRepo`, replacing the defaults whole; `[]` asks none
+ * @param fail - Throws with the config's path
+ * @returns Each question with the paths that answer it yes by script
+ */
+function resolveOutsideRepo(raw, fail) {
+  if (raw === undefined) return DEFAULT_OUTSIDE_REPO;
+  if (!Array.isArray(raw)) fail('outsideRepo must be a list');
+
+  return raw.map((question, i) => {
+    const where = `outsideRepo[${i}]`;
+    if (!isPlainObject(question)) fail(`${where} must be an object`);
+    unknownKeys(question, QUESTION_KEYS, where, fail);
+    if (typeof question.ask !== 'string' || !question.ask) {
+      fail(`${where}.ask must be a string`);
+    }
+
+    const paths = question.paths ?? [];
+    if (
+      !Array.isArray(paths) ||
+      !paths.every((p) => p instanceof RegExp || typeof p === 'string')
+    ) {
+      fail(`${where}.paths must be a list of regexes or path prefixes`);
+    }
+    paths.forEach((p, j) => {
+      if (p instanceof RegExp)
+        assertPlainRegex(`${where}.paths[${j}]`, p, fail);
+    });
+
+    return { ask: question.ask, paths };
+  });
+}
+
+/**
+ * Lays the repository's checklist budget over the default one.
+ *
+ * @param raw - The config's `budget`
+ * @param fail - Throws with the config's path
+ * @returns The step cap for each kind of diff, and the minutes target
+ */
+function resolveBudget(raw = {}, fail) {
+  if (!isPlainObject(raw)) fail('budget must be an object');
+  unknownKeys(raw, Object.keys(DEFAULT_BUDGET), 'budget', fail);
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (!Number.isInteger(value) || value < 1) {
+      fail(`budget.${key} must be a whole number above 0`);
+    }
+  }
+
+  return { ...DEFAULT_BUDGET, ...raw };
+}
+
+/**
+ * Reads a list of what a change can need running.
+ *
+ * @param value - The raw value
+ * @param where - Its location, for the message
+ * @param fail - Throws with the config's path
+ * @returns The list
+ */
+function touchList(value, where, fail) {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every((item) => TOUCHES.includes(item))
+  ) {
+    fail(`${where} must be a non-empty list of ${TOUCHES.join(', ')}`);
+  }
+  return [...new Set(value)];
 }
 
 /**

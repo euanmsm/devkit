@@ -117,9 +117,14 @@ export function promptUnits(prompt) {
  * Builds a canned-reply function for one scenario.
  *
  * The scenario sets the `visible` sections, the `backend` and `human` entry
- * counts over `files`, the `claims` and `failClaims` ids, a `verify` verdict
+ * counts over `files`, the backend `claims`, the `humanClaims` and the
+ * `failClaims` ids, a `verify` verdict
  * function, `badFormat` human steps, the number of `stories`, and a `runner`
- * function naming who runs each human step, as `(entry, i) => 'agent' | 'human'`.
+ * function naming who runs each human step, as `(entry, i) => 'agent' | 'human'`,
+ * the `triage` answer, merged over a large behaviour change touching everything,
+ * the `prune` answer, which keeps everything by default, and a `setup` function
+ * giving each drafter's `{ setup, teardown }` from its label, and a `duplicates`
+ * function returning the drops for a duplicate pass, from its label and steps.
  *
  * A claim's checker upholds it unless its entry id is in `failClaims`. `verify`
  * is asked about every other unit one at a time, as `verify:<unit name>` with
@@ -141,9 +146,72 @@ export function prReplies(scenario = {}) {
     badFormat = false,
     stories = 1,
     runner = null,
+    triage = {},
+    humanClaims = [],
+    prune = { merge: [], drop: [] },
+    setup = () => ({ setup: '', teardown: '' }),
+    duplicates = () => [],
   } = scenario;
 
   return (label, prompt) => {
+    if (label === 'triage') {
+      return triage === null
+        ? null
+        : {
+            kind: 'behaviour',
+            size: 'large',
+            touches: ['database', 'api', 'page'],
+            outsideRepo: [],
+            ...triage,
+          };
+    }
+
+    if (label === 'draft:deploy') {
+      const answers = JSON.parse(
+        prompt
+          .split('The triage answered yes to these:\n')[1]
+          .split('\n\nWrite one step')[0],
+      );
+      return {
+        steps: answers.map((answer, i) => ({
+          title: `Confirm ${answer.ask}`,
+          when: i === 0 ? 'post-deploy' : 'pre-merge',
+          body: `**Where:** the dashboard\n\n**Expect:** set (${answer.files.join(', ')})`,
+          minutes: 5,
+        })),
+      };
+    }
+
+    if (label === 'draft:smoke') {
+      return {
+        steps: [
+          {
+            title: 'Load the moved page',
+            priority: 'blocking',
+            body: GOOD_HUMAN,
+            coversEntryIds: [],
+            minutes: 3,
+          },
+          {
+            title: 'A second smoke step',
+            priority: 'if-time',
+            body: GOOD_HUMAN,
+            coversEntryIds: [],
+            minutes: 2,
+          },
+          {
+            title: 'A third smoke step',
+            priority: 'if-time',
+            body: GOOD_HUMAN,
+            coversEntryIds: [],
+            minutes: 2,
+          },
+        ],
+        coveredByTests: [],
+        gaps: [],
+      };
+    }
+
     if (label === 'context-pack') {
       const keys = [...prompt.matchAll(/`(\w+)` — /g)].map((m) => m[1]);
       return {
@@ -207,6 +275,12 @@ export function prReplies(scenario = {}) {
     }
 
     if (label.startsWith('audit:')) return { entries: [] };
+    if (label === 'prune') return prune;
+    if (label.startsWith('duplicates:')) {
+      return {
+        drop: duplicates(label, JSON.parse(prompt.split('## The steps\n')[1])),
+      };
+    }
 
     if (label.startsWith('draft:backend')) {
       const entries = promptEntries(prompt);
@@ -220,6 +294,7 @@ export function prReplies(scenario = {}) {
             coversEntryIds: [entry.id],
             minutes: 2,
           })),
+        ...setup(label),
         coveredByTests: entries
           .filter((entry) => claims.includes(entry.id))
           .map((entry) => ({
@@ -249,16 +324,26 @@ export function prReplies(scenario = {}) {
     }
 
     if (label.startsWith('draft:')) {
+      const entries = promptEntries(prompt);
       return {
-        steps: promptEntries(prompt).map((entry, i) => ({
-          title: `See ${entry.id}`,
-          priority: i === 0 ? 'blocking' : 'if-time',
-          body: badFormat ? 'Open the page and look.' : GOOD_HUMAN,
-          coversEntryIds: [entry.id],
-          minutes: 3,
-          ...(runner ? { runner: runner(entry, i) } : {}),
-        })),
-        coveredByTests: [],
+        steps: entries
+          .filter((entry) => !humanClaims.includes(entry.id))
+          .map((entry, i) => ({
+            title: `See ${entry.id}`,
+            priority: i === 0 ? 'blocking' : 'if-time',
+            body: badFormat ? 'Open the page and look.' : GOOD_HUMAN,
+            coversEntryIds: [entry.id],
+            minutes: 3,
+            ...(runner ? { runner: runner(entry, i) } : {}),
+          })),
+        ...setup(label),
+        coveredByTests: entries
+          .filter((entry) => humanClaims.includes(entry.id))
+          .map((entry) => ({
+            entryId: entry.id,
+            testFile: 'src/a.test.ts',
+            assertion: `asserts ${entry.id}`,
+          })),
         gaps: [{ gap: 'screen reader output', why: 'needs a screen reader' }],
       };
     }
@@ -300,23 +385,6 @@ export function prReplies(scenario = {}) {
           },
           { trap: 'a one-off', why: 'why', instead: 'do that', units: 1 },
         ],
-      };
-    }
-
-    if (label.startsWith('convert:')) {
-      const id = label.slice('convert:'.length);
-      return {
-        steps: [
-          {
-            title: `Converted ${id}`,
-            priority: 'blocking',
-            body: GOOD_BACKEND,
-            coversEntryIds: [id],
-            minutes: 4,
-          },
-        ],
-        coveredByTests: [],
-        gaps: [],
       };
     }
 
