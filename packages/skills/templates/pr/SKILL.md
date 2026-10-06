@@ -151,8 +151,10 @@ Give the PR URL, and say:
 - **The report notes**, grouped by `kind`, one line each. They never reach
   the PR: `test gap` (a coverage claim that did not hold — raise it in code
   review), `deleted` (a step the checker removed as vacuous, covered or
-  unreachable), `pruned`, `duplicate`, `cut for budget` and `over budget`,
-  `no surface` and `not drafted`. Skip the section when there are none.
+  unreachable), `left out` (a step that failed checking twice or got no
+  verdict), `pruned`, `duplicate`, `cut for budget` and `over budget`,
+  `triage` (a move or tooling label the prepass contradicted), `no surface`
+  and `not drafted`. Skip the section when there are none.
 - **A boot block or section setup that failed verification**, if the
   checklist carries a warning. The steps after it rely on it, so it is
   published with the warning rather than dropped.

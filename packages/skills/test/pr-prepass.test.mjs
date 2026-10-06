@@ -510,17 +510,49 @@ describe('pr prepass — triage hints', () => {
       ...extra,
     });
 
-  it('unions what the touched layers need, and assumes anything for an untagged one', () => {
+  it('unions what the touched layers need, and gives an untagged one its section’s needs', () => {
     assert.deepEqual(hints({ touched: touched(['ui']) }).touches, ['page']);
     assert.deepEqual(hints({ touched: touched(['db', 'ui']) }).touches, [
       'database',
       'page',
     ]);
+    // An untagged backend layer needs the database and the API, never a page.
     assert.deepEqual(hints({ touched: touched(['misc']) }).touches, [
       'database',
       'api',
-      'page',
     ]);
+    assert.deepEqual(
+      triageHints({
+        touched: { layers: { web: ['x'] } },
+        layers: [{ key: 'web', section: 'frontend', touches: null }],
+        questions: [],
+        files: [],
+        added: [],
+        deleted: [],
+        moved: [],
+        importOnly: new Set(),
+      }).touches,
+      ['page'],
+    );
+  });
+
+  it('calls a diff of tests and files in no layer a tooling candidate', () => {
+    const tests = [/\.test\.ts$/];
+    const layered = {
+      ...touched([]),
+      layers: { ...touched([]).layers, api: ['src/a.ts', 'src/a.test.ts'] },
+    };
+
+    assert.equal(
+      hints({ touched: layered, files: ['src/a.test.ts', 'README.md'], tests })
+        .toolingCandidate,
+      true,
+    );
+    assert.equal(
+      hints({ touched: layered, files: ['src/a.ts', 'src/a.test.ts'], tests })
+        .toolingCandidate,
+      false,
+    );
   });
 
   it('calls a diff of near-identical moves and import rewiring a pure move candidate', () => {
@@ -850,11 +882,12 @@ describe('pr prepass — against a real branch', () => {
       assert.deepEqual(args.triage, {
         touches: ['database', 'api', 'page'],
         pureMoveCandidate: false,
+        toolingCandidate: false,
         outsideRepo: [],
       });
       assert.match(
         facts,
-        /## Triage hints\n\n- Needs running to test: database, api, page\n- Pure move candidate: no/,
+        /## Triage hints\n\n- Needs running to test: database, api, page\n- Pure move candidate: no\n- Tooling candidate: no/,
       );
       assert.match(
         facts,

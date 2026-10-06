@@ -100,8 +100,9 @@ const TRIAGE_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['ask', 'yes', 'why'],
+        required: ['question', 'ask', 'yes', 'why'],
         properties: {
+          question: { type: 'number' },
           ask: str,
           yes: { type: 'boolean' },
           why: str,
@@ -219,8 +220,8 @@ const SECTION_SCHEMA = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['gap', 'why'],
-        properties: { gap: str, why: str },
+        required: ['gap', 'why', 'cutForBudget'],
+        properties: { gap: str, why: str, cutForBudget: { type: 'boolean' } },
       },
     },
   },
@@ -583,9 +584,10 @@ Return:
   writes data or changes the schema, \`api\` when it changes an HTTP route or
   server handler, \`page\` when it changes a rendered page or component. Empty
   when it needs nothing running.
-- outsideRepo — one answer per question below: \`yes\`, why in one line, and
-  the changed files behind a yes.
-${bullets(questions, '- (no questions)')}
+- outsideRepo — one answer per question below: its \`question\` number, the
+  question as \`ask\`, \`yes\`, why in one line, and the changed files behind
+  a yes.
+${questions.map((ask, i) => `${i + 1}. ${ask}`).join('\n') || '- (no questions)'}
 
 Never run a command other than reading and searching files.`;
 }
@@ -799,7 +801,7 @@ The whole checklist has a budget of ${STEP_CAP()} steps and ${CONFIG.budget.minu
 minutes, and your share is about ${share} step(s). Cover several entries with one
 step wherever one action shows them all. If you still need more, keep the
 blocking steps and leave out the least risky if-time ones, listing each entry
-left out as a gap with why "cut for budget". The checklist is cut to budget
+left out as a gap with \`cutForBudget\` true. Every other gap has it false. The checklist is cut to budget
 after verification, if-time steps first.`;
 }
 
@@ -1932,12 +1934,18 @@ function settleTriage(answer) {
   const hinted = hints.touches ?? TOUCHES;
   const said = answer?.touches ?? [];
 
+  // Matched by number first, since a model can reword the question it copies.
+  const answerTo = (question, i) =>
+    (answer?.outsideRepo ?? []).find((a) => a.question === i + 1) ??
+    (answer?.outsideRepo ?? []).find(
+      (a) => String(a.ask ?? '').trim().toLowerCase() === question.ask.trim().toLowerCase(),
+    );
+
   const outsideRepo = CONFIG.outsideRepo
-    .map((question) => {
+    .map((question, i) => {
       const found = (hints.outsideRepo ?? []).find((a) => a.ask === question.ask);
-      const yes = (answer?.outsideRepo ?? []).find(
-        (a) => a.ask === question.ask && a.yes,
-      );
+      const reply = answerTo(question, i);
+      const yes = reply?.yes ? reply : null;
       if (!found && !yes) return null;
 
       return {
@@ -1948,11 +1956,32 @@ function settleTriage(answer) {
     })
     .filter(Boolean);
 
+  // A move or tooling label skips most of the checklist, so it must agree
+  // with what the prepass found; without hints there is nothing to check.
+  let kind = answer?.kind ?? 'behaviour';
+  let overruled = null;
+  if (
+    (kind === 'move' && hints.pureMoveCandidate === false) ||
+    (kind === 'tooling' && hints.toolingCandidate === false)
+  ) {
+    overruled = {
+      kind: 'triage',
+      item: `the triage called this ${KIND_NAMES[kind]}`,
+      why:
+        kind === 'move'
+          ? 'the prepass found changes that are not renames or import rewiring, so the full checklist was drafted'
+          : 'the prepass found changed files in the product that are not tests, so the full checklist was drafted',
+    };
+    log(`Triage overruled: ${overruled.item} — ${overruled.why}`);
+    kind = 'behaviour';
+  }
+
   return {
-    kind: answer?.kind ?? 'behaviour',
+    kind,
     size: answer?.size ?? 'large',
     touches: TOUCHES.filter((t) => hinted.includes(t) || said.includes(t)),
     outsideRepo,
+    overruled,
   };
 }
 
@@ -1994,7 +2023,7 @@ if (triage.kind === 'tooling' || touched.length === 0) {
   return summaryOnly(
     await summaryRun,
     why,
-    touched.length === 0 ? [] : [triageLine(0)],
+    touched.length === 0 ? [] : [triageLine(deployMinutes(deployOutcomes))],
     deployOutcomes,
   );
 }
@@ -2095,7 +2124,10 @@ function splitGaps(drafted) {
   const unique = drafted.filter(
     (gap, i, all) => all.findIndex((g) => g.gap === gap.gap && g.why === gap.why) === i,
   );
-  const cut = (gap) => /cut for budget/i.test(gap.why);
+  // The flag decides; the phrase is a fallback for a drafter that left it out.
+  const cut = (gap) =>
+    gap.cutForBudget === true ||
+    (gap.cutForBudget === undefined && /cut for budget/i.test(gap.why));
 
   return {
     gaps: unique.filter((gap) => !cut(gap)).map((gap) => ({ gap: oneLine(gap.gap), why: oneLine(gap.why) })),
@@ -2195,6 +2227,19 @@ function deployMarkdown(outcomes) {
     .join('\n');
 
   return `---\n\n## Deploy and Config Checks\n\n_For someone with access to the hosted dashboards. Pre-merge checks must hold before merging. Post-deploy ones have no box, since the merge cannot wait for them: run them once it is live._\n\n${list}`;
+}
+
+/**
+ * Sums the minutes the boxed, pre-merge deploy checks need; post-deploy ones
+ * happen after the merge.
+ *
+ * @param outcomes - The deploy checks' verification outcomes
+ * @returns Their estimated minutes
+ */
+function deployMinutes(outcomes) {
+  return outcomes
+    .filter((o) => o.fate === 'pass' && !/^\s*\*\*\[post-deploy\]/.test(o.unit.body))
+    .reduce((sum, o) => sum + (Number(o.unit.deploy?.minutes) || 0), 0);
 }
 
 /**
@@ -2307,7 +2352,7 @@ if (triage.kind === 'move') {
   const moveGaps = splitGaps(drafted?.gaps ?? []);
 
   const checklist = [
-    triageLine(totalMinutes(steps)),
+    triageLine(totalMinutes(steps) + deployMinutes(deployOutcomes)),
     boot.published.trim(),
     deployMarkdown(deployOutcomes),
     steps.length > 0
@@ -2914,6 +2959,7 @@ const gaps = drafterGaps.gaps;
 
 // What the author hears in the /pr report and the tester never sees.
 const reportNotes = [
+  ...(triage.overruled ? [triage.overruled] : []),
   ...unresolvedSurfaces.map((file) => ({
     kind: 'no surface',
     item: file,
@@ -3045,7 +3091,7 @@ sectionsMd.unshift(
     totalMinutes([
       ...keep('backend'),
       ...HUMAN_KEYS.flatMap((key) => keep(key)),
-    ]),
+    ]) + deployMinutes(deployVerified),
   ),
 );
 

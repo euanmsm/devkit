@@ -236,7 +236,7 @@ describe('pr workflow — triage', () => {
     assert.match(result.checklist, /needs api, page/);
     assert.match(
       find(calls, 'triage').prompt,
-      /- Hosting config\?\n- New service\?\n- New env var\?/,
+      /1\. Hosting config\?\n2\. New service\?\n3\. New env var\?/,
     );
 
     // The script's yes stands though the agent said no; the agent adds its own.
@@ -265,6 +265,107 @@ describe('pr workflow — triage', () => {
         result.checklist.indexOf('## Human Browser Checks'),
     );
     assert.equal(result.stats.deployChecks, 2);
+  });
+
+  it('matches outside-the-repo answers by number, though the model reworded the question', async () => {
+    const source = await prWorkflow('webapp', {
+      outsideRepo: [{ ask: 'Does it call a new external service?' }],
+    });
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        triage: {
+          outsideRepo: [
+            {
+              question: 1,
+              ask: 'Calls a new external service',
+              yes: true,
+              why: 'Stripe',
+              files: [],
+            },
+          ],
+        },
+      }),
+    });
+
+    assert.match(
+      find(calls, 'draft:deploy').prompt,
+      /"ask": "Does it call a new external service\?"/,
+    );
+  });
+
+  it('overrules a move or tooling label the prepass hints contradict, and says so', async () => {
+    const source = await prWorkflow('webapp');
+    for (const [kind, hint] of [
+      ['move', { pureMoveCandidate: false }],
+      ['tooling', { toolingCandidate: false }],
+    ]) {
+      const { result, calls } = await runWorkflow(
+        source,
+        prArgs(
+          { backend: true },
+          { triage: { touches: ['api'], outsideRepo: [], ...hint } },
+        ),
+        { reply: prReplies({ triage: { kind } }) },
+      );
+
+      assert.ok(
+        labels(calls).includes('context-pack'),
+        `${kind} ran the full pipeline`,
+      );
+      assert.match(result.checklist, /^_Triage: behaviour change/);
+      assert.ok(
+        result.reportNotes.some(
+          (n) =>
+            n.kind === 'triage' &&
+            n.item.includes(kind === 'move' ? 'pure move' : 'tooling only'),
+        ),
+      );
+    }
+
+    // A hint that agrees lets the label stand.
+    const { calls } = await runWorkflow(
+      source,
+      prArgs(
+        { backend: true },
+        {
+          triage: {
+            touches: ['api'],
+            outsideRepo: [],
+            pureMoveCandidate: true,
+          },
+        },
+      ),
+      { reply: prReplies({ triage: { kind: 'move' } }) },
+    );
+    assert.ok(labels(calls).includes('draft:smoke'));
+  });
+
+  it('counts pre-merge deploy check minutes in the triage line, not post-deploy ones', async () => {
+    const source = await prWorkflow('webapp', {
+      outsideRepo: [
+        { ask: 'A?', paths: ['a'] },
+        { ask: 'B?', paths: ['b'] },
+      ],
+    });
+    const { result } = await runWorkflow(
+      source,
+      prArgs(
+        { backend: true },
+        {
+          triage: {
+            touches: ['api'],
+            outsideRepo: [
+              { ask: 'A?', files: ['a'] },
+              { ask: 'B?', files: ['b'] },
+            ],
+          },
+        },
+      ),
+      { reply: prReplies({ backend: 1, triage: { outsideRepo: [] } }) },
+    );
+
+    // Two 2-minute backend steps, plus one 5-minute pre-merge check; the post-deploy one is not counted.
+    assert.match(result.checklist, /^_Triage: [^\n]*about 9 minutes_/);
   });
 
   it('writes no deploy checks when nothing lives outside the repo', async () => {
@@ -1245,12 +1346,13 @@ describe('pr workflow — config reaches the prompts', () => {
     assert.match(verify.prompt, /the worker loop intercept first/);
   });
 
-  it('leaves backend-only boot variables out when the diff needs only a page', async () => {
+  it('leaves backend-only boot variables out when the diff needs only a page, backend section or not', async () => {
     const source = await prWorkflow('webapp');
+    // The backend section is on, so only the triage's touches can keep TOKEN out.
     const { calls } = await runWorkflow(
       source,
       prArgs(
-        { frontend: true },
+        { backend: true, frontend: true },
         { triage: { touches: ['page'], outsideRepo: [] } },
       ),
       { reply: prReplies({ triage: { touches: [] } }) },
@@ -1258,7 +1360,7 @@ describe('pr workflow — config reaches the prompts', () => {
     const boot = find(calls, 'draft:boot').prompt;
 
     assert.match(boot, /\\\$PORT — the dev server port/);
-    assert.doesNotMatch(boot, /TOKEN/);
+    assert.doesNotMatch(boot, /TOKEN|DB_CONTAINER/);
     assert.doesNotMatch(find(calls, 'draft:frontend').prompt, /TOKEN/);
   });
 
@@ -1642,16 +1744,25 @@ describe('pr workflow — edges', () => {
     assert.match(result.checklist, /Cli 1 — See cli-1/);
   });
 
-  it('writes no stop line or note when the config has none', async () => {
+  it('writes no stop line or note when the config has none, though the stack booted', async () => {
     const source = await prWorkflow('webapp', {
-      boot: {},
+      boot: { start: ['npm run dev'] },
       localCiNote: '',
     });
-    const { result } = await runWorkflow(source, prArgs({ backend: true }), {
-      reply: prReplies(),
-    });
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true }),
+      {
+        reply: prReplies(),
+      },
+    );
 
-    assert.doesNotMatch(result.checklist, /When you're finished/);
+    assert.ok(labels(calls).includes('draft:boot'));
+    assert.match(result.checklist, /```bash\nnpm run dev\n```/);
+    assert.doesNotMatch(
+      result.checklist,
+      /When you're finished|stop the stack/,
+    );
     assert.match(
       result.checklist,
       /### Local CI\n\n- \[ \] Review agents \(run locally before merge\)\n- \[ \] Full test suite passes \(unit, integration, e2e — run locally\)$/,
@@ -1900,6 +2011,44 @@ describe('pr workflow — budget', () => {
     // Four 3-minute steps: one if-time step goes to bring 12 minutes under 10.
     assert.equal(result.stats.cutForBudget, 1);
     assert.equal(result.stats.steps, 3);
+  });
+});
+
+describe('pr workflow — budget-cut gaps', () => {
+  it('keeps a gap the drafter flagged as cut for budget off the checklist, whatever its wording', async () => {
+    const source = await prWorkflow('webapp');
+    const replies = prReplies({ human: 1 });
+    const { result } = await runWorkflow(source, prArgs({ frontend: true }), {
+      reply: (label, prompt) => {
+        const reply = replies(label, prompt);
+        if (label === 'draft:frontend') {
+          reply.gaps = [
+            {
+              gap: 'the empty state',
+              why: 'left out to stay in budget',
+              cutForBudget: true,
+            },
+            {
+              gap: 'screen reader output',
+              why: 'needs a screen reader',
+              cutForBudget: false,
+            },
+          ];
+        }
+        return reply;
+      },
+    });
+
+    assert.match(
+      result.checklist,
+      /- screen reader output — needs a screen reader/,
+    );
+    assert.doesNotMatch(result.checklist, /the empty state/);
+    assert.ok(
+      result.reportNotes.some(
+        (n) => n.kind === 'cut for budget' && n.item === 'the empty state',
+      ),
+    );
   });
 });
 

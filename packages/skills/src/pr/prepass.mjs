@@ -23,6 +23,16 @@ const CODE_FILE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|vue|svelte)$/;
 
 const STORY_FILE = /\.stories\.[cm]?[jt]sx?$/;
 
+/**
+ * What a layer with no `touches` is taken to need: the backend section tests
+ * against the database and the API, a human section against a page.
+ *
+ * @param section - The layer's section key
+ * @returns The touches
+ */
+const SECTION_TOUCHES = (section) =>
+  section === 'backend' ? ['database', 'api'] : ['page'];
+
 /** The rename similarity, in percent, at which a moved file counts as unchanged. */
 const MOVE_SIMILARITY = 90;
 
@@ -150,6 +160,7 @@ export async function prPrepass(
     deleted,
     moved,
     importOnly: importOnlyFiles(diffText),
+    tests: config.tests,
   });
 
   const factsPath = path.join(scratchDir, 'pr-qa-facts.tmp.md');
@@ -384,13 +395,16 @@ export function triageHints({
   deleted,
   moved,
   importOnly,
+  tests = [],
 }) {
   const touches = new Set();
 
   for (const layer of layers) {
     if (touched.layers[layer.key].length === 0) continue;
-    // A layer that does not say what it needs could need anything.
-    for (const touch of layer.touches ?? TOUCHES) touches.add(touch);
+    // A layer that does not say is taken to need what its section tests with.
+    for (const touch of layer.touches ?? SECTION_TOUCHES(layer.section)) {
+      touches.add(touch);
+    }
   }
 
   const movedTo = new Set(moved.map(({ to }) => to));
@@ -419,9 +433,17 @@ export function triageHints({
     }))
     .filter((answer) => answer.files.length > 0);
 
+  // Tests alone, or files in no layer, change nothing that runs in the product.
+  const toolingCandidate = files.every(
+    (file) =>
+      isTest(file, tests) ||
+      !layers.some((layer) => touched.layers[layer.key].includes(file)),
+  );
+
   return {
     touches: TOUCHES.filter((touch) => touches.has(touch)),
     pureMoveCandidate,
+    toolingCandidate,
     outsideRepo,
   };
 }
@@ -837,6 +859,7 @@ export function renderFacts({
         '## Triage hints\n',
         `- Needs running to test: ${triage.touches.join(', ') || 'nothing'}`,
         `- Pure move candidate: ${triage.pureMoveCandidate ? `yes — every change is a rename at least ${MOVE_SIMILARITY}% similar or an import rewiring; read a near-identical rename's own diff before calling it a move` : 'no'}`,
+        `- Tooling candidate: ${triage.toolingCandidate ? 'yes — every changed file is a test or in no layer' : 'no'}`,
         ...answers,
       ].join('\n'),
     );

@@ -116,9 +116,12 @@ is triaged too, and keeps its deploy checks.
 
 Otherwise a Sonnet triage agent runs first, beside the summary. It can only add
 to the prepass hints: what the diff touches and which outside-the-repo questions
-are yes. A **tooling-only** diff then gets the same summary-only checklist, plus
-any deploy checks. A **pure move** gets a sized boot block, at most
-`budget.move` smoke steps (checked as steps that must behave as they do on
+are yes. It answers the questions by number, so a reworded question still
+counts. A `move` or `tooling` label must agree with the prepass's pure-move and
+tooling hints; one they contradict is overruled to a behaviour change, with a
+`triage` report note. A **tooling-only** diff then gets the same summary-only
+checklist, plus any deploy checks. A **pure move** gets a sized boot block, at
+most `budget.move` smoke steps (checked as steps that must behave as they do on
 main), any deploy checks, and a Local CI box for the type check and build; none
 of the stages below run. A **behaviour change** runs them all:
 
@@ -388,8 +391,9 @@ nothing on.
 
 A layer may also say what a change in it needs running to test, with `touches`:
 any of `database`, `api` and `page`. The triage starts from these, and the boot
-block starts only what they need. A layer without `touches` could need anything,
-so the whole boot runs.
+block starts only what they need. A layer without `touches` is taken to need
+what its section tests with: `database` and `api` for the backend section,
+`page` for a human one.
 
 ```js
 { key: 'ui', title: 'Frontend', paths: ['src/components/'], section: 'frontend', touches: ['page'] },
