@@ -56,17 +56,19 @@ SCRATCH_DIR=<session scratchpad directory>
 npx --no-install skills pr prepass --scratch "$SCRATCH_DIR"
 ```
 
-It fetches and resolves the base (preferring `origin/<base>`, which is what
-GitHub diffs against), writes the diff, per-file patches and a facts file to the
-scratch folder, sorts the changed files into layers, and prints the workflow's
-args as JSON, including the `headSha` it diffed. When it prints `"ahead": 0`,
-the branch has no commits over its base: tell the user there is nothing to open
-a PR for, and stop.
+It finds the base (the branch this one was cut from, see below), fetches it,
+writes the diff, per-file patches and a facts file to the scratch folder, sorts
+the changed files into layers, and prints the workflow's args as JSON, including
+the `headSha` it diffed. When it prints `"ahead": 0`, the branch has no commits
+over its base: tell the user there is nothing to open a PR for, and stop.
 
-To use a different base, pass `--base <branch>`; it wins over everything
-else.{{#stackBase}} If `gh stack view` fails or answers in a shape the prepass cannot
-read, it stops rather than guess, and says to pass `--base`. Ask the user which
-branch sits below this one, then re-run the prepass with it.{{/stackBase}}
+Before anything else, tell the user the base and how it was found, from `base`
+and `baseSource` — for example `Opening against cur-1722-login (PR #992)` — and
+pass on every line in `baseWarnings`.
+
+To use a different base, pass `--base <branch>`; it wins over everything else.
+If the prepass stops because it cannot tell which branch sits below this one,
+ask the user, then re-run it with `--base`.
 
 The layers it sorts files into:
 

@@ -27,7 +27,7 @@ skill rather than two:
   request when you asked for a PR review
 
 ```
-/{{name}}                     # current branch vs {{baseBranch}} → report
+/{{name}}                     # current branch vs its parent branch → report
 /{{name}} <path> [<path>...]  # a file, files, or a module → report
 /{{name}} pr                  # current branch's PR → report + pending GitHub review
 /{{name}} pr 793              # a named PR, with its branch checked out
@@ -40,7 +40,7 @@ pull request unasked.
 - **What goes in** — a branch diff, or named files as they stand
 
 ```
-/{{name}}                     # current branch vs {{baseBranch}} → report
+/{{name}}                     # current branch vs its parent branch → report
 /{{name}} <path> [<path>...]  # a file, files, or a module → report
 ```
 
@@ -91,32 +91,32 @@ to run `gh pr checkout <n>` and start again — otherwise the review would read
 one branch and post to another PR. Then use `PR_BASE` as the base below, so a
 stacked PR is diffed against the branch it merges into.
 {{/githubReview}}
-`TARGET` is the current branch, or `HEAD` when detached. The base is
-`{{baseBranch}}`{{#githubReview}} (`PR_BASE` in `pr` mode){{/githubReview}}: the local branch or its
-`origin/` copy, whichever `TARGET` left later. A local copy that was never
-pulled would otherwise add every commit that landed upstream since to the diff:
+`TARGET` is the current branch, or `HEAD` when detached. The base is the
+branch's **parent**, never `{{baseBranch}}` by default: a stacked branch is
+reviewed against the branch below it, so its parents' changes stay out of the
+review. `skills base` finds it — {{#githubReview}}`PR_BASE` in `pr` mode (left empty otherwise, which means "find
+it"), else {{/githubReview}}the base of the
+branch's open PR, the branch below it in a `gh stack`, or the parent git
+recorded when the branch was created, and `{{baseBranch}}` only when none of
+those answers. It compares against the local copy or `origin/`, whichever the
+branch left later, so a copy that was never pulled does not add every commit
+that landed upstream since:
 
 ```bash
 TARGET="${BRANCH:-HEAD}"
-BASE_BRANCH="{{baseBranch}}"{{#githubReview}}              # "$PR_BASE" in pr mode{{/githubReview}}
-BASE_REF=""
-BASE=""
-for REF in "refs/heads/$BASE_BRANCH" "refs/remotes/origin/$BASE_BRANCH"; do
-  git rev-parse --verify --quiet "$REF" >/dev/null || continue
-  FORK="$(git merge-base "$TARGET" "$REF" 2>/dev/null)"
-  if [ -z "$BASE" ] || { [ -n "$FORK" ] && git merge-base --is-ancestor "$BASE" "$FORK"; }; then
-    BASE_REF="${REF#refs/heads/}"
-    BASE_REF="${BASE_REF#refs/remotes/}"
-    BASE="$FORK"
-  fi
-done
+BASE_VARS="$(npx --no-install skills base{{#githubReview}} --base "${PR_BASE:-}"{{/githubReview}})" && eval "$BASE_VARS" && BASE="$FORK"
+echo "base: $BASE_BRANCH ($BASE_SOURCE) · ref: $BASE_REF · fork: $BASE"
 ```
 
-Abort with a one-line reason if:
+It prints `BASE_BRANCH`, `BASE_REF` (the copy compared against), `FORK` (the
+commit the branch left it at) and `BASE_SOURCE` (how it was found). If it exits
+non-zero, stop and show the user what it printed: it names the problem, such as
+being on `{{baseBranch}}` itself or a parent branch that is gone. Pass on any
+`warning:` line it prints.
 
-- `TARGET == BASE_BRANCH` → `Cannot review <BASE_BRANCH> directly.`
-- `BASE_REF` is empty → `No <BASE_BRANCH> branch, locally or as origin/<BASE_BRANCH>. Fetch it first.`
-- `BASE` is empty → `Cannot determine merge base of <TARGET> with <BASE_REF>.`
+**Tell the user the base before going on**, for example
+`Reviewing against cur-1722-login (PR #992)`. A wrong base is the one mistake
+that makes a whole review wrong, so it must be visible before any agent starts.
 
 **Check for uncommitted changes.** Diff mode reviews the commits, but the
 agents and the tools read the files on disk, so edits not yet committed make
@@ -160,7 +160,7 @@ git -c core.quotePath=false diff --name-only "$BASE" "$TARGET"   # → CHANGED_F
 git diff --stat "$BASE" "$TARGET"                                  # → DIFF_STAT
 ```
 
-Abort if `CHANGED_FILES` is empty: `Branch has no changes vs <BASE_REF>.`
+Abort if `CHANGED_FILES` is empty: `Branch has no changes vs <BASE_BRANCH>.`
 
 **Split the patch per file.** Reviewers each need three files out of the diff,
 so handing every agent one giant patch means loading it a dozen times over.
@@ -242,6 +242,7 @@ Workflow({
 
     // diff mode
     target: TARGET, base: BASE,
+    baseBranch: BASE_BRANCH, baseSource: BASE_SOURCE,   // printed in the report header
     changedFiles: CHANGED_FILES, diffStat: DIFF_STAT,
     patchDir: PATCH_DIR, largeDiff: LARGE_DIFF,
     treeState: TREE_STATE,          // printed in the report header
@@ -316,6 +317,11 @@ first batch, `event` omitted so it stays `PENDING`, then every later comment
 appended one at a time via `addPullRequestReviewThread`. Never
 delete-and-repost. **Never submit** — the review waits until the user says so.
 
+**Only "This branch" and "Carried over" findings go on the PR.** The report's
+"Not this branch" section is for the author, not the PR: those problems predate
+the branch, and posting them asks the PR to fix what it never touched. The
+workflow's `prBody` already says how many there are.
+
 Two constraints belong to this step:
 
 - **A comment can only anchor to a line that appears in the diff.** A finding on
@@ -368,7 +374,9 @@ is:
 ```
 Code review complete — <n> files, <result.stats.reviewAgents> review agents, <result.stats.verifyAgents> verifiers.
 
-Findings: <C critical / H high / M medium / L low><, n coverage gaps>
+Base: <BASE_BRANCH> (<BASE_SOURCE>)
+Findings: This branch <n> · Carried over <n> · Not this branch <n><, n coverage gaps>   (from result.stats.byScope)
+          <C critical / H high / M medium / L low> across all of them
 Verification: <n> sent, <n> confirmed/amended, <n> refuted and dropped.
 
 Report: <result.suggestedPath>
@@ -382,6 +390,12 @@ If `result.stats.splitVerdicts` is above zero, add a line: that many findings
 came back with two different verdicts because two bundles raised them, each was
 kept unless every verifier refuted it, and the report says so at each one. Do not average that away in the summary
 — a split verdict is the one place the review disagreed with itself.
+
+If the report's **Not this branch** section has **Suggested Linear issues**,
+list their titles and offer to create them as Linear issues, one per finding,
+so each gets its own PR. Create them only if the user says yes, through the
+Linear tools if they are connected (otherwise give the user the text to
+paste). Never create them unasked.
 
 If `result.bundlesDied` is not empty, add a line naming those bundles: their
 reviewer returned nothing, so their lenses were not reviewed. If `DIRTY` was
@@ -485,8 +499,9 @@ other bundles are still reading. Dedup runs afterwards, with three
 consequences:
 
 - **A cross-bundle twin is verified twice.** Twins are findings from different
-  bundles under the same lens, on the same file, within two lines of each
-  other. Two findings from one reviewer are never merged. The report says how
+  bundles on the same file within two lines of each other, whichever lens
+  raised them (or under the same lens only, with `dedupe: { by: 'lens' }`).
+  Two findings from one reviewer are never merged. The report says how
   many twins there were, so the cost is measured rather than guessed.
 - **Each verdict applies to its own finding.** A twin is dropped only when
   every verifier refuted it, so a refuted nit can never take a confirmed
@@ -494,9 +509,18 @@ consequences:
   survived. A disagreement is never hidden — the finding is marked **Split
   verdict** wherever it appears, and `result.stats.splitVerdicts` counts them.
 - **The verify cap is per bundle.** Twelve findings per bundle in severity
-  order. Anything over the cap is kept and marked unverified.
+  order, with `outside` findings last so they never crowd out the branch's
+  own. Anything over the cap is kept and marked unverified.
 
-### Diff mode adds two things
+### Diff mode adds three things
+
+**Scope.** Every finding says whose problem it is: `branch` (the branch caused
+it), `carried` (it was already there, in code the branch rewrote or moved) or
+`outside` (it was already there, in code the branch left alone). Reviewers
+still report what they find outside the branch, and verifiers relabel a wrong
+scope rather than refuting an old problem, so nothing real is lost. The report
+gives each scope its own section, and only the branch's own findings can lead
+it.
 
 **Coverage analysis.** The test lenses each get a second job: find what the
 branch should have covered and did not. A coverage gap only means something

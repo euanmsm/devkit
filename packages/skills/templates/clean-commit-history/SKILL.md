@@ -19,7 +19,10 @@ single byte**. Invoking this skill authorises the `git reset` / `git add` /
 `git commit` sequence below for THIS operation only, overriding any standing
 rule against touching the index. It does **not** authorise any push.
 
-Base branch: `$ARGUMENTS` if given, otherwise `{{baseBranch}}`.
+Base branch: `$ARGUMENTS` if given, otherwise the branch's **parent** — the
+branch it was cut from, so a stacked branch only rewrites its own commits and
+never its parents'. `{{baseBranch}}` is the base only when nothing names a
+parent.
 
 ## Non-negotiable guarantees
 
@@ -44,21 +47,24 @@ out literally in every later command and in the script.
 Run from the repository root:
 
 ```bash
-BASE=<base branch>
-git rev-parse --verify --quiet "$BASE^{commit}" || echo "ABORT: no branch $BASE"
+BASE_VARS="$(npx --no-install skills base --base "$ARGUMENTS")" && eval "$BASE_VARS"
+echo "base: $BASE_BRANCH ($BASE_SOURCE)"
 git rev-parse --abbrev-ref HEAD
 git status --porcelain
 git rev-parse HEAD
-FORK="$(git merge-base "$BASE" HEAD)"
-UPSTREAM_FORK="$(git merge-base "refs/remotes/origin/$BASE" HEAD 2>/dev/null)"
-if [ -n "$UPSTREAM_FORK" ] && git merge-base --is-ancestor "$FORK" "$UPSTREAM_FORK" 2>/dev/null; then
-  FORK="$UPSTREAM_FORK"
-fi
 echo "$FORK"
 ```
 
-- Abort if the base branch does not exist.
-- Abort if on the base branch itself.
+`skills base` finds the parent: the branch given, else the base of the
+branch's open PR, the branch below it in a `gh stack`, or the parent git
+recorded when the branch was created, and `{{baseBranch}}` only when none of
+those answers. It prints `BASE_BRANCH`, `BASE_REF`, `FORK` and `BASE_SOURCE`
+(how it found the parent). Tell the user the base and its source before going
+on, and pass on any `warning:` line.
+
+- Abort if `skills base` exits non-zero — the base branch does not exist, the
+  branch is the base itself, or its parent is gone. Show the user what it
+  printed.
 - Abort if the working tree is dirty (`git status --porcelain` non-empty). The
   user manages their own uncommitted work — never stash it.
 - `ORIGINAL_HEAD` is the full SHA from `git rev-parse HEAD`. This is the
@@ -67,10 +73,9 @@ echo "$FORK"
   stacks onto `FORK`, never onto the base's tip: if the base has moved on,
   resetting onto its tip would make the new commits revert everything it gained
   since. Rebasing onto the newer base is a separate step for the user, not part
-  of this skill. When `origin/<base>` is further along the branch's history than
-  the local base, as it is when the local copy was never pulled, `FORK` comes
-  from `origin/<base>`, so commits that landed upstream are not folded into the
-  branch's own.
+  of this skill. `FORK` comes from the local base or `origin/<base>`, whichever
+  the branch left later, so commits that landed upstream are not folded into
+  the branch's own.
 
 Then check what runs on every commit:
 

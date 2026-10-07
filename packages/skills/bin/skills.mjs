@@ -4,12 +4,14 @@
 // ============================================================================
 //
 // `skills sync` writes the configured skills; `skills check` fails when the
-// skills on disk have drifted from the config; `skills prepass` and `skills pr`
-// do the code review's and the PR skill's shell-side work; `skills qa-gate`
-// runs the Manual QA gate in CI.
+// skills on disk have drifted from the config; `skills base` names the branch a
+// branch skill compares against; `skills prepass` and `skills pr` do the code
+// review's and the PR skill's shell-side work; `skills qa-gate` runs the Manual
+// QA gate in CI.
 
 import { repoRoot } from '@euanmsm/devkit-core';
 
+import { baseCommand } from '../src/base-cli.mjs';
 import { check } from '../src/check.mjs';
 import { prCommand, qaGate } from '../src/pr/cli.mjs';
 import { prepass } from '../src/review/cli.mjs';
@@ -18,6 +20,7 @@ import { sync } from '../src/sync.mjs';
 const USAGE = `Usage:
   skills sync [--force]         write the skills named in .devkit/skills.json
   skills check                  fail when the skills on disk differ from the config
+  skills base [--base <b>]      the branch this one is compared against, and why
   skills prepass …              the code review's prework, run by the skill itself
   skills pr prepass|publish …   the PR skill's prework and publishing
   skills qa-gate reset|status   the Manual QA gate, run by its GitHub workflow`;
@@ -55,6 +58,8 @@ try {
     }
 
     console.log('Skills are in step with .devkit/skills.json.');
+  } else if (command === 'base') {
+    process.exitCode = baseCommand(rest, root);
   } else if (command === 'prepass') {
     process.exitCode = await prepass(rest, root);
   } else if (command === 'pr') {

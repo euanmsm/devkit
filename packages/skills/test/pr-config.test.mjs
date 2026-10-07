@@ -614,7 +614,8 @@ describe('pr skill — sync and check', () => {
       skill,
       /summary and a verified Manual QA checklist \(Agent-Runnable Backend Checks, Human Browser Checks, Storybook Review Checks\)/,
     );
-    assert.match(skill, /on a branch in a `gh stack`/);
+    assert.match(skill, /the branch below it in a `gh stack`/);
+    assert.match(skill, /Never open a stacked PR against `main`/);
     assert.match(
       skill,
       /\| Data Model \| Agent-Runnable Backend Checks \| `\(\^\\\|\/\)db\/migrations\/` \|/,
@@ -647,7 +648,7 @@ describe('pr skill — sync and check', () => {
     assert.match(scalar, /\(Agent''s Checks, Operator''s TUI Checks\)/);
   });
 
-  it('writes a plain base rule and links a traps file kept elsewhere', async () => {
+  it('names the shared base branch in the base rule and links a traps file kept elsewhere', async () => {
     const root = prRepo('sales', {
       overrides: { traps: 'docs/qa/TRAPS.md' },
       settings: { skillsDir: '.agents/skills', baseBranch: 'develop' },
@@ -658,7 +659,7 @@ describe('pr skill — sync and check', () => {
       'utf8',
     );
 
-    assert.match(skill, /The base is always `develop`\./);
+    assert.match(skill, /`develop` only when none of those answers/);
     assert.match(skill, /\(\.\.\/\.\.\/\.\.\/docs\/qa\/TRAPS\.md\)/);
     assert.ok(existsSync(join(root, 'docs/qa/TRAPS.md')));
     assert.match(skill, /Human TUI Checks\)/);

@@ -52,13 +52,14 @@ It works in one loop, the same for one file or a whole branch:
 
 1. **Runs the CLI once, as JSON.** `npx --no-install dead-code --json`, with
    paths after `--` to filter the result, or `dead-code branch <base> --json`
-   for what the branch newly left dead. The base is `origin/<baseBranch>`, or
-   the local `<baseBranch>` when there is no origin copy. Knip always analyses
-   the whole workspace; paths only filter what comes back. Every path in the
-   report is from the repository root, and a path typed from any folder is tried
-   against the current folder, then the root, so a report's `file` works
-   anywhere. An exit 2 with a JSON report means knip failed part of the way: the
-   skill reports its `errors` rather than findings it cannot trust.
+   for what the branch newly left dead. The base is the commit where the branch
+   left its parent branch, so a stacked branch is checked for its own dead code
+   only. See [How the base branch is found](base-branch.md). Knip always
+   analyses the whole workspace; paths only filter what comes back. Every path
+   in the report is from the repository root, and a path typed from any folder
+   is tried against the current folder, then the root, so a report's `file`
+   works anywhere. An exit 2 with a JSON report means knip failed part of the
+   way: the skill reports its `errors` rather than findings it cannot trust.
 2. **Keeps to the targets.** A finding outside what it was asked about is not
    reported. `branch` findings are the exception: an export the branch left dead
    in a file it never touched is still the branch's doing.

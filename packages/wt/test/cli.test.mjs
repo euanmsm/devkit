@@ -140,6 +140,21 @@ describe('creating a worktree', () => {
       git(join(base, 'app-wt', 'f'), 'log', '-1', '--format=%s'),
       'side',
     );
+    assert.equal(
+      git(root, 'config', '--get', 'branch.forked.vscode-merge-base'),
+      'side',
+    );
+  });
+
+  test('records no parent for a branch forked from a detached HEAD', () => {
+    const { root } = fixture();
+    git(root, 'checkout', '-q', '--detach');
+
+    wt(root, ['d', '-b', 'loose']);
+
+    assert.throws(() =>
+      git(root, 'config', '--get', 'branch.loose.vscode-merge-base'),
+    );
   });
 
   test('makes a detached worktree when asked', () => {

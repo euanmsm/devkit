@@ -151,7 +151,7 @@ export function resolveReviewConfig(
 function resolveDedupe(raw = {}, fail) {
   unknownKeys(raw, ['by', 'lines'], 'dedupe', fail);
 
-  const dedupe = { by: 'lens', lines: 2, ...raw };
+  const dedupe = { by: 'location', lines: 2, ...raw };
   if (!DEDUPE_BY.includes(dedupe.by)) {
     fail(`dedupe.by must be one of ${DEDUPE_BY.join(', ')}`);
   }

@@ -7,11 +7,11 @@
 // changed file, who imports each one, its stories and the seed files to read.
 // Writes them to the scratch folder and prints the workflow's args.
 
-import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import path from 'node:path';
 
+import { resolveBase, runCommand } from '../base.mjs';
 import { findChunkPath, splitPatches } from '../review/prepass.mjs';
 import { TOUCHES } from './defaults.mjs';
 
@@ -78,8 +78,8 @@ const STATUS_ARGS = ['diff', '--name-status', '-z', '--find-renames'];
  *
  * @param root - The repository root
  * @param config - The resolved PR config
- * @param options - `scratch` folder, `baseBranch` from the shared settings, an optional `base` override, and `run`/`rg` stand-ins for tests
- * @returns The args, with the `headSha` publish checks against GitHub, or `{ ahead: 0, base, branch }` when the branch has nothing to open a PR for
+ * @param options - `scratch` folder, `baseBranch` from the shared settings, an optional `base` override (otherwise the branch's parent), and `run`/`rg` stand-ins for tests
+ * @returns The args, with the `headSha` publish checks against GitHub and how the base was found, or `{ ahead: 0, base, baseSource, branch }` when the branch has nothing to open a PR for
  * @throws When the branch is detached or the base cannot be found
  */
 export async function prPrepass(
@@ -92,24 +92,17 @@ export async function prPrepass(
   const branch = git('branch', '--show-current').trim();
   if (!branch) throw new Error('HEAD is detached; check out the branch first.');
 
-  const base =
-    override ??
-    (config.base === 'stack'
-      ? (stackParent(run, root, branch) ?? baseBranch)
-      : baseBranch);
-  try {
-    // Offline, or with no remote, the refs already here have to do.
-    git('fetch', '--quiet', 'origin', base);
-  } catch {
-    // Fall through to the refs on disk.
-  }
-  const baseRef = resolveRef(git, base);
+  const {
+    base,
+    fork: mergeBase,
+    source: baseSource,
+    warnings: baseWarnings,
+  } = resolveBase(root, { explicit: override, baseBranch, run });
 
-  const ahead = Number(git('rev-list', '--count', `${baseRef}..HEAD`).trim());
-  if (ahead === 0) return { ahead: 0, base, branch };
+  const ahead = Number(git('rev-list', '--count', `${mergeBase}..HEAD`).trim());
+  if (ahead === 0) return { ahead: 0, base, baseSource, branch };
 
   const headSha = git('rev-parse', 'HEAD').trim();
-  const mergeBase = git('merge-base', baseRef, 'HEAD').trim();
   const scratchDir = path.resolve(root, scratch);
   mkdirSync(scratchDir, { recursive: true });
 
@@ -169,6 +162,7 @@ export async function prPrepass(
     renderFacts({
       branch,
       base,
+      baseSource,
       touched,
       deleted,
       moved,
@@ -186,6 +180,8 @@ export async function prPrepass(
   return {
     branch,
     base,
+    baseSource,
+    baseWarnings,
     ahead,
     headSha,
     diffStat,
@@ -205,70 +201,6 @@ export async function prPrepass(
     scratchDir,
     agentCap: agentCap(),
   };
-}
-
-/**
- * Finds the branch directly below this one in a `gh stack`.
- *
- * @param run - Runs a command and returns its stdout
- * @param root - The repository root
- * @param branch - The current branch
- * @returns The parent branch, or null when the branch is in no stack or at its bottom
- * @throws When `gh stack view` fails or answers in a shape it cannot read, since guessing the base would retarget a mid-stack PR
- */
-export function stackParent(run, root, branch) {
-  const override = 'pass --base <branch> to name the base yourself';
-  let stack;
-
-  try {
-    stack = JSON.parse(run('gh', ['stack', 'view', '--json'], root));
-  } catch (error) {
-    const detail = String(error.stderr ?? '').trim() || error.message;
-    if (/not (in|part of) a stack/i.test(detail)) return null;
-    throw new Error(
-      `Could not read the stack with \`gh stack view --json\` (${detail.split('\n')[0]}); ${override}.`,
-    );
-  }
-
-  const list = Array.isArray(stack) ? stack : stack?.branches;
-  if (!Array.isArray(list)) {
-    throw new Error(
-      `\`gh stack view --json\` answered in a shape this package cannot read; ${override}.`,
-    );
-  }
-
-  const names = list.map((entry) =>
-    typeof entry === 'string' ? entry : (entry?.name ?? entry?.branch),
-  );
-  const index = names.indexOf(branch);
-
-  return index > 0 ? names[index - 1] : null;
-}
-
-/**
- * Finds the ref to diff against, preferring the remote branch GitHub diffs against.
- *
- * A local base branch is often weeks behind, and diffing against it would
- * pull every commit merged upstream since into the checklist.
- *
- * @param git - Runs git and returns its stdout
- * @param base - The base branch name
- * @returns A ref git can resolve
- * @throws When neither `origin/<branch>` nor the branch exists
- */
-function resolveRef(git, base) {
-  for (const ref of [`origin/${base}`, base]) {
-    try {
-      git('rev-parse', '--verify', '--quiet', `${ref}^{commit}`);
-      return ref;
-    } catch {
-      // Try the next candidate.
-    }
-  }
-
-  throw new Error(
-    `The base branch "${base}" does not exist locally or on origin.`,
-  );
 }
 
 /**
@@ -774,6 +706,7 @@ export function globToRegExp(glob) {
 export function renderFacts({
   branch,
   base,
+  baseSource,
   touched,
   deleted,
   moved = [],
@@ -819,7 +752,7 @@ export function renderFacts({
         );
 
   const sections = [
-    `# PR QA facts — \`${branch}\` against \`${base}\``,
+    `# PR QA facts — \`${branch}\` against \`${base}\`${baseSource ? ` (${baseSource})` : ''}`,
     'Written by `skills pr prepass`. Paths are exact; the lists are what a script could find, not a limit on where to look.',
     `## Changed files by layer\n\n${layerBlocks.join('\n\n') || '(no file matched a layer)'}`,
     `## Changed files in no layer\n\n${list(touched.unmatched)}`,
@@ -875,24 +808,6 @@ export function renderFacts({
  */
 function agentCap() {
   return Math.min(16, Math.max(4, availableParallelism() - 2));
-}
-
-/**
- * Runs a command and returns its stdout.
- *
- * @param command - The program
- * @param args - Its arguments
- * @param cwd - The working directory
- * @returns The stdout text
- * @throws When the command exits non-zero
- */
-function runCommand(command, args, cwd) {
-  return execFileSync(command, args, {
-    cwd,
-    encoding: 'utf8',
-    maxBuffer: 512 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
 }
 
 /**

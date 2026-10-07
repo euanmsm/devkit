@@ -26,6 +26,9 @@ const str = { type: 'string' };
 
 const SEVERITIES = ['critical', 'high', 'medium', 'low'];
 
+// Whose problem a finding is: the branch's, old in rewritten code, or old in untouched code.
+const SCOPES = ['branch', 'carried', 'outside'];
+
 // One finding's fields, shared by the reviewer's output and a verifier's correction.
 const FINDING_FIELDS = {
   id: str,
@@ -39,6 +42,7 @@ const FINDING_FIELDS = {
   evidence: str,
   severity: { enum: SEVERITIES },
   convention: { type: ['string', 'null'] },
+  scope: { enum: SCOPES },
 };
 
 const FINDINGS = {
@@ -390,7 +394,7 @@ function buildReconPrompt(input, allFiles, proposal) {
 
   const sourceBlock = isDiff
     ? `## The diff
-Branch \`${input.target}\` against \`${input.base}\`.
+Branch \`${input.target}\` against ${baseName(input)}.
 Stat: ${input.diffStat}
 Per-file patches mirror the file tree: the patch for a changed file is at
 \`${input.patchDir}/<path>.patch\`, so you never load the whole diff to find three files.${
@@ -568,12 +572,35 @@ These were produced once for the whole review. Read the file rather than running
 the tool again.`;
 }
 
-const BRANCH_SCOPE_NOTICE = `## Scope — the branch, not the codebase
-Report only what this branch adds, changes, or breaks. A pre-existing problem in
-a file the branch happens to touch is out of scope, and so is a problem in a
-file the branch does not touch at all. The one exception is a latent issue the
-change newly exposes — and then say explicitly why the change is what makes it
-bite.`;
+/**
+ * Names the branch a diff review compares against, for the prompts.
+ *
+ * @param input - The workflow input
+ * @returns Its parent branch and the fork commit, or the fork commit alone
+ */
+function baseName(input) {
+  return input.baseBranch
+    ? `its parent \`${input.baseBranch}\`, from the fork commit \`${input.base}\``
+    : `\`${input.base}\``;
+}
+
+const BRANCH_SCOPE_NOTICE = `## Scope — label whose problem each finding is
+Spend your attention on what this branch adds, changes or breaks. When you come
+across a real problem in your files that the branch did not cause, still report
+it — it will not be lost — but label it, so the report can keep it apart from
+the branch's own:
+
+- \`branch\` — the branch caused it: in lines it added or changed, or in code
+  it left alone that its change made wrong (a stale doc, a broken caller, a
+  latent issue the change newly exposes — then say why the change makes it
+  bite).
+- \`carried\` — it was already there before the branch, inside code the branch
+  rewrote or moved. Check the patch: a moved block shows as added lines.
+- \`outside\` — it was already there before the branch, in code the branch left
+  alone.
+
+Decide by comparing with the merge base (\`git show <fork>:<path>\`), not by
+which file the problem is in.`;
 
 /**
  * Builds the reviewer's reading instructions.
@@ -636,6 +663,7 @@ Per finding:
   whyItMatters  one sentence: the concrete consequence — ${PROMPTS.whyItMatters}
   evidence      the specific code, call site, or tool output you rely on
   convention    file or rule name, or null
+  scope         branch | carried | outside — on a branch review only, see Scope
 
 And \`lensesRun\`: **one entry for every lens listed above, including the ones
 that found nothing.** Each carries the lens name, its finding count, and one
@@ -680,7 +708,7 @@ function buildReviewerPrompt(active, recon, input) {
 
   const diffBlock = isDiff
     ? `## The diff
-Branch \`${input.target}\` against \`${input.base}\`. Each changed file's patch is
+Branch \`${input.target}\` against ${baseName(input)}. Each changed file's patch is
 at \`${input.patchDir}/<path>.patch\` — read only the ones for your files.
 
 ${BRANCH_SCOPE_NOTICE}
@@ -741,13 +769,18 @@ function buildVerifierPrompt(file, findings, recon, input) {
     : [];
   const branchWide = branchReports.length
     ? ` A finding in code the diff left alone is
-   also the branch's when one of these reports, run against the base,
-   lists it under \`findings\` — read it before refuting:\n${branchReports.join('\n')}`
+   still \`branch\` when one of these reports, run against the base,
+   lists it under \`findings\` — read it before relabelling:\n${branchReports.join('\n')}`
     : '';
   const branchCheck = isDiff
-    ? `2. **Check the claim is about THIS BRANCH.** If the cited code is unchanged by
-   the diff, refute it as pre-existing — unless the finding explains why the
-   branch is what makes it bite.${branchWide}\n`
+    ? `2. **Check the finding's \`scope\` against the patch and the merge base.**
+   Never refute a real problem for predating the branch — relabel it instead,
+   as an amendment with the corrected \`scope\`. \`branch\` means the branch
+   caused it, including code it left alone that its change made wrong.
+   \`carried\` means it was already there, inside code the branch rewrote or
+   moved (a moved block shows as added lines; compare with
+   \`git show <fork>:<path>\`). \`outside\` means it was already there, in code
+   the branch left alone. Refute only what is not a real problem.${branchWide}\n`
     : '';
 
   const coverageBlock = `## Coverage findings
@@ -770,7 +803,7 @@ independent, and confirming one says nothing about the next.
 ## Context
 ${recon.whatThisIs}
 Context pack: \`${recon.packPath}\` — a map, not evidence. Verify against files.
-${isDiff ? `Branch \`${input.target}\` vs \`${input.base}\`. The file's patch is at \`${input.patchDir}/<path>.patch\`.` : ''}
+${isDiff ? `Branch \`${input.target}\` vs ${baseName(input)}. The file's patch is at \`${input.patchDir}/<path>.patch\`.` : ''}
 
 ## How to verify
 1. Read the whole file, not just the cited lines.
@@ -865,7 +898,7 @@ const UNVERIFIED_NOTES = {
  * Keeps the fields of an amended verdict's correction that fit a finding.
  *
  * @param verdict - The verdict, or null
- * @returns The corrected fields, less any unknown field or severity off the scale
+ * @returns The corrected fields, less any unknown field, or severity or scope off the scale
  */
 function correctionOf(verdict) {
   if (verdict?.verdict !== 'amended' || !verdict.corrected) return {};
@@ -874,7 +907,9 @@ function correctionOf(verdict) {
     Object.entries(verdict.corrected).filter(([key, value]) =>
       key === 'severity'
         ? Object.hasOwn(SEVERITY_RANK, value)
-        : key === 'lens'
+        : key === 'scope'
+          ? SCOPES.includes(value)
+          : key === 'lens'
           ? Object.hasOwn(LENSES, value)
           : Object.hasOwn(FINDING_FIELDS, key) &&
             ((typeof value === 'string' &&
@@ -978,7 +1013,7 @@ function formatFinding(finding, verdict, unverifiedWhy, lenses = [finding.lens])
           : null;
 
   const lines = [
-    `## __N__ — ${merged.issue}`,
+    `### __N__ — ${merged.issue}`,
     '',
     `**Severity:** ${merged.severity} · **Where:** \`${merged.file}:${merged.line}\` · **Lenses:** ${lenses.join(', ')}`,
     '',
@@ -996,15 +1031,22 @@ function formatFinding(finding, verdict, unverifiedWhy, lenses = [finding.lens])
   }
   if (verifiedNote) lines.push('', verifiedNote);
 
+  // A compact row says only whether the verdict changed or is missing.
+  const tag =
+    verdict == null ? ' _(unverified)_' : bucket === 'amended' ? ' _(amended)_' : '';
+
   return {
     bucket,
     lens: merged.lens,
     severity: merged.severity,
+    scope: merged.scope ?? 'branch',
     coverage,
     title: merged.issue,
     file: merged.file,
+    line: merged.line,
+    whyItMatters: merged.whyItMatters,
     lenses,
-    summaryRow: `| __N__ | ${coverage ? '—' : SEVERITY_LETTER[merged.severity]} | ${cell(merged.issue)} | \`${cell(`${merged.file}:${merged.line}`)}\` |`,
+    compactRow: `| <a id="f__N__"></a>__N__ | ${SEVERITY_LETTER[merged.severity]} | ${cell(merged.issue)} | \`${cell(`${merged.file}:${merged.line}`)}\` | ${cell(merged.whyItMatters)}${tag} |`,
     sectionMarkdown: lines.join('\n'),
   };
 }
@@ -1040,12 +1082,9 @@ const OVERLAP_SLACK = CONFIG.dedupe.lines;
  */
 function sameSpot(entry, finding) {
   if (entry.file !== finding.file) return false;
-  if (
-    CONFIG.dedupe.by === 'lens' &&
-    (entry.bundles.includes(finding.bundle) || entry.lens !== finding.lens)
-  ) {
-    return false;
-  }
+  // One reviewer reporting two findings means two problems, however close.
+  if (entry.bundles.includes(finding.bundle)) return false;
+  if (CONFIG.dedupe.by === 'lens' && entry.lens !== finding.lens) return false;
   if (entry.line === finding.line) return true;
 
   const rangeA = parseRange(entry.line);
@@ -1333,6 +1372,11 @@ const reviewed = await pipeline(
               finding.lens && LENSES[finding.lens]
                 ? finding.lens
                 : active.lenses[0],
+            // Unlabelled counts as the branch's own; a target review has no branch.
+            scope:
+              isDiffMode && SCOPES.includes(finding.scope)
+                ? finding.scope
+                : 'branch',
           })),
           lensesRun: result?.lensesRun ?? [],
           declaredLenses: active.lenses,
@@ -1353,9 +1397,11 @@ const reviewed = await pipeline(
     const anchored = result.findings.filter((finding) => finding.line);
     const droppedForNoLine = result.findings.length - anchored.length;
 
-    // Severity order within the bundle, matching the per-bundle cap.
+    // The cap spends itself on what the PR is asked to fix, then by severity.
     const ordered = [...anchored].sort(
-      (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity],
+      (a, b) =>
+        (a.scope === 'outside') - (b.scope === 'outside') ||
+        SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity],
     );
     const toVerify = ordered.slice(0, PER_BUNDLE_VERIFY_CAP);
     const overCap = ordered.slice(PER_BUNDLE_VERIFY_CAP);
@@ -1560,13 +1606,27 @@ if (splitVerdictCount > 0) {
 
 phase('Compose');
 
-// Coverage always last: non-coverage before coverage, severity within each.
+// Report order: branch, carried, outside, then the branch's coverage gaps.
+const SCOPE_RANK = { branch: 0, carried: 1, outside: 2 };
+
+/**
+ * Places a finding in the report's order of sections.
+ *
+ * @param finding - The formatted finding
+ * @returns Its section's rank
+ */
+const placeOf = (finding) =>
+  finding.coverage && finding.scope === 'branch'
+    ? SCOPES.length
+    : SCOPE_RANK[finding.scope];
+
 const numbered = allFormatted
   .filter((finding) => finding.bucket !== 'refuted')
-  .sort((a, b) => {
-    if (a.coverage !== b.coverage) return a.coverage ? 1 : -1;
-    return SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
-  })
+  .sort(
+    (a, b) =>
+      placeOf(a) - placeOf(b) ||
+      SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity],
+  )
   .map((finding, i) => ({ ...finding, n: i + 1 }));
 
 const refutedBullets = allFormatted
@@ -1577,9 +1637,14 @@ const confirmedOrAmended = numbered.filter(
   (finding) => finding.bucket === 'confirmed' || finding.bucket === 'amended',
 );
 
+// The lead paragraph is about the branch, never about what it inherited.
+const leadCandidates = confirmedOrAmended.filter(
+  (finding) => finding.scope === 'branch',
+);
+
 const readThisFirst =
-  confirmedOrAmended.length > 0
-    ? await agent(buildReadThisFirstPrompt(confirmedOrAmended, isDiffMode), {
+  leadCandidates.length > 0
+    ? await agent(buildReadThisFirstPrompt(leadCandidates, isDiffMode), {
         label: 'compose:read-this-first',
         phase: 'Compose',
         model: 'sonnet',
@@ -1588,8 +1653,21 @@ const readThisFirst =
       }).then((reply) => reply?.readThisFirst ?? null)
     : null;
 
-const normalFindings = numbered.filter((finding) => !finding.coverage);
-const coverageFindings = numbered.filter((finding) => finding.coverage);
+/**
+ * Tells whether a finding is one of the branch's own coverage gaps, which get their own section.
+ *
+ * @param finding - The formatted finding
+ * @returns True for a coverage gap scoped to the branch
+ */
+const isGap = (finding) => finding.coverage && finding.scope === 'branch';
+const normalFindings = numbered.filter((finding) => !isGap(finding));
+const coverageFindings = numbered.filter(isGap);
+const byScope = Object.fromEntries(
+  SCOPES.map((scope) => [
+    scope,
+    normalFindings.filter((finding) => finding.scope === scope),
+  ]),
+);
 
 /**
  * Groups findings by lens, keeping the order each lens first appears in.
@@ -1610,36 +1688,161 @@ function groupByLens(list) {
   return { order, map };
 }
 
-const normal = groupByLens(normalFindings);
-const cover = groupByLens(coverageFindings);
+/**
+ * Counts findings by severity.
+ *
+ * @param list - The findings
+ * @returns A count for every severity
+ */
+function countSeverities(list) {
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  list.forEach((finding) => counts[finding.severity]++);
+  return counts;
+}
 
-const counts = { critical: 0, high: 0, medium: 0, low: 0 };
-normalFindings.forEach((finding) => counts[finding.severity]++);
+/**
+ * Writes severity counts as letters, such as `1H 4M 9L`.
+ *
+ * @param list - The findings
+ * @returns The non-zero counts, or `none`
+ */
+function severityLetters(list) {
+  const counts = countSeverities(list);
+  const parts = SEVERITIES.filter((key) => counts[key] > 0).map(
+    (key) => `${counts[key]}${SEVERITY_LETTER[key]}`,
+  );
+  return parts.length > 0 ? parts.join(' ') : 'none';
+}
 
-const summaryTable = numbered
-  .map((finding) =>
-    finding.summaryRow.replace(/__N__/g, `[${finding.n}](#f${finding.n})`),
-  )
-  .join('\n');
+/**
+ * Writes findings in full, grouped under a heading per lens.
+ *
+ * @param list - The numbered findings
+ * @returns The markdown
+ */
+function fullWriteUps(list) {
+  const { order, map } = groupByLens(list);
+  let markdown = '';
+  for (const lens of order) {
+    markdown += `## ${titleFor(lens)}\n\n`;
+    for (const finding of map.get(lens)) {
+      markdown += `<a id="f${finding.n}"></a>\n\n${finding.sectionMarkdown.replace(/__N__/g, finding.n)}\n\n`;
+    }
+  }
+  return markdown;
+}
+
+/**
+ * Writes findings as one table row each.
+ *
+ * @param list - The numbered findings
+ * @returns The markdown table
+ */
+function compactTable(list) {
+  return `| # | Sev | Issue | Where | Why it matters |\n| - | --- | ----- | ----- | -------------- |\n${list
+    .map((finding) => finding.compactRow.replace(/__N__/g, finding.n))
+    .join('\n')}\n\n`;
+}
+
+/**
+ * Writes one section's findings: in full down to medium, low ones as a table.
+ *
+ * @param list - The numbered findings
+ * @returns The markdown
+ */
+function scopeBody(list) {
+  const full = list.filter((finding) => finding.severity !== 'low');
+  const low = list.filter((finding) => finding.severity === 'low');
+  return `${fullWriteUps(full)}${low.length > 0 ? `## Low severity\n\n${compactTable(low)}` : ''}`;
+}
+
+/**
+ * Drafts a Linear issue for a finding outside the branch.
+ *
+ * @param finding - The numbered finding
+ * @returns A title line and a two-line description
+ */
+function linearSuggestion(finding) {
+  return `**${finding.title}**\n\`${finding.file}:${finding.line}\` — ${finding.whyItMatters}\nPredates \`${input.target}\`; found by the ${finding.lenses.join(', ')} lens${finding.lenses.length === 1 ? '' : 'es'} while reviewing it (finding [${finding.n}](#f${finding.n})).`;
+}
+
+const outsideToFile = byScope.outside.filter(
+  (finding) => SEVERITY_RANK[finding.severity] <= SEVERITY_RANK.medium,
+);
+
+const SCOPE_INTROS = {
+  branch: 'What this branch caused. This is the review of the branch.',
+  carried:
+    'Problems that were already there, inside code this branch rewrote or moved. The branch did not cause them, but they are cheapest to fix while you are in that code.',
+  outside:
+    'Problems that predate this branch, in code it left alone. They do not belong in this branch; give the medium and higher ones their own issue and PR.',
+};
+const SCOPE_TITLES = {
+  branch: 'This branch',
+  carried: 'Carried over',
+  outside: 'Not this branch',
+};
 
 let sections = '';
-for (const lens of normal.order) {
-  sections += `\n---\n\n# ${titleFor(lens)}\n\n`;
-  for (const finding of normal.map.get(lens)) {
-    sections += `<a id="f${finding.n}"></a>\n\n${finding.sectionMarkdown.replace(/__N__/g, finding.n)}\n\n`;
+if (isDiffMode) {
+  for (const scope of SCOPES) {
+    const list = byScope[scope];
+    if (scope !== 'branch' && list.length === 0) continue;
+
+    sections += `\n---\n\n# ${SCOPE_TITLES[scope]}\n\n_${SCOPE_INTROS[scope]}_\n\n`;
+    if (list.length === 0) {
+      sections += 'Nothing the branch caused survived verification.\n\n';
+    } else if (scope === 'outside') {
+      sections += compactTable(list);
+      if (outsideToFile.length > 0) {
+        sections += `## Suggested Linear issues\n\nOne per medium or higher finding, ready to paste:\n\n${outsideToFile.map(linearSuggestion).join('\n\n')}\n\n`;
+      }
+    } else {
+      sections += scopeBody(list);
+    }
   }
+} else if (normalFindings.length > 0) {
+  sections += `\n---\n\n# Findings\n\n${scopeBody(normalFindings)}`;
 }
 
 let coverageSection = '';
 if (coverageFindings.length > 0) {
-  coverageSection += '\n---\n\n# Coverage gaps\n\n';
-  for (const lens of cover.order) {
-    coverageSection += `## ${titleFor(lens)}\n\n`;
-    for (const finding of cover.map.get(lens)) {
-      coverageSection += `<a id="f${finding.n}"></a>\n\n${finding.sectionMarkdown.replace(/__N__/g, finding.n)}\n\n`;
-    }
-  }
+  coverageSection += `\n---\n\n# Coverage gaps\n\n${scopeBody(coverageFindings)}`;
 }
+
+const counts = countSeverities(normalFindings);
+// What the PR is asked to act on: the branch's own findings and those carried over.
+const actionableCounts = countSeverities(
+  normalFindings.filter((finding) => finding.scope !== 'outside'),
+);
+
+// The summary lists what needs reading in full; low findings are in their tables.
+const summaryRows = numbered.filter(
+  (finding) => finding.severity !== 'low' && finding.scope !== 'outside',
+);
+const summaryTable = summaryRows
+  .map(
+    (finding) =>
+      `| [${finding.n}](#f${finding.n}) | ${finding.coverage ? '—' : SEVERITY_LETTER[finding.severity]} |${isDiffMode ? ` ${SCOPE_TITLES[finding.scope]} |` : ''} ${cell(finding.title)} | \`${cell(`${finding.file}:${finding.line}`)}\` |`,
+  )
+  .join('\n');
+const summaryHead = isDiffMode
+  ? '| # | Sev | Scope | Issue | Where |\n| - | --- | ----- | ----- | ----- |'
+  : '| # | Sev | Issue | Where |\n| - | --- | ----- | ----- |';
+const summaryEmpty = `| — | — |${isDiffMode ? ' — |' : ''} ${numbered.length === 0 ? 'No findings survived verification' : 'Nothing above low severity to read in full'} | — |`;
+const lowCount = numbered.filter(
+  (finding) => finding.severity === 'low' && finding.scope !== 'outside',
+).length;
+const summaryFoot = [
+  lowCount > 0
+    ? `${lowCount} low-severity finding(s) are in a table at the end of their section.`
+    : null,
+  byScope.outside.length > 0
+    ? `${byScope.outside.length} finding(s) predate this branch in code it left alone — see **Not this branch**.`
+    : null,
+]
+  .filter(Boolean)
+  .join(' ');
 
 // What each bundle says it checked.
 const firedLenses = activeBundles.flatMap((bundle) => bundle.lenses);
@@ -1711,8 +1914,12 @@ const headline = isDiffMode
   ? `# Branch review — \`${input.target}\``
   : `# Review — \`${input.moduleTarget ?? allFiles.join(', ')}\``;
 
+const baseLine = input.baseBranch
+  ? `\`${input.baseBranch}\`${input.baseSource ? ` (${input.baseSource})` : ''}, from \`${input.base}\``
+  : `\`${input.base}\``;
+
 const metaLine = isDiffMode
-  ? `**Base:** \`${input.base}\` · **Reviewed:** ${input.today ?? 'unknown date'} · **Files changed:** ${allFiles.length} · **Findings:** ${normalFindings.length} (${counts.critical} critical, ${counts.high} high, ${counts.medium} medium, ${counts.low} low, ${coverageFindings.length} coverage)`
+  ? `**Base:** ${baseLine} · **Reviewed:** ${input.today ?? 'unknown date'} · **Files changed:** ${allFiles.length}\n\n**Findings:** This branch ${severityLetters(byScope.branch)} · Carried over ${severityLetters(byScope.carried)} · Not this branch ${severityLetters(byScope.outside)} · ${coverageFindings.length} coverage gap(s)`
   : `**Reviewed:** ${input.today ?? 'unknown date'} · **Files:** ${allFiles.length} · **Findings:** ${normalFindings.length} (${counts.critical} critical, ${counts.high} high, ${counts.medium} medium, ${counts.low} low)`;
 
 // Diff mode reviews commits while agents read the working tree, so a dirty tree is named.
@@ -1733,10 +1940,9 @@ ${reconResult.whatThisIs}
 
 ## Summary
 
-| # | Sev | Issue | Where |
-| - | --- | ----- | ----- |
-${summaryTable || '| — | — | No findings survived verification | — |'}
-
+${summaryHead}
+${summaryTable || summaryEmpty}
+${summaryFoot ? `\n${summaryFoot}\n` : ''}
 ${readThisFirst ? `**Read this first.** ${readThisFirst}\n` : ''}
 ${sections}${coverageSection}
 ---
@@ -1764,8 +1970,11 @@ const coverageNote =
 
 const prBody = [
   `Deep review — ${allFiles.length} files, ${activeBundles.length} review agents, ${verifyAgentCount} verifiers.`,
-  `**${counts.critical} critical · ${counts.high} high · ${counts.medium} medium · ${counts.low} low${coverageNote}.**`,
+  `**${actionableCounts.critical} critical · ${actionableCounts.high} high · ${actionableCounts.medium} medium · ${actionableCounts.low} low${coverageNote}.**`,
   readThisFirst ? `**Read this first.** ${readThisFirst}` : null,
+  byScope.outside.length > 0
+    ? `${byScope.outside.length} more finding(s) predate this branch in code it left alone; they are in the report, not on this PR.`
+    : null,
   `Full report: \`${reportPath}\``,
 ]
   .filter(Boolean)
@@ -1779,6 +1988,9 @@ return {
     files: allFiles.length,
     findings: normalFindings.length,
     ...counts,
+    byScope: Object.fromEntries(
+      SCOPES.map((scope) => [scope, byScope[scope].length]),
+    ),
     coverage: coverageFindings.length,
     refuted: refutedBullets.length,
     unverified: unverifiedCount,
