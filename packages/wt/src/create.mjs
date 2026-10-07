@@ -63,6 +63,8 @@ export function checkName(name) {
 /**
  * Adds the worktree itself, choosing how from what branches exist.
  *
+ * A new branch forked from another records it as its parent.
+ *
  * @param options - Where to add it and which `branch`, `base` and `detach` apply
  * @throws When git refuses to add it
  */
@@ -106,6 +108,14 @@ function addWorktree({ cwd, path, branch, base, detach, remote }) {
   const from = base ?? (tryGit(['branch', '--show-current'], cwd) || 'HEAD');
   console.log(`Creating branch ${branch} from ${from}...`);
   gitLoud(['worktree', 'add', '-b', branch, path, from], cwd);
+
+  // Records the parent where the branch skills, VS Code and Claude Code look for it.
+  if (
+    hasRef(`refs/heads/${from}`, cwd) ||
+    hasRef(`refs/remotes/${from}`, cwd)
+  ) {
+    tryGit(['config', `branch.${branch}.vscode-merge-base`, from], cwd);
+  }
 }
 
 /**
