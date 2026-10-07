@@ -1,6 +1,6 @@
 {
   "name": "@euanmsm/wt",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Git worktrees beside the main checkout, each with its own ports, env files and optional local Supabase stack",
   "type": "module",
   "license": "MIT",
