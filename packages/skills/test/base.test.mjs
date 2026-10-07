@@ -490,6 +490,19 @@ describe('stackParent', () => {
       null,
     );
     assert.equal(stackParent(failing('', { code: 'ENOENT' }), '/', 'a'), null);
+    assert.equal(
+      stackParent(
+        () =>
+          'gh stack is available as an official extension.\nTo install it, run:\n  gh extension install github/gh-stack\n',
+        '/',
+        'a',
+      ),
+      null,
+    );
+    assert.equal(
+      stackParent(() => '', '/', 'a'),
+      null,
+    );
   });
 
   it('stops rather than guess the base when the stack cannot be read', () => {

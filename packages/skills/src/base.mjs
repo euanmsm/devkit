@@ -201,7 +201,10 @@ export function stackParent(run, root, branch) {
   let stack;
 
   try {
-    stack = JSON.parse(run('gh', ['stack', 'view', '--json'], root));
+    const answer = run('gh', ['stack', 'view', '--json'], root);
+    // gh answers a missing extension with exit 0, an install hint, and no JSON on stdout.
+    if (!answer.trim() || /gh extension install/.test(answer)) return null;
+    stack = JSON.parse(answer);
   } catch (error) {
     const detail = String(error.stderr ?? '').trim() || error.message;
     if (error.code === 'ENOENT') return null;
