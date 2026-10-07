@@ -21,7 +21,7 @@ it.
 ## Running it
 
 ```
-/review                     # this branch against the base branch
+/review                     # this branch against its parent branch
 /review <path> [<path>...]  # named files or a directory, as they stand
 /review pr                  # this branch's PR, posted as a pending review
 /review pr 793              # a named PR, with its branch checked out
@@ -61,12 +61,18 @@ generates from your config.
 
 ### 1. The skill resolves what to review
 
-- **Diff mode**: the changed files between the base branch and the current
-  branch, diffed from their merge base so commits landed on the base afterwards
-  do not count. It stops if you are on the base branch or nothing changed.
-  - The base is `baseBranch` or `origin/<baseBranch>`, whichever the branch left
-    later, so a local copy that was never pulled does not add commits that
-    landed upstream since.
+- **Diff mode**: the changed files between the branch's **parent** and the
+  branch, diffed from where the branch left it, so commits that landed on the
+  parent afterwards do not count. It stops if you are on the base branch or
+  nothing changed.
+  - `npx --no-install skills base` finds the parent: the base of the branch's
+    open PR, the branch below it in a `gh stack`, or the parent git recorded
+    when it was created, and `baseBranch` only when none of those answers. A
+    stacked branch is therefore never reviewed with its parents' changes. It
+    uses the local copy or `origin/`, whichever the branch left later. The skill
+    tells you the base and how it was found before any agent starts, and the
+    report header repeats it. [How the base branch is found](base-branch.md) has
+    every rule.
   - On a detached HEAD it reviews `HEAD`, and names the report
     `detached-<short sha>`.
   - It reviews commits, but agents and tools read files from disk. So with
@@ -76,8 +82,8 @@ generates from your config.
   - `pr <n>` reads the PR's head and base branches first. If the PR's head is
     not the branch you have checked out, it stops and offers
     `gh pr checkout <n>`, rather than reviewing one branch and posting to
-    another PR. It diffs against the PR's own base, so a stacked PR is reviewed
-    against the branch it merges into.
+    another PR. It passes the PR's base to `skills base`, so a stacked PR is
+    reviewed against the branch it merges into.
 - **Target mode**: the paths you named. A directory expands to every file under
   it with one of the `files.targetExtensions` extensions. It stops if a path
   does not exist, or if there are more than 40 files — it asks you to narrow the

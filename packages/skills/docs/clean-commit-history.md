@@ -10,7 +10,7 @@ commits called "wip", "fix", "fix again".
 ## Running it
 
 ```
-/clean-commit-history          # rewrite on top of the configured base branch
+/clean-commit-history          # rewrite on top of the branch's parent
 /clean-commit-history develop  # rewrite on top of another branch
 ```
 
@@ -21,15 +21,17 @@ The model never runs it on its own initiative: the skill is marked
 
 ### 1. Preflight
 
-- Finds the current branch, and stops if it is the base branch itself.
+- Finds the base: the branch you named, otherwise the branch's parent — the
+  branch it was cut from, so a stacked branch only rewrites its own commits.
+  [How the base branch is found](base-branch.md) has the details. It stops if
+  that fails, for example on the base branch itself.
 - Stops if there are uncommitted changes. It never stashes your work.
 - Records the current commit, `ORIGINAL_HEAD`. Everything afterwards is checked
   against this.
-- Records the fork point, the commit where the branch left the base branch
-  (`git merge-base`). The new commits are stacked on the fork point, not on the
-  base branch's latest commit, so work that landed on the base since is never
-  undone. Rebasing onto the newer base is a separate step you take yourself.
-- Stops if the base branch you named does not exist.
+- Records the fork point, the commit where the branch left the base branch. The
+  new commits are stacked on the fork point, not on the base branch's latest
+  commit, so work that landed on the base since is never undone. Rebasing onto
+  the newer base is a separate step you take yourself.
 - Checks for commit hooks (a `.husky/` folder, a `core.hooksPath` setting or any
   installed hook) and for commit signing (`commit.gpgsign`). If it finds any, it
   warns you first: every new commit runs those hooks and is signed, so a hook

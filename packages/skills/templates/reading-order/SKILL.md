@@ -1,7 +1,7 @@
 ---
 name: reading-order
 description:
-  "Write a reading order for the current branch's diff over {{baseBranch}}: a
+  "Write a reading order for the current branch's diff over its parent branch: a
   short numbered list of links to the files a reviewer should read, in the order
   that makes the change easiest to understand, with a brief note where one
   helps. Use when asked for a reading order, a review path, or where to start
@@ -23,7 +23,7 @@ then just start clicking. Most entries are a bare link; a note is added only
 where the reviewer would otherwise read the file the wrong way.
 
 ```
-/reading-order            # diff over {{baseBranch}}
+/reading-order            # diff over the branch's parent
 /reading-order <branch>   # diff over another base
 ```
 
@@ -35,14 +35,8 @@ order.
 Run from the repository root:
 
 ```bash
-BASE=<the branch given, else {{baseBranch}}>
-git rev-parse --verify --quiet "$BASE^{commit}" || echo "ABORT: no branch $BASE"
-git fetch --quiet origin "$BASE" 2>/dev/null
-FORK="$(git merge-base "$BASE" HEAD)"
-UPSTREAM_FORK="$(git merge-base "refs/remotes/origin/$BASE" HEAD 2>/dev/null)"
-if [ -n "$UPSTREAM_FORK" ] && git merge-base --is-ancestor "$FORK" "$UPSTREAM_FORK" 2>/dev/null; then
-  FORK="$UPSTREAM_FORK"
-fi
+BASE_VARS="$(npx --no-install skills base --base "<the branch given, or empty>")" && eval "$BASE_VARS"
+echo "base: $BASE_BRANCH ($BASE_SOURCE)"
 echo "fork: $FORK"
 git rev-parse --abbrev-ref HEAD
 git log --oneline "$FORK"..HEAD
@@ -54,8 +48,16 @@ git status --porcelain
 Shell variables do not survive from one command to the next, so write the fork
 commit out literally in every later command.
 
-- Stop if the base does not exist, or if the branch has no commits over it —
-  there is nothing to read.
+`skills base` finds the branch's parent: the branch given, else the base of its
+open PR, the branch below it in a `gh stack`, or the parent git recorded when it
+was created, and `{{baseBranch}}` only when none of those answers. A stacked
+branch's reading order then covers its own commits, not its parents'. It
+fetches the base and uses the local copy or `origin/`, whichever the branch
+left later. Name the base and its source in your reply, and pass on any
+`warning:` line.
+
+- Stop if `skills base` exits non-zero (show what it printed), or if the branch
+  has no commits over the base — there is nothing to read.
 - The reading order covers the committed diff only, which is what the PR shows.
   If `git status --porcelain` lists changes, mention in your reply that they
   were left out.

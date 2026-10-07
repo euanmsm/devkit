@@ -106,14 +106,19 @@ npx --no-install dead-code --json                           # the whole reposito
 npx --no-install dead-code --json -- src/features/billing   # only findings under these paths
 ```
 
-Only what this branch left dead, against `origin/{{baseBranch}}`, or the local
-`{{baseBranch}}` when there is no origin copy:
+Only what this branch left dead, against its **parent** branch. `skills base`
+finds the parent: the base of the branch's open PR, the branch below it in a
+`gh stack`, or the parent git recorded when it was created, and
+`{{baseBranch}}` only when none of those answers. A stacked branch is then
+checked for its own dead code, not its parents':
 
 ```bash
-BASE_REF="origin/{{baseBranch}}"
-git rev-parse --verify --quiet "refs/remotes/$BASE_REF" >/dev/null || BASE_REF="{{baseBranch}}"
-npx --no-install dead-code branch "$BASE_REF" --json
+BASE_VARS="$(npx --no-install skills base)" && eval "$BASE_VARS" && echo "base: $BASE_BRANCH ($BASE_SOURCE)" >&2 &&
+  npx --no-install dead-code branch "$FORK" --json
 ```
+
+If `skills base` exits non-zero, stop and show the user what it printed.
+Otherwise name the base and its source, and pass on any `warning:` line.
 
 - A path you type is tried against the current folder, then against the
   repository root, so a `file` copied out of a report works from any folder.

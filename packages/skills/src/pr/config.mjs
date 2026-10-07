@@ -64,6 +64,7 @@ const QUESTION_KEYS = ['ask', 'paths'];
 
 /** What a variable marked `backendOnly` is needed for. */
 const BACKEND_TOUCHES = ['database', 'api'];
+// Still accepted so older configs load; the base now always comes from `resolveBase`.
 const BASES = ['branch', 'stack'];
 const STORY_MATCHES = ['stem', 'imports', 'both'];
 

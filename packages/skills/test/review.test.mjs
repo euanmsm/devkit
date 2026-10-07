@@ -36,7 +36,12 @@ import { plan, renderEngine, sync } from '../src/sync.mjs';
 import webapp from './fixtures/review/webapp.mjs';
 import sales from './fixtures/review/sales.mjs';
 import { makeRepo, write } from './repo.mjs';
-import { runShell, SHELLS, staleBaseRepo } from './stale-base.mjs';
+import {
+  runWithSkills,
+  SHELLS,
+  stackedRepo,
+  staleBaseRepo,
+} from './stale-base.mjs';
 import { reply, runWorkflow } from './workflow.mjs';
 
 const ENGINE = readFileSync(
@@ -1134,8 +1139,12 @@ describe('sync with code-review', () => {
 
     assert.match(skill, /gh pr view <n> --json number,headRefName,baseRefName/);
     assert.match(skill, /gh pr checkout <n>/);
-    assert.match(skill, /BASE_BRANCH="main"\s+# "\$PR_BASE" in pr mode/);
-    assert.match(skill, /refs\/remotes\/origin\/\$BASE_BRANCH/);
+    assert.match(
+      skill,
+      /BASE_VARS="\$\(npx --no-install skills base --base "\$\{PR_BASE:-\}"\)" && eval "\$BASE_VARS" && BASE="\$FORK"/,
+    );
+    assert.match(skill, /Tell the user the base before going on/);
+    assert.doesNotMatch(skill, /BASE_BRANCH="main"/);
     assert.match(
       skill,
       /BRANCH_LEAF="detached-\$\(git rev-parse --short HEAD\)"/,
@@ -1233,15 +1242,35 @@ describe('sync with code-review', () => {
       const { repo, fork } = staleBaseRepo({ behind });
       for (const shell of SHELLS) {
         assert.equal(
-          runShell(
+          runWithSkills(
             shell,
             `BRANCH=feat\n${block}\necho "$BASE_REF $BASE"`,
             repo,
-          ),
+          )
+            .split('\n')
+            .at(-1),
           `${ref} ${fork}`,
           `${behind} copy behind, in ${shell}`,
         );
       }
+    }
+  });
+
+  test('a stacked branch is reviewed against its parent, not main', async () => {
+    const skill = (await plan(reviewRepo({ githubReview: true }))).find(
+      (file) => file.path.endsWith('SKILL.md'),
+    ).content;
+    const lines = skill.split('\n');
+    const start = lines.findIndex((line) => line.startsWith('TARGET='));
+    const block = lines.slice(start, lines.indexOf('```', start)).join('\n');
+    const { repo, parentHead } = stackedRepo();
+
+    for (const shell of SHELLS) {
+      assert.equal(
+        runWithSkills(shell, `BRANCH=child\n${block}`, repo),
+        `base: parent (the branch reflog) · ref: parent · fork: ${parentHead}`,
+        shell,
+      );
     }
   });
 

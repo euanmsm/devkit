@@ -17,6 +17,7 @@ import { resolvePrConfig } from '../src/pr/config.mjs';
 import { sync } from '../src/sync.mjs';
 import { prRepo } from './pr-helpers.mjs';
 import { makeRepo, write } from './repo.mjs';
+import { runWithSkills, SHELLS, stackedRepo } from './stale-base.mjs';
 
 /**
  * Syncs a repository with the given skills and reads one generated file.
@@ -117,6 +118,25 @@ describe('reading-order — output folder', () => {
       named,
       /`\.scratch\/review\/<branch>\/reading-order\.tmp\.md`/,
     );
+  });
+
+  it('reads a stacked branch over its parent, not over main', async () => {
+    const skill = await generated({ 'reading-order': {} }, path);
+    const lines = skill.split('\n');
+    const start = lines.findIndex((line) => line.startsWith('BASE_VARS='));
+    const block = lines
+      .slice(start, lines.indexOf('```', start))
+      .join('\n')
+      .replace('<the branch given, or empty>', '');
+    const { repo, parentHead } = stackedRepo();
+
+    for (const shell of SHELLS) {
+      const out = runWithSkills(shell, block, repo);
+      assert.match(out, /^base: parent \(the branch reflog\)$/m, shell);
+      assert.match(out, new RegExp(`^fork: ${parentHead}$`, 'm'), shell);
+      assert.match(out, / child\.txt$/m, shell);
+      assert.doesNotMatch(out, / parent\.txt$/m, shell);
+    }
   });
 
   it('rejects a folder outside the repository', async () => {

@@ -27,7 +27,7 @@ skill rather than two:
   request when you asked for a PR review
 
 ```
-/{{name}}                     # current branch vs {{baseBranch}} → report
+/{{name}}                     # current branch vs its parent branch → report
 /{{name}} <path> [<path>...]  # a file, files, or a module → report
 /{{name}} pr                  # current branch's PR → report + pending GitHub review
 /{{name}} pr 793              # a named PR, with its branch checked out
@@ -40,7 +40,7 @@ pull request unasked.
 - **What goes in** — a branch diff, or named files as they stand
 
 ```
-/{{name}}                     # current branch vs {{baseBranch}} → report
+/{{name}}                     # current branch vs its parent branch → report
 /{{name}} <path> [<path>...]  # a file, files, or a module → report
 ```
 
@@ -91,32 +91,32 @@ to run `gh pr checkout <n>` and start again — otherwise the review would read
 one branch and post to another PR. Then use `PR_BASE` as the base below, so a
 stacked PR is diffed against the branch it merges into.
 {{/githubReview}}
-`TARGET` is the current branch, or `HEAD` when detached. The base is
-`{{baseBranch}}`{{#githubReview}} (`PR_BASE` in `pr` mode){{/githubReview}}: the local branch or its
-`origin/` copy, whichever `TARGET` left later. A local copy that was never
-pulled would otherwise add every commit that landed upstream since to the diff:
+`TARGET` is the current branch, or `HEAD` when detached. The base is the
+branch's **parent**, never `{{baseBranch}}` by default: a stacked branch is
+reviewed against the branch below it, so its parents' changes stay out of the
+review. `skills base` finds it — {{#githubReview}}`PR_BASE` in `pr` mode (left empty otherwise, which means "find
+it"), else {{/githubReview}}the base of the
+branch's open PR, the branch below it in a `gh stack`, or the parent git
+recorded when the branch was created, and `{{baseBranch}}` only when none of
+those answers. It compares against the local copy or `origin/`, whichever the
+branch left later, so a copy that was never pulled does not add every commit
+that landed upstream since:
 
 ```bash
 TARGET="${BRANCH:-HEAD}"
-BASE_BRANCH="{{baseBranch}}"{{#githubReview}}              # "$PR_BASE" in pr mode{{/githubReview}}
-BASE_REF=""
-BASE=""
-for REF in "refs/heads/$BASE_BRANCH" "refs/remotes/origin/$BASE_BRANCH"; do
-  git rev-parse --verify --quiet "$REF" >/dev/null || continue
-  FORK="$(git merge-base "$TARGET" "$REF" 2>/dev/null)"
-  if [ -z "$BASE" ] || { [ -n "$FORK" ] && git merge-base --is-ancestor "$BASE" "$FORK"; }; then
-    BASE_REF="${REF#refs/heads/}"
-    BASE_REF="${BASE_REF#refs/remotes/}"
-    BASE="$FORK"
-  fi
-done
+BASE_VARS="$(npx --no-install skills base{{#githubReview}} --base "${PR_BASE:-}"{{/githubReview}})" && eval "$BASE_VARS" && BASE="$FORK"
+echo "base: $BASE_BRANCH ($BASE_SOURCE) · ref: $BASE_REF · fork: $BASE"
 ```
 
-Abort with a one-line reason if:
+It prints `BASE_BRANCH`, `BASE_REF` (the copy compared against), `FORK` (the
+commit the branch left it at) and `BASE_SOURCE` (how it was found). If it exits
+non-zero, stop and show the user what it printed: it names the problem, such as
+being on `{{baseBranch}}` itself or a parent branch that is gone. Pass on any
+`warning:` line it prints.
 
-- `TARGET == BASE_BRANCH` → `Cannot review <BASE_BRANCH> directly.`
-- `BASE_REF` is empty → `No <BASE_BRANCH> branch, locally or as origin/<BASE_BRANCH>. Fetch it first.`
-- `BASE` is empty → `Cannot determine merge base of <TARGET> with <BASE_REF>.`
+**Tell the user the base before going on**, for example
+`Reviewing against cur-1722-login (PR #992)`. A wrong base is the one mistake
+that makes a whole review wrong, so it must be visible before any agent starts.
 
 **Check for uncommitted changes.** Diff mode reviews the commits, but the
 agents and the tools read the files on disk, so edits not yet committed make
@@ -160,7 +160,7 @@ git -c core.quotePath=false diff --name-only "$BASE" "$TARGET"   # → CHANGED_F
 git diff --stat "$BASE" "$TARGET"                                  # → DIFF_STAT
 ```
 
-Abort if `CHANGED_FILES` is empty: `Branch has no changes vs <BASE_REF>.`
+Abort if `CHANGED_FILES` is empty: `Branch has no changes vs <BASE_BRANCH>.`
 
 **Split the patch per file.** Reviewers each need three files out of the diff,
 so handing every agent one giant patch means loading it a dozen times over.
@@ -242,6 +242,7 @@ Workflow({
 
     // diff mode
     target: TARGET, base: BASE,
+    baseBranch: BASE_BRANCH, baseSource: BASE_SOURCE,   // printed in the report header
     changedFiles: CHANGED_FILES, diffStat: DIFF_STAT,
     patchDir: PATCH_DIR, largeDiff: LARGE_DIFF,
     treeState: TREE_STATE,          // printed in the report header

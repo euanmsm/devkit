@@ -18,7 +18,12 @@ import { FIXTURES, TEMPLATE } from './pr-helpers.mjs';
 import webappReview from './fixtures/review/webapp.mjs';
 import salesReview from './fixtures/review/sales.mjs';
 import { makeRepo, write } from './repo.mjs';
-import { runShell, SHELLS, staleBaseRepo } from './stale-base.mjs';
+import {
+  runWithSkills,
+  SHELLS,
+  stackedRepo,
+  staleBaseRepo,
+} from './stale-base.mjs';
 
 const BOTH = {
   skills: { 'clean-commit-history': {}, 'clean-comments': {} },
@@ -452,7 +457,10 @@ describe('generated commands', () => {
       'clean-commit-history/SKILL.md',
     );
 
-    assert.match(content, /git merge-base "\$BASE" HEAD/);
+    assert.match(
+      content,
+      /BASE_VARS="\$\(npx --no-install skills base --base "\$ARGUMENTS"\)" && eval "\$BASE_VARS"/,
+    );
     assert.match(content, /git reset -q --soft "\$FORK"/);
     assert.match(content, /git diff --name-status <FORK> HEAD/);
     assert.doesNotMatch(content, /reset (-q )?--soft "?\$BASE|\$BASE\.\.HEAD/);
@@ -463,16 +471,13 @@ describe('generated commands', () => {
       makeRepo({ 'skills.json': BOTH }),
       'clean-commit-history/SKILL.md',
     );
-    const preflight = fenced(content, 'BASE=').replace(
-      'BASE=<base branch>',
-      'BASE=main',
-    );
+    const preflight = fenced(content, 'BASE_VARS=');
 
     for (const behind of ['local', 'origin', 'none']) {
       const { repo, fork } = staleBaseRepo({ behind });
       for (const shell of SHELLS) {
         assert.equal(
-          runShell(shell, preflight, repo).split('\n').at(-1),
+          runWithSkills(shell, preflight, repo).split('\n').at(-1),
           fork,
           `${behind} copy behind, in ${shell}`,
         );
@@ -480,7 +485,21 @@ describe('generated commands', () => {
     }
   });
 
-  test('takes the base branch from $ARGUMENTS and checks it exists', async () => {
+  test('rewrites a stacked branch from its parent, not from main', async () => {
+    const content = await planned(
+      makeRepo({ 'skills.json': BOTH }),
+      'clean-commit-history/SKILL.md',
+    );
+    const { repo, parentHead } = stackedRepo();
+
+    for (const shell of SHELLS) {
+      const out = runWithSkills(shell, fenced(content, 'BASE_VARS='), repo);
+      assert.match(out, /^base: parent \(the branch reflog\)$/m, shell);
+      assert.equal(out.split('\n').at(-1), parentHead, shell);
+    }
+  });
+
+  test('takes the base branch from $ARGUMENTS, else the parent, and stops when there is none', async () => {
     const content = await planned(
       makeRepo({ 'skills.json': BOTH }),
       'clean-commit-history/SKILL.md',
@@ -488,12 +507,9 @@ describe('generated commands', () => {
 
     assert.match(
       content,
-      /Base branch: `\$ARGUMENTS` if given, otherwise `main`/,
+      /Base branch: `\$ARGUMENTS` if given, otherwise the branch's \*\*parent\*\*/,
     );
-    assert.match(
-      content,
-      /git rev-parse --verify --quiet "\$BASE\^\{commit\}"/,
-    );
+    assert.match(content, /Abort if `skills base` exits non-zero/);
     assert.doesNotMatch(content, /\$1\b|\$\{1:-/);
   });
 
@@ -580,17 +596,33 @@ describe('generated commands', () => {
       makeRepo({ 'skills.json': BOTH }),
       'clean-comments/SKILL.md',
     );
-    const scope = fenced(content, 'FORK=');
+    const scope = fenced(content, 'BASE_VARS=');
 
     for (const behind of ['local', 'origin', 'none', 'gone']) {
       const { repo } = staleBaseRepo({ behind });
       for (const shell of SHELLS) {
         assert.equal(
-          runShell(shell, scope, repo),
+          runWithSkills(shell, scope, repo),
           'mine.txt',
           `${behind}, in ${shell}`,
         );
       }
+    }
+  });
+
+  test('scopes a stacked branch to its own files, not its parent’s', async () => {
+    const content = await planned(
+      makeRepo({ 'skills.json': BOTH }),
+      'clean-comments/SKILL.md',
+    );
+    const { repo } = stackedRepo();
+
+    for (const shell of SHELLS) {
+      assert.equal(
+        runWithSkills(shell, fenced(content, 'BASE_VARS='), repo),
+        'child.txt',
+        shell,
+      );
     }
   });
 
@@ -862,51 +894,28 @@ describe('the dead-code skill', () => {
     assert.match(skill, /^name: dead-code$/m);
     assert.match(skill, /npx --no-install dead-code --help/);
     assert.match(skill, /npm i -D @euanmsm\/dead-code/);
-    assert.match(
-      skill,
-      /npx --no-install dead-code branch "\$BASE_REF" --json/,
-    );
+    assert.match(skill, /npx --no-install dead-code branch "\$FORK" --json/);
     assert.match(skill, /npx --no-install dead-code why /);
     assert.match(skill, /\.devkit\/dead-code\.json/);
     assert.doesNotMatch(skill, /npx (?!--no-install )[^\n]*dead-code/);
     assert.doesNotMatch(skill, /npx knip/);
   });
 
-  test('takes the branch base from baseBranch, the origin copy first, else the local branch', async () => {
+  test('checks a stacked branch against its parent, not baseBranch', async () => {
     const root = makeRepo({
-      'skills.json': { baseBranch: 'dev', skills: { 'dead-code': {} } },
+      'skills.json': { skills: { 'dead-code': {} } },
     });
-    const lines = (await planned(root, 'dead-code/SKILL.md')).split('\n');
-    const at = lines.findIndex((line) => line.startsWith('BASE_REF='));
-    const resolveBase = lines.slice(at, at + 2).join('\n');
+    const skill = await planned(root, 'dead-code/SKILL.md');
+    const block = fenced(skill, 'BASE_VARS=');
+    const { repo, parentHead } = stackedRepo();
 
-    // A repository with a dev branch, and origin/dev only when asked.
-    const baseIn = (remote) => {
-      const repo = makeRepo();
-      const git = (...args) =>
-        execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
-      execFileSync('rm', ['-r', join(repo, '.git')]);
-      git('init', '-q', '-b', 'dev');
-      git(
-        '-c',
-        'user.name=t',
-        '-c',
-        'user.email=t@t',
-        'commit',
-        '-q',
-        '--allow-empty',
-        '-m',
-        'x',
+    for (const shell of SHELLS) {
+      assert.equal(
+        runWithSkills(shell, block, repo),
+        `[--no-install][dead-code][branch][${parentHead}][--json]`,
+        shell,
       );
-      if (remote) git('update-ref', 'refs/remotes/origin/dev', 'HEAD');
-      return execFileSync('bash', ['-c', `${resolveBase}\necho "$BASE_REF"`], {
-        cwd: repo,
-        encoding: 'utf8',
-      }).trim();
-    };
-
-    assert.equal(baseIn(true), 'origin/dev');
-    assert.equal(baseIn(false), 'dev');
+    }
   });
 
   test('never has a generated skill file deleted, and says where report paths work', async () => {

@@ -12,6 +12,8 @@ Full documentation — exactly how each skill works and every option it takes:
 
 - [How `skills sync` works](docs/how-sync-works.md) — the config file, what
   `sync` and `check` do, and what the generated files are
+- [How the base branch is found](docs/base-branch.md) — how every branch skill
+  compares a branch with its parent, so stacked branches stay apart
 - [clean-commit-history](docs/clean-commit-history.md)
 - [clean-comments](docs/clean-comments.md)
 - [code-review](docs/code-review.md)
@@ -87,13 +89,13 @@ option the package does not know, or a value of the wrong type, is an error
 rather than being ignored. To leave a skill out, remove its key; `false` is an
 error.
 
-| Setting      | Default          | What it is                                                        |
-| ------------ | ---------------- | ----------------------------------------------------------------- |
-| `skillsDir`  | `.claude/skills` | Where skills are written                                          |
-| `agentsDir`  | `.claude/agents` | Where agents are written                                          |
-| `rulesDir`   | `.claude/rules`  | Where rules are written                                           |
-| `baseBranch` | `main`           | The branch the skills compare a branch with                       |
-| `format`     | `none`           | `prettier` formats generated files with the repository's Prettier |
+| Setting      | Default          | What it is                                                                                   |
+| ------------ | ---------------- | -------------------------------------------------------------------------------------------- |
+| `skillsDir`  | `.claude/skills` | Where skills are written                                                                     |
+| `agentsDir`  | `.claude/agents` | Where agents are written                                                                     |
+| `rulesDir`   | `.claude/rules`  | Where rules are written                                                                      |
+| `baseBranch` | `main`           | The fallback when a branch has no parent branch (see [the base branch](docs/base-branch.md)) |
+| `format`     | `none`           | `prettier` formats generated files with the repository's Prettier                            |
 
 A repository that keeps its skills in `.agents/skills`, with `.claude/skills` as
 a symlink to it, sets `skillsDir` to `.agents/skills`.

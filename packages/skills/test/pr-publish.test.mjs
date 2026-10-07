@@ -647,6 +647,7 @@ describe('the skills pr command, end to end', () => {
       `#!/bin/sh
 echo "$*" >> "${log}"
 case "$*" in
+  "stack "*) echo 'unknown command "stack" for "gh"' >&2; exit 1 ;;
   *number,state*) exit 1 ;;
   "pr view"*) echo '{"number":7,"url":"https://x/7","headRefOid":"'"$(git rev-parse HEAD)"'"}' ;;
   *--paginate*) ;;

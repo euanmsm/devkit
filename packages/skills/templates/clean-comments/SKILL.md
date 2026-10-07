@@ -53,18 +53,19 @@ git -c core.quotePath=false ls-files --others --exclude-standard
 ```
 
 **No paths, working tree clean** → the branch's own changes, minus the files it
-deleted, from where it left `{{baseBranch}}`. That is the local branch or
-`origin/{{baseBranch}}`, whichever is further along the branch's history, so a
-copy that was never pulled does not add commits that landed upstream:
+deleted, from where it left its **parent** branch. `skills base` finds the
+parent: the base of the branch's open PR, the branch below it in a `gh stack`,
+or the parent git recorded when it was created, and `{{baseBranch}}` only when
+none of those answers. So a stacked branch cleans only its own files, not its
+parents'. It uses the local copy or `origin/`, whichever the branch left later:
 
 ```bash
-FORK="$(git merge-base {{baseBranch}} HEAD 2>/dev/null)"
-UPSTREAM_FORK="$(git merge-base refs/remotes/origin/{{baseBranch}} HEAD 2>/dev/null)"
-if [ -n "$UPSTREAM_FORK" ] && { [ -z "$FORK" ] || git merge-base --is-ancestor "$FORK" "$UPSTREAM_FORK"; }; then
-  FORK="$UPSTREAM_FORK"
-fi
-git -c core.quotePath=false diff --name-only --diff-filter=d "$FORK" HEAD
+BASE_VARS="$(npx --no-install skills base)" && eval "$BASE_VARS" && echo "base: $BASE_BRANCH ($BASE_SOURCE)" >&2 &&
+  git -c core.quotePath=false diff --name-only --diff-filter=d "$FORK" HEAD
 ```
+
+If `skills base` exits non-zero, stop and show the user what it printed.
+Otherwise tell them the base and its source, and pass on any `warning:` line.
 
 Each line is one path. A path can contain spaces, so quote every path in every
 command from here on.

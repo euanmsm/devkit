@@ -5,24 +5,26 @@ the files a reviewer should open, in the order that makes the change easiest to
 follow, with a few words of guidance where a file would otherwise be read the
 wrong way.
 
-It reads the branch's diff over `baseBranch` and the code around it before
+It reads the branch's diff over its parent branch and the code around it before
 ordering anything, so the list follows how the change works rather than how the
 files happen to be named. It never edits code, stages or commits.
 
 ## Running it
 
 ```
-/reading-order            # diff over baseBranch
+/reading-order            # diff over the branch's parent
 /reading-order <branch>   # diff over another base
 ```
 
 ## What it does
 
-1. **Finds the diff.** It diffs the branch against the commit it left the base
-   at, preferring `origin/<base>` when that is further along, as the other
-   skills do. Only committed changes count, since that is what the PR shows;
-   uncommitted ones are mentioned in the reply and left out. When a PR is open,
-   its title and description are read for context.
+1. **Finds the diff.** It diffs the branch against the commit it left its parent
+   branch at, found the same way as every other branch skill (see
+   [How the base branch is found](base-branch.md)), so a stacked branch's
+   reading order covers only its own commits. Only committed changes count,
+   since that is what the PR shows; uncommitted ones are mentioned in the reply
+   and left out. When a PR is open, its title and description are read for
+   context.
 2. **Understands the change.** It reads the whole diff and whatever code around
    it it needs, until it can say what the branch does, which files the change is
    really about, which files only changed mechanically, and whether a doc

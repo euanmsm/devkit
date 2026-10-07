@@ -121,11 +121,7 @@ export function prValues(pr, options, shared) {
     ]
       .join(', ')
       .replace(/'/g, "''"),
-    baseRule:
-      pr.base === 'stack'
-        ? `The base is \`${shared.baseBranch}\`, except on a branch in a \`gh stack\`, which targets the branch directly below it; the prepass works this out. Never open a mid-stack PR against \`${shared.baseBranch}\` — it flattens the stack. \`gh stack submit\` also creates and updates the PRs, with the same bases; this skill is still what writes the summary and the checklist.`
-        : `The base is always \`${shared.baseBranch}\`.`,
-    stackBase: pr.base === 'stack',
+    baseRule: `The base is the branch this one was cut from — its open PR's base, the branch below it in a \`gh stack\`, or the parent git recorded when it was created — and \`${shared.baseBranch}\` only when none of those answers. The prepass works this out. Never open a stacked PR against \`${shared.baseBranch}\`: it flattens the stack.`,
     layerTable: layerTable(pr),
     splitSections: splitSectionsText(pr),
   };

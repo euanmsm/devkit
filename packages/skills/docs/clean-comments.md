@@ -38,7 +38,8 @@ The first rule that matches wins:
 2. **No paths, uncommitted changes** — the changed files, including files inside
    new folders.
 3. **No paths, clean working tree** — the files the branch changed since it left
-   `baseBranch`.
+   its parent branch, so a stacked branch cleans only its own files. See
+   [How the base branch is found](base-branch.md).
 4. **Nothing either way** — it says so and stops. It never goes looking for
    comment problems elsewhere in the repository.
 

@@ -51,7 +51,7 @@ These sit at the top level and apply to every skill.
 | `skillsDir`  | `.claude/skills` | The folder skills are written into, one subfolder each                                                                        |
 | `agentsDir`  | `.claude/agents` | The folder agents are written into (only `clean-comments` writes one)                                                         |
 | `rulesDir`   | `.claude/rules`  | The folder rules are written into (only `code-review` writes one)                                                             |
-| `baseBranch` | `main`           | The branch a skill compares the current branch with, and rebases onto                                                         |
+| `baseBranch` | `main`           | The branch a skill compares the current branch with when it has no parent branch — see [base-branch.md](base-branch.md)       |
 | `format`     | `none`           | `prettier` runs the repository's own Prettier over each generated file before `sync` writes it and before `check` compares it |
 
 Each is a non-empty string. A trailing slash on a folder is dropped, so

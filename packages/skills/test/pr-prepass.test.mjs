@@ -30,7 +30,6 @@ import {
   prPrepass,
   renderFacts,
   ripgrep,
-  stackParent,
   testsBeside,
 } from '../src/pr/prepass.mjs';
 import { makeRepo, write } from './repo.mjs';
@@ -186,66 +185,6 @@ describe('pr prepass — pure helpers', () => {
     assert.ok(globToRegExp('supabase/seed*').test('supabase/seed.sql'));
     assert.ok(globToRegExp('a?.ts').test('ab.ts'));
     assert.ok(!globToRegExp('.env.example').test('xenvxexample'));
-  });
-
-  it('finds the parent branch in a gh stack', () => {
-    const run = (stack) => () => JSON.stringify(stack);
-
-    assert.equal(
-      stackParent(run({ branches: [{ name: 'a' }, { name: 'b' }] }), '/', 'b'),
-      'a',
-    );
-    assert.equal(
-      stackParent(
-        run([{ branch: 'a' }, { branch: 'b' }, { branch: 'c' }]),
-        '/',
-        'c',
-      ),
-      'b',
-    );
-    assert.equal(stackParent(run(['a', 'b']), '/', 'b'), 'a');
-    assert.equal(
-      stackParent(run({ branches: [{ name: 'a' }] }), '/', 'a'),
-      null,
-    );
-    assert.equal(
-      stackParent(run({ branches: [{ name: 'a' }] }), '/', 'z'),
-      null,
-    );
-    assert.equal(
-      stackParent(
-        () => {
-          throw Object.assign(new Error('Command failed'), {
-            stderr: '✗ current branch "a" is not part of a stack\n',
-          });
-        },
-        '/',
-        'a',
-      ),
-      null,
-    );
-  });
-
-  it('stops rather than guess the base when the stack cannot be read', () => {
-    assert.throws(
-      () =>
-        stackParent(
-          () => {
-            throw new Error('gh: unknown command "stack"');
-          },
-          '/',
-          'a',
-        ),
-      /Could not read the stack .*unknown command.*pass --base <branch>/,
-    );
-    assert.throws(
-      () => stackParent(() => 'not json', '/', 'a'),
-      /Could not read the stack/,
-    );
-    assert.throws(
-      () => stackParent(() => '{"stack":[]}', '/', 'a'),
-      /shape this package cannot read.*pass --base <branch>/,
-    );
   });
 
   it('finds a component’s stories and reads their titles', () => {
@@ -755,7 +694,12 @@ describe('pr prepass — against a real branch', () => {
       scratch: 'tmp/s',
       baseBranch: 'main',
     });
-    assert.deepEqual(args, { ahead: 0, base: 'main', branch: 'empty' });
+    assert.deepEqual(args, {
+      ahead: 0,
+      base: 'main',
+      baseSource: 'default branch',
+      branch: 'empty',
+    });
     assert.ok(!existsSync(join(root, 'tmp/s')));
   });
 
@@ -766,7 +710,6 @@ describe('pr prepass — against a real branch', () => {
     git(root, 'add', '.');
     git(root, 'commit', '-qm', 'more');
 
-    const stacked = { ...CONFIG, base: 'stack' };
     const run = (command, args, cwd) =>
       command === 'gh'
         ? JSON.stringify({
@@ -775,16 +718,18 @@ describe('pr prepass — against a real branch', () => {
         : execFileSync(command, args, { cwd, encoding: 'utf8' });
     const rg = () => '';
 
-    const fromStack = await prPrepass(root, stacked, {
+    const fromStack = await prPrepass(root, CONFIG, {
       scratch: 't1',
       baseBranch: 'main',
       run,
       rg,
     });
     assert.equal(fromStack.base, 'feature/badge');
+    assert.equal(fromStack.baseSource, 'gh stack');
+    assert.equal(fromStack.ahead, 1);
     assert.deepEqual(fromStack.sections, { backend: true, frontend: false });
 
-    const overridden = await prPrepass(root, stacked, {
+    const overridden = await prPrepass(root, CONFIG, {
       scratch: 't2',
       baseBranch: 'main',
       base: 'main',
@@ -792,7 +737,32 @@ describe('pr prepass — against a real branch', () => {
       rg,
     });
     assert.equal(overridden.base, 'main');
+    assert.equal(overridden.baseSource, 'given');
     assert.equal(overridden.ahead, 2);
+  });
+
+  it('diffs a stacked branch against the parent it was created from', async () => {
+    const root = branchRepo();
+    git(root, 'branch', 'feature/next', 'feature/badge');
+    git(root, 'checkout', '-q', 'feature/next');
+    write(root, 'src/api/more.ts', 'export const more = 1;\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'more');
+
+    const args = await prPrepass(root, CONFIG, {
+      scratch: 't',
+      baseBranch: 'main',
+      rg: () => '',
+    });
+
+    assert.equal(args.base, 'feature/badge');
+    assert.equal(args.baseSource, 'the branch reflog');
+    assert.equal(args.ahead, 1);
+    assert.doesNotMatch(readFileSync(args.diffPath, 'utf8'), /Badge = 2/);
+    assert.match(
+      readFileSync(args.factsPath, 'utf8'),
+      /against `feature\/badge` \(the branch reflog\)/,
+    );
   });
 
   it('fetches the base and diffs against origin over a stale local copy', async () => {
@@ -848,7 +818,7 @@ describe('pr prepass — against a real branch', () => {
         baseBranch: 'nope',
         rg: () => '',
       }),
-      /The base branch "nope" does not exist locally or on origin/,
+      /No nope branch, locally or as origin\/nope/,
     );
   });
 

@@ -62,16 +62,15 @@ The skill does three things, and the model only thinks in the middle one.
 
 A script, not an agent. It:
 
-1. Finds the base branch: `--base <branch>` when given, otherwise the shared
-   `baseBranch`, or, with `base: 'stack'`, the branch directly below this one in
-   a `gh stack`. When `gh stack view` fails for any reason other than the branch
-   being in no stack, or answers in a shape it cannot read, it stops and says to
-   pass `--base`, rather than guess `baseBranch` and open a mid-stack PR against
-   it. It runs `git fetch origin <base>` (a failure, such as being offline, is
-   ignored), then diffs against `origin/<base>`, which is what GitHub diffs
-   against. The local branch is used only when there is no `origin/<base>`,
-   since a local base is often weeks behind and would pull every upstream commit
-   into the checklist.
+1. Finds the base branch: `--base <branch>` when given, otherwise the branch's
+   parent. That is the base of its open PR, the branch below it in a `gh stack`,
+   or the parent git recorded when it was created, and `baseBranch` only when
+   none of those answers. A stacked PR is never opened against `baseBranch`, and
+   its checklist never covers its parents' changes.
+   [How the base branch is found](base-branch.md) has every rule. It fetches the
+   base, then diffs against the local copy or `origin/<base>`, whichever the
+   branch left later. It prints `base`, `baseSource` (how the base was found)
+   and `baseWarnings`, and the skill tells you the first two before it goes on.
 2. Stops with `"ahead": 0` when the branch has no commits over its base.
 3. Writes the diff, one patch file per changed file, and a **facts file** to the
    scratch folder. The facts file lists:
@@ -435,10 +434,9 @@ of reach).
 
 ### `base`
 
-`'branch'` (the default) targets the shared `baseBranch`. `'stack'` targets the
-branch directly below this one in a `gh stack`, falling back to `baseBranch` on
-a branch in no stack. A stack lookup that fails stops the prepass instead; pass
-`--base <branch>` to name the base yourself.
+No longer used; it is still accepted so older configs load, and you can delete
+it. The base is always the branch's parent, `gh stack` included — see
+[How the base branch is found](base-branch.md).
 
 ### `actors`
 
