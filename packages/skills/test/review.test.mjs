@@ -761,6 +761,11 @@ describe('the generated workflow', () => {
     });
     assert.match(withReport, /`t\/_deadCode\.tmp\.json`/);
     assert.match(withReport, /lists it under `findings`/);
+    assert.match(
+      withReport,
+      /Never refute a real problem for predating the branch/,
+    );
+    assert.doesNotMatch(withReport, /refute it as pre-existing/);
 
     assert.doesNotMatch(
       await verifier({ sentinel: 't/done.json' }),
@@ -800,11 +805,12 @@ describe('merging findings', () => {
    *
    * @param findings - Findings by reviewer label, less `review:`, in place of that bundle's canned ones
    * @param verdicts - Verdict by finding id, in place of `confirmed`
+   * @param config - The review config, the default when left out
    * @returns The workflow's result and logs
    */
-  function review(findings, verdicts = {}) {
+  function review(findings, verdicts = {}, config = {}) {
     return runWorkflow(
-      renderEngine(ENGINE, resolve({})),
+      renderEngine(ENGINE, resolve(config)),
       { ...DIFF_ARGS, changedFiles: ['src/a.ts'] },
       {
         reply: (label, prompt) => {
@@ -830,7 +836,7 @@ describe('merging findings', () => {
   }
 
   test('keeps a confirmed finding beside a refuted one from the same reviewer', async () => {
-    const { result, logs } = await review(
+    const { result } = await review(
       {
         'correctness-1': [
           finding('bugs-nit', 'bugs', '40', 'low', 'Naming nit'),
@@ -840,30 +846,33 @@ describe('merging findings', () => {
       { 'bugs-nit': 'refuted' },
     );
 
+    // Two lines apart, but from one reviewer, so never merged even by location.
     assert.equal(result.stats.critical, 1);
     assert.equal(result.stats.refuted, 1);
-    assert.equal(result.stats.twins, 0);
-    assert.match(result.markdown, /## \d+ — Null deref/);
+    assert.match(result.markdown, /### \d+ — Null deref/);
     assert.match(result.markdown, /## Refuted and dropped\n\n- \*\*Naming nit/);
     assert.doesNotMatch(result.markdown, /Split verdict/);
-    assert.ok(logs.some((line) => /0 cross-bundle twin/.test(line)));
   });
 
   test('merges one lens’s finding across bundles and shows the most severe', async () => {
-    const { result } = await review({
-      'correctness-1': [finding('bugs-a', 'bugs', '40', 'low', 'Off by one')],
-      security: [
-        finding('bugs-b', 'bugs', '41', 'critical', 'Off by one, crashes'),
-        finding('sec-a', 'security', '40', 'high', 'Unescaped input'),
-      ],
-    });
+    const { result } = await review(
+      {
+        'correctness-1': [finding('bugs-a', 'bugs', '40', 'low', 'Off by one')],
+        security: [
+          finding('bugs-b', 'bugs', '41', 'critical', 'Off by one, crashes'),
+          finding('sec-a', 'security', '40', 'high', 'Unescaped input'),
+        ],
+      },
+      {},
+      { dedupe: { by: 'lens' } },
+    );
 
     assert.equal(result.stats.twins, 1);
     assert.equal(result.stats.critical, 1);
     assert.equal(result.stats.low, 0);
-    assert.match(result.markdown, /## \d+ — Off by one, crashes/);
-    assert.match(result.markdown, /## \d+ — Unescaped input/);
-    assert.doesNotMatch(result.markdown, /## \d+ — Off by one\n/);
+    assert.match(result.markdown, /### \d+ — Off by one, crashes/);
+    assert.match(result.markdown, /### \d+ — Unescaped input/);
+    assert.doesNotMatch(result.markdown, /### \d+ — Off by one\n/);
   });
 
   test('drops a merged finding only when every verifier refuted it', async () => {
@@ -888,14 +897,15 @@ describe('merging findings', () => {
   });
 
   /**
-   * Reviews `src/a.ts` on the default config, letting a function replace any reply.
+   * Reviews `src/a.ts`, merging by lens, letting a function replace any reply.
    *
    * @param override - Returns the reply for a label, or undefined to keep the canned one
    * @returns The workflow's result, calls and logs
    */
   function reviewWith(override) {
+    // Every bundle's canned findings sit on the same lines, so merging by location would fold them.
     return runWorkflow(
-      renderEngine(ENGINE, resolve({})),
+      renderEngine(ENGINE, resolve({ dedupe: { by: 'lens' } })),
       {
         ...DIFF_ARGS,
         changedFiles: ['src/a.ts'],
@@ -1086,6 +1096,253 @@ describe('merging findings', () => {
       const call = calls.find((one) => one.label === label);
       assert.match(call.prompt, /`tmp\/patch\/<path>\.patch`/, label);
     }
+  });
+});
+
+describe('the report, split by scope', () => {
+  /**
+   * Builds one finding on `src/a.ts` with a scope.
+   *
+   * @param id - The finding id, whose prefix is its lens
+   * @param scope - Its scope label
+   * @param severity - Its severity
+   * @param line - The line string
+   * @returns The finding
+   */
+  function scoped(id, scope, severity, line) {
+    return {
+      id,
+      lens: id.split('-')[0],
+      file: 'src/a.ts',
+      line,
+      severity,
+      issue: `${id} issue`,
+      detail: 'detail',
+      whyItMatters: `${id} matters`,
+      evidence: 'evidence',
+      convention: null,
+      scope,
+    };
+  }
+
+  /**
+   * Reviews `src/a.ts` with the correctness reviewer returning the given findings.
+   *
+   * @param findings - The findings, all from one reviewer so none merge
+   * @param options - `corrected` fields by finding id, `mode`, and the `args` to add
+   * @returns The workflow's result and calls
+   */
+  function reviewScoped(
+    findings,
+    { corrected = {}, mode = 'diff', args = {} } = {},
+  ) {
+    const base =
+      mode === 'diff'
+        ? { ...DIFF_ARGS, changedFiles: ['src/a.ts'], ...args }
+        : { ...DIFF_ARGS, mode: 'target', targets: ['src/a.ts'], ...args };
+    return runWorkflow(renderEngine(ENGINE, resolve({})), base, {
+      reply: (label, prompt) => {
+        const canned = reply(label, prompt);
+        if (label.startsWith('review:')) {
+          return {
+            ...canned,
+            findings: label.startsWith('review:correctness') ? findings : [],
+          };
+        }
+        if (label.startsWith('verify:')) {
+          return {
+            verdicts: canned.verdicts.map((one) =>
+              corrected[one.id]
+                ? {
+                    ...one,
+                    verdict: 'amended',
+                    reasoning: 'relabelled',
+                    corrected: corrected[one.id],
+                  }
+                : one,
+            ),
+          };
+        }
+        return canned;
+      },
+    });
+  }
+
+  const MIXED = [
+    scoped('bugs-1', 'branch', 'high', '10'),
+    scoped('bugs-2', 'branch', 'low', '20'),
+    scoped('bugs-3', 'carried', 'medium', '30'),
+    scoped('bugs-4', 'outside', 'high', '40'),
+    scoped('bugs-5', 'outside', 'low', '50'),
+  ];
+
+  test('puts each finding under its scope, the branch’s own first', async () => {
+    const { result } = await reviewScoped(MIXED);
+    const md = result.markdown;
+
+    const at = (text) => md.indexOf(text);
+    assert.ok(at('# This branch') < at('# Carried over'));
+    assert.ok(at('# Carried over') < at('# Not this branch'));
+    assert.ok(at('### 1 — bugs-1 issue') > at('# This branch'));
+    assert.ok(at('### 3 — bugs-3 issue') > at('# Carried over'));
+    assert.match(
+      md,
+      /\*\*Findings:\*\* This branch 1H 1L · Carried over 1M · Not this branch 1H 1L/,
+    );
+    assert.deepEqual(result.stats.byScope, {
+      branch: 2,
+      carried: 1,
+      outside: 2,
+    });
+  });
+
+  test('writes low findings as table rows, and outside findings only as rows', async () => {
+    const { result } = await reviewScoped(MIXED);
+    const md = result.markdown;
+
+    assert.match(
+      md,
+      /## Low severity\n\n\| # \| Sev \| Issue \| Where \| Why it matters \|[\s\S]*\| <a id="f2"><\/a>2 \| L \| bugs-2 issue \| `src\/a\.ts:20` \| bugs-2 matters \|/,
+    );
+    assert.doesNotMatch(md, /### \d+ — bugs-2 issue/);
+    assert.doesNotMatch(md, /### \d+ — bugs-4 issue/);
+    assert.match(md, /\| <a id="f4"><\/a>4 \| H \| bugs-4 issue \|/);
+  });
+
+  test('suggests a Linear issue for each medium or higher finding outside the branch', async () => {
+    const { result } = await reviewScoped(MIXED);
+    const md = result.markdown;
+    const linear = md.slice(md.indexOf('## Suggested Linear issues'));
+
+    assert.match(
+      linear,
+      /\*\*bugs-4 issue\*\*\n`src\/a\.ts:40` — bugs-4 matters\nPredates `feat\/x`; found by the bugs lens while reviewing it/,
+    );
+    assert.doesNotMatch(linear, /bugs-5|bugs-3/);
+  });
+
+  test('writes no Linear section when nothing outside is medium or higher', async () => {
+    const { result } = await reviewScoped([
+      scoped('bugs-1', 'branch', 'high', '10'),
+      scoped('bugs-2', 'outside', 'low', '20'),
+    ]);
+
+    assert.match(result.markdown, /# Not this branch/);
+    assert.doesNotMatch(result.markdown, /Suggested Linear issues/);
+    assert.doesNotMatch(result.markdown, /# Carried over/);
+  });
+
+  test('leads with the branch’s own findings and leaves the outside ones off the PR', async () => {
+    const { result, calls } = await reviewScoped(MIXED);
+    const lead = calls.find((call) => call.label === 'compose:read-this-first');
+
+    assert.match(lead.prompt, /bugs-1 issue/);
+    assert.doesNotMatch(lead.prompt, /bugs-3 issue|bugs-4 issue/);
+    assert.match(
+      result.prBody,
+      /\*\*0 critical · 1 high · 1 medium · 1 low\.\*\*/,
+    );
+    assert.match(result.prBody, /2 more finding\(s\) predate this branch/);
+    assert.match(
+      result.markdown,
+      /\| \[3\]\(#f3\) \| M \| Carried over \| bugs-3 issue/,
+    );
+    assert.doesNotMatch(result.markdown, /\| \[4\]\(#f4\)/);
+  });
+
+  test('moves a finding when the verifier corrects its scope', async () => {
+    const { result } = await reviewScoped(
+      [scoped('bugs-1', 'branch', 'high', '10')],
+      { corrected: { 'bugs-1': { scope: 'carried' } } },
+    );
+
+    assert.deepEqual(result.stats.byScope, {
+      branch: 0,
+      carried: 1,
+      outside: 0,
+    });
+    assert.match(
+      result.markdown,
+      /Nothing the branch caused survived verification/,
+    );
+    assert.ok(
+      result.markdown.indexOf('### 1 — bugs-1 issue') >
+        result.markdown.indexOf('# Carried over'),
+    );
+  });
+
+  test('ignores a scope correction off the scale', async () => {
+    const { result } = await reviewScoped(
+      [scoped('bugs-1', 'branch', 'high', '10')],
+      { corrected: { 'bugs-1': { scope: 'elsewhere' } } },
+    );
+
+    assert.equal(result.stats.byScope.branch, 1);
+  });
+
+  test('counts an unlabelled finding as the branch’s own', async () => {
+    const unlabelled = { ...scoped('bugs-1', 'branch', 'high', '10') };
+    delete unlabelled.scope;
+    const { result } = await reviewScoped([unlabelled]);
+
+    assert.equal(result.stats.byScope.branch, 1);
+  });
+
+  test('names the parent and how it was found in the header and the prompts', async () => {
+    const { result, calls } = await reviewScoped(MIXED, {
+      args: { baseBranch: 'cur-1722', baseSource: 'PR #992' },
+    });
+
+    assert.match(
+      result.markdown,
+      /\*\*Base:\*\* `cur-1722` \(PR #992\), from `abc123`/,
+    );
+    const reviewer = calls.find((call) =>
+      call.label.startsWith('review:correctness'),
+    );
+    assert.match(
+      reviewer.prompt,
+      /against its parent `cur-1722`, from the fork commit `abc123`/,
+    );
+    assert.match(reviewer.prompt, /label it, so the report can keep it apart/);
+  });
+
+  test('verifies the branch’s own findings before old ones outside it', async () => {
+    const outside = Array.from({ length: 12 }, (_, i) =>
+      scoped(`bugs-o${i}`, 'outside', 'high', String(100 + i * 10)),
+    );
+    const { result } = await reviewScoped([
+      ...outside,
+      scoped('bugs-mine', 'branch', 'low', '10'),
+    ]);
+
+    assert.match(
+      result.markdown,
+      /\| bugs-mine issue \| `src\/a\.ts:10` \| bugs-mine matters \|/,
+    );
+    assert.doesNotMatch(result.markdown, /bugs-mine matters _\(unverified\)_/);
+    assert.equal(result.stats.unverified, 1);
+  });
+
+  test('writes a low coverage gap as a table row in its own section', async () => {
+    const { result } = await reviewScoped([
+      scoped('bugs-1', 'branch', 'high', '10'),
+      { ...scoped('coverage-bugs-1', 'branch', 'low', '20'), lens: 'bugs' },
+    ]);
+    const coverage = result.markdown.slice(
+      result.markdown.indexOf('# Coverage gaps'),
+    );
+
+    assert.match(coverage, /## Low severity[\s\S]*coverage-bugs-1 issue/);
+    assert.match(result.markdown, /1 low-severity finding\(s\) are in a table/);
+  });
+
+  test('a target review has no scope sections', async () => {
+    const { result } = await reviewScoped(MIXED, { mode: 'target' });
+
+    assert.match(result.markdown, /# Findings\n/);
+    assert.doesNotMatch(result.markdown, /# This branch|# Not this branch/);
+    assert.equal(result.stats.byScope.branch, 5);
   });
 });
 

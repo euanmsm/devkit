@@ -52,6 +52,9 @@ branch (and the target, in target mode).
 - **Verifier** — an agent that tries to disprove findings about one file.
 - **Prepass** — the typecheck, lint and similar tools, run once in the
   background so no reviewer runs them itself.
+- **Scope** — in diff mode, whose problem a finding is: `branch` (the branch
+  caused it), `carried` (it was already there, inside code the branch rewrote or
+  moved) or `outside` (it was already there, in code the branch left alone).
 
 ## How a review runs
 
@@ -176,8 +179,8 @@ Each reviewer gets a prompt holding:
   alone.
 - Its files, Recon's summary, the context pack path and Recon's note for this
   bundle.
-- In diff mode, the patch folder and a rule: report only what this branch adds,
-  changes or breaks.
+- In diff mode, the patch folder, the parent branch and fork commit, and the
+  scope rule: label every finding with whose problem it is.
 - The tool reports, with an instruction to wait for the prepass to finish and
   never to run the tools itself.
 - Reading instructions: the whole file, its callers, what it calls across a
@@ -186,8 +189,12 @@ Each reviewer gets a prompt holding:
 
 Reviewers run on their bundle's `model` (or their split half's). They report
 findings with a file, a line, a severity (`critical`, `high`, `medium`, `low`),
-what is wrong, why it matters and the evidence. They also report every lens they
-ran, even the ones that found nothing, so a skipped pass shows up.
+what is wrong, why it matters, the evidence and, in diff mode, a scope. A
+reviewer spends its attention on what the branch adds, changes or breaks, but a
+real problem it meets that predates the branch is still reported, labelled
+`carried` or `outside`, rather than dropped. A finding with no scope counts as
+`branch`. They also report every lens they ran, even the ones that found
+nothing, so a skipped pass shows up.
 
 **Coverage.** In diff mode, a lens with `coverage` patterns has a second job:
 list the behaviour the branch added that has no test. Those findings are
@@ -199,8 +206,10 @@ As soon as a bundle's reviewer finishes — without waiting for the others — i
 findings go to verification:
 
 1. A finding with no line number is dropped; it cannot be placed in the report.
-2. The rest are sorted by severity, and the first 12 are verified. Any beyond 12
-   are kept in the report, marked unverified.
+2. The rest are sorted by severity, with `outside` findings after every other
+   scope, and the first 12 are verified. That way old problems never push the
+   branch's own findings past the cap. Any beyond 12 are kept in the report,
+   marked unverified.
 3. Findings are grouped by file. One verifier checks up to 8 findings on one
    file.
 4. A verifier runs on Opus if any of its findings is `critical` or `high`, and
@@ -208,9 +217,12 @@ findings go to verification:
 
 The verifier re-reads the file, checks every citation is real, re-runs any
 experiment the finding claims, traces the claim through the code, and challenges
-the severity. It returns `confirmed`, `amended` (with corrections) or `refuted`
-for each finding. A correction may only change a finding's own fields, and a
-severity outside `critical`, `high`, `medium` and `low` is ignored.
+the severity. In diff mode it also checks the scope against the patch and the
+merge base. A wrong scope is an amendment: a real problem is never refuted for
+predating the branch, and `refuted` means only that the problem is not real. It
+returns `confirmed`, `amended` (with corrections) or `refuted` for each finding.
+A correction may only change a finding's own fields, and a severity or scope
+outside its list is ignored.
 
 A finding with no verdict is kept and marked unverified, with a note saying why:
 it was over the cap, its verifier returned nothing, or the verifier gave no
@@ -218,11 +230,11 @@ verdict for its id. `stats.unverified` counts all three, after merging.
 
 ### 9. Findings are merged
 
-- By default, two findings from different bundles, under the same lens, on the
-  same file, with lines within 2 of each other are treated as one. Two findings
-  from the same reviewer are never merged. With `dedupe: { by: 'location' }`,
-  any two findings on the same file within the slack are one, whichever lens and
-  reviewer raised them, and the merged finding lists every lens.
+- By default, two findings from different bundles, on the same file, with lines
+  within 2 of each other are treated as one, whichever lens raised them, and the
+  merged finding lists every lens. Two findings from the same reviewer are never
+  merged: one reviewer reporting two findings means two problems. With
+  `dedupe: { by: 'lens' }`, only findings under the same lens merge.
 - Each verdict applies to its own finding. By default a merged finding is
   dropped only when every verifier refuted it, and the report shows the most
   severe finding that survived. With `verdicts: 'any-refutes'`, one refutation
@@ -231,12 +243,26 @@ verdict for its id. `stats.unverified` counts all three, after merging.
 
 ### 10. The report is written
 
-If anything survived, one more agent (on Sonnet) writes a "Read this first"
-paragraph naming the single most important thing. The report then holds:
+If any of the branch's own findings survived, one more agent (on Sonnet) writes
+a "Read this first" paragraph naming the single most important one. Findings
+from the other scopes never lead the report. The report then holds:
 
-- a summary table of every surviving finding, most severe first
-- one section per lens with each finding in full
-- coverage gaps, last
+- a header naming the base, how it was found and the fork commit, and the
+  findings counted per scope, such as
+  `This branch 1H 4M 9L · Carried over 1M · Not this branch 2H`
+- a summary table of the critical, high and medium findings in **This branch**
+  and **Carried over**, with their scope
+- in diff mode, one section per scope:
+  - **This branch** — critical to medium findings in full, under a heading per
+    lens, then the low ones as a table of one row each
+  - **Carried over** — the same layout, for old problems in code the branch
+    rewrote or moved; cheapest to fix while in that code
+  - **Not this branch** — a table only, then **Suggested Linear issues**: a
+    title and a two-line description for each medium or higher finding, ready to
+    paste, so each gets its own issue and PR
+- in target mode, one **Findings** section with the same full-then-table layout
+- the branch's own coverage gaps, last, in the same layout: in full down to
+  medium, then the low ones as a table
 - what was refuted and why, and every routing change Recon made
 - a table per bundle of what each lens checked — any lens that never reported
   back says so, and a bundle whose reviewer returned nothing says that under its
@@ -244,8 +270,12 @@ paragraph naming the single most important thing. The report then holds:
 - in diff mode, the state reviewed: the commit, and how many uncommitted files
   were left out
 
-The script also returns a four-line summary for a GitHub review body, used only
-in PR mode.
+The script also returns a short summary for a GitHub review body, used only in
+PR mode. Its counts cover **This branch** and **Carried over**, and one line
+says how many findings were left off the PR as not this branch's. Only those two
+sections are posted as inline comments. `stats.byScope` counts the findings in
+each scope, and the skill offers to create the suggested Linear issues, only
+when you say yes.
 
 ## Configuring it
 
@@ -312,7 +342,7 @@ export default {
   splitOrder: [ … ],
   prompts: { … },
   rosterNotes: `…`,
-  dedupe: { by: 'lens', lines: 2 },
+  dedupe: { by: 'location', lines: 2 },
   verdicts: 'all-refute',
 };
 ```
@@ -546,13 +576,14 @@ ones that read wrong for your repository. See [Prompt wording](#prompt-wording).
 
 How findings at the same spot are merged into one entry.
 
-| Key     | Default  | What it does                                                                                                                 |
-| ------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `by`    | `'lens'` | `'lens'` merges only one lens's findings from different bundles. `'location'` merges any findings on the same file and lines |
-| `lines` | `2`      | How many lines apart two findings can be and still count as the same spot                                                    |
+| Key     | Default      | What it does                                                                                                                                         |
+| ------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `by`    | `'location'` | `'location'` merges findings from different bundles on the same file and lines, whichever lens raised them. `'lens'` merges only one lens's findings |
+| `lines` | `2`          | How many lines apart two findings can be and still count as the same spot                                                                            |
 
 `'location'` gives a shorter report when several lenses flag the same line, and
-fewer inline comments under GitHub's cap when posting.
+fewer inline comments under GitHub's cap when posting. In either mode, two
+findings from the same reviewer are never merged.
 
 ### `verdicts`
 

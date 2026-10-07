@@ -317,6 +317,11 @@ first batch, `event` omitted so it stays `PENDING`, then every later comment
 appended one at a time via `addPullRequestReviewThread`. Never
 delete-and-repost. **Never submit** — the review waits until the user says so.
 
+**Only "This branch" and "Carried over" findings go on the PR.** The report's
+"Not this branch" section is for the author, not the PR: those problems predate
+the branch, and posting them asks the PR to fix what it never touched. The
+workflow's `prBody` already says how many there are.
+
 Two constraints belong to this step:
 
 - **A comment can only anchor to a line that appears in the diff.** A finding on
@@ -369,7 +374,9 @@ is:
 ```
 Code review complete — <n> files, <result.stats.reviewAgents> review agents, <result.stats.verifyAgents> verifiers.
 
-Findings: <C critical / H high / M medium / L low><, n coverage gaps>
+Base: <BASE_BRANCH> (<BASE_SOURCE>)
+Findings: This branch <n> · Carried over <n> · Not this branch <n><, n coverage gaps>   (from result.stats.byScope)
+          <C critical / H high / M medium / L low> across all of them
 Verification: <n> sent, <n> confirmed/amended, <n> refuted and dropped.
 
 Report: <result.suggestedPath>
@@ -383,6 +390,12 @@ If `result.stats.splitVerdicts` is above zero, add a line: that many findings
 came back with two different verdicts because two bundles raised them, each was
 kept unless every verifier refuted it, and the report says so at each one. Do not average that away in the summary
 — a split verdict is the one place the review disagreed with itself.
+
+If the report's **Not this branch** section has **Suggested Linear issues**,
+list their titles and offer to create them as Linear issues, one per finding,
+so each gets its own PR. Create them only if the user says yes, through the
+Linear tools if they are connected (otherwise give the user the text to
+paste). Never create them unasked.
 
 If `result.bundlesDied` is not empty, add a line naming those bundles: their
 reviewer returned nothing, so their lenses were not reviewed. If `DIRTY` was
@@ -486,8 +499,9 @@ other bundles are still reading. Dedup runs afterwards, with three
 consequences:
 
 - **A cross-bundle twin is verified twice.** Twins are findings from different
-  bundles under the same lens, on the same file, within two lines of each
-  other. Two findings from one reviewer are never merged. The report says how
+  bundles on the same file within two lines of each other, whichever lens
+  raised them (or under the same lens only, with `dedupe: { by: 'lens' }`).
+  Two findings from one reviewer are never merged. The report says how
   many twins there were, so the cost is measured rather than guessed.
 - **Each verdict applies to its own finding.** A twin is dropped only when
   every verifier refuted it, so a refuted nit can never take a confirmed
@@ -495,9 +509,18 @@ consequences:
   survived. A disagreement is never hidden — the finding is marked **Split
   verdict** wherever it appears, and `result.stats.splitVerdicts` counts them.
 - **The verify cap is per bundle.** Twelve findings per bundle in severity
-  order. Anything over the cap is kept and marked unverified.
+  order, with `outside` findings last so they never crowd out the branch's
+  own. Anything over the cap is kept and marked unverified.
 
-### Diff mode adds two things
+### Diff mode adds three things
+
+**Scope.** Every finding says whose problem it is: `branch` (the branch caused
+it), `carried` (it was already there, in code the branch rewrote or moved) or
+`outside` (it was already there, in code the branch left alone). Reviewers
+still report what they find outside the branch, and verifiers relabel a wrong
+scope rather than refuting an old problem, so nothing real is lost. The report
+gives each scope its own section, and only the branch's own findings can lead
+it.
 
 **Coverage analysis.** The test lenses each get a second job: find what the
 branch should have covered and did not. A coverage gap only means something

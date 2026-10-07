@@ -112,9 +112,9 @@ const SAME_SPOT = {
 };
 
 describe('review config — dedupe and verdicts', () => {
-  test('default to merging by lens and dropping only when every verifier refutes', () => {
+  test('default to merging by location and dropping only when every verifier refutes', () => {
     const { dedupe, verdicts } = resolve({});
-    assert.deepEqual(dedupe, { by: 'lens', lines: 2 });
+    assert.deepEqual(dedupe, { by: 'location', lines: 2 });
     assert.equal(verdicts, 'all-refute');
   });
 
@@ -141,24 +141,25 @@ describe('review config — dedupe and verdicts', () => {
 });
 
 describe('review workflow — merging by location', () => {
-  test('keeps findings from different lenses apart by default', async () => {
-    const { result } = await review({}, SAME_SPOT);
+  test('keeps findings from different lenses apart when merging by lens', async () => {
+    const { result } = await review({ dedupe: { by: 'lens' } }, SAME_SPOT);
     assert.equal(result.stats.twins, 0);
-    assert.match(result.markdown, /## \d+ — Null deref/);
-    assert.match(result.markdown, /## \d+ — Unchecked input/);
+    assert.match(result.markdown, /### \d+ — Null deref/);
+    assert.match(result.markdown, /### \d+ — Unchecked input/);
   });
 
-  test('merges any lens within the slack, showing the most severe and every lens', async () => {
-    const { result, logs } = await review(
-      { dedupe: { by: 'location' } },
-      SAME_SPOT,
-    );
+  test('merges any lens within the slack by default, showing the most severe and every lens', async () => {
+    const { result, logs } = await review({}, SAME_SPOT);
 
     assert.equal(result.stats.twins, 1);
-    assert.match(result.markdown, /## \d+ — Unchecked input/);
-    assert.doesNotMatch(result.markdown, /## \d+ — Null deref/);
+    assert.match(result.markdown, /### \d+ — Unchecked input/);
+    assert.doesNotMatch(result.markdown, /— Null deref/);
     assert.match(result.markdown, /\*\*Lenses:\*\* security, bugs/);
-    assert.match(result.markdown, /## \d+ — Log noise/);
+    // A low finding is a row in its section's table, not a full write-up.
+    assert.match(
+      result.markdown,
+      /\| <a id="f\d+"><\/a>\d+ \| L \| Log noise \|/,
+    );
     assert.ok(logs.some((line) => /1 same-spot twin/.test(line)));
   });
 
