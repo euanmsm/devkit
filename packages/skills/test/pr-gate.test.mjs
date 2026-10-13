@@ -1642,6 +1642,44 @@ describe('the collapsed layout — stale steps', () => {
       ['Backend 2 — The lockfile keeps msw nested under apps/web'],
     );
   });
+
+  it('names a list-only part’s steps as the collapsed layout does when told it is one', () => {
+    const list = [
+      '**Backend** · agent · about 5 min',
+      '',
+      '- [ ] **Backend 1** — Reads `src/a.ts` · ❌ failed',
+    ].join('\n');
+
+    assert.equal(isCollapsed(list), false);
+    assert.deepEqual(staleSteps(list, ['src/a.ts'], undefined, true), [
+      'Backend 1 — Reads `src/a.ts`',
+    ]);
+  });
+
+  it('ignores a toggle tag inside a fence when telling the layout', () => {
+    assert.equal(
+      isCollapsed('```\n<details><summary><b>x</b></summary>\n```'),
+      false,
+    );
+  });
+
+  it('closes a toggle written on a single line', () => {
+    const body = COLLAPSED.replace(
+      '**Frontend** · agent',
+      '<details><summary>Log</summary>pasted</details>\n\n**Frontend** · agent',
+    );
+    assert.equal(listedSteps(body).has('Frontend 1'), true);
+  });
+
+  it('keeps only the latest note in a split Local CI notes toggle', () => {
+    const body = COLLAPSED.replace(
+      '<details><summary>Local CI notes</summary>',
+      '<details><summary>Local CI notes (part 2)</summary>',
+    );
+    const reset = resetBody(body, { headSha: HEAD_SHA, now: NOW });
+    assert.equal(reset.includes('an earlier run'), false);
+    assert.equal(reset.includes('`npm run test:suite` exit 0'), true);
+  });
 });
 
 describe('the collapsed layout — banner', () => {

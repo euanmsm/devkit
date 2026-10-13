@@ -83,8 +83,11 @@ const STALE_LEAD = 'so they may be stale';
 /** A line opening a toggle, which a collapsed checklist writes on its own line. */
 const TOGGLE_OPEN_PATTERN = /^[ \t]*<details\b[^>]*>/i;
 
-/** A line closing a toggle. */
-const TOGGLE_CLOSE_PATTERN = /^[ \t]*<\/details>/i;
+/** A line closing a toggle: one opening or ending with the close tag. */
+const TOGGLE_CLOSE_PATTERN = /^[ \t]*<\/details>|<\/details>[ \t\r]*$/i;
+
+/** A fence delimiter: three or more backticks or tildes. */
+const FENCE_PATTERN = /^[ \t]*(`{3,}|~{3,})/;
 
 /** The summary on a toggle's opening line. */
 const SUMMARY_PATTERN = /<summary>(.*?)<\/summary>/i;
@@ -95,15 +98,15 @@ const STEP_SUMMARY_PATTERN = /^<b>(.+?)<\/b>/i;
 /** The summary of the toggle holding a section's steps. */
 const HOW_TO_PATTERN = /^How to run the /;
 
-/** The summary of the toggle holding the Local CI notes. */
-const LOCAL_CI_NOTES = 'Local CI notes';
+/** The summary of the toggle holding the Local CI notes, or one part of it. */
+const LOCAL_CI_NOTES_PATTERN = /^Local CI notes(?: \(part \d+\))?$/;
 
 /**
  * Tells a collapsed checklist from one written before it: only the collapsed
  * layout folds steps under toggles.
  */
 const COLLAPSED_PATTERN =
-  /^[ \t]*<details><summary>(?:How to run the |<b>|Local CI notes<\/summary>)/m;
+  /^[ \t]*<details><summary>(?:How to run the |<b>|Local CI notes(?: \(part \d+\))?<\/summary>)/;
 
 /** What `manual-qa` appends to a step's list line when the step failed. */
 const FAILED_SUFFIX_PATTERN = /[ \t]*·[ \t]*❌[ \t]*failed[ \t]*(?=\r?$)/;
@@ -158,38 +161,55 @@ export function partMarker(part) {
  * @returns One flag per line, true when the line is fenced
  */
 function fenceMask(lines) {
-  const mask = [];
   let fence = null;
 
-  for (const line of lines) {
-    const delimiter = /^[ \t]*(`{3,}|~{3,})/.exec(line);
+  return lines.map((line) => {
+    const after = nextFence(fence, line);
+    // Inside a fence every line is protected, including the opener and closer.
+    const fenced = Boolean(fence || after);
+    fence = after;
+    return fenced;
+  });
+}
 
-    // Inside a fence every line is protected, including the closer itself.
-    if (fence) {
-      mask.push(true);
-
-      // The trailing `\r` class matches CRLF bodies from GitHub's web editor.
-      const closer = /^[ \t]*(`{3,}|~{3,})[ \t\r]*$/.exec(line);
-      if (
-        closer &&
-        closer[1][0] === fence.char &&
-        closer[1].length >= fence.length
-      ) {
-        fence = null;
-      }
-      continue;
-    }
-
-    if (delimiter) {
-      fence = { char: delimiter[1][0], length: delimiter[1].length };
-      mask.push(true);
-      continue;
-    }
-
-    mask.push(false);
+/**
+ * Moves a fence's state on by one line.
+ *
+ * @param fence - The open fence's `char`, `length` and `open` line, or null outside one
+ * @param line - The next line
+ * @returns The fence open after the line, or null
+ */
+export function nextFence(fence, line) {
+  if (!fence) {
+    const delimiter = FENCE_PATTERN.exec(line);
+    return delimiter
+      ? { char: delimiter[1][0], length: delimiter[1].length, open: line }
+      : null;
   }
 
-  return mask;
+  // The trailing `\r` class matches CRLF bodies from GitHub's web editor.
+  const closer = /^[ \t]*(`{3,}|~{3,})[ \t\r]*$/.exec(line);
+  return closer &&
+    closer[1][0] === fence.char &&
+    closer[1].length >= fence.length
+    ? null
+    : fence;
+}
+
+/**
+ * Counts how many toggles a line opens, less those it closes. A line inside a
+ * fence, or opening one, is text, and its tags count for nothing.
+ *
+ * @param fence - The fence open before the line, or null
+ * @param line - The line
+ * @returns 1, -1 or 0
+ */
+export function toggleDelta(fence, line) {
+  if (fence || FENCE_PATTERN.test(line)) return 0;
+  return (
+    (TOGGLE_OPEN_PATTERN.test(line) ? 1 : 0) -
+    (TOGGLE_CLOSE_PATTERN.test(line) ? 1 : 0)
+  );
 }
 
 /**
@@ -200,7 +220,11 @@ function fenceMask(lines) {
  * @returns Whether it is collapsed; false for one written before that layout
  */
 export function isCollapsed(body) {
-  return COLLAPSED_PATTERN.test(body ?? '');
+  const lines = (body ?? '').split('\n');
+  const fenced = fenceMask(lines);
+  return lines.some(
+    (line, index) => !fenced[index] && COLLAPSED_PATTERN.test(line),
+  );
 }
 
 /**
@@ -669,7 +693,10 @@ function olderToggleObservations(lines, fenced) {
 
     const note = noteExtent(lines, fenced, i);
     const own = stacks[i].at(-1);
-    if (own && (stepLabel(stacks[i]) || own.summary === LOCAL_CI_NOTES)) {
+    if (
+      own &&
+      (stepLabel(stacks[i]) || LOCAL_CI_NOTES_PATTERN.test(own.summary))
+    ) {
       notesByToggle.set(own, [...(notesByToggle.get(own) ?? []), note]);
     }
     // Stop short of the trailing blank, which may be the line before `</details>`.
@@ -696,12 +723,20 @@ function olderToggleObservations(lines, fenced) {
  *
  * @param body - A checklist comment body
  * @param changed - The repo paths the push changed
- * @param names - Each step label's name, from the list lines of every part of the checklist
+ * @param names - Each step label's name, from the list lines of every part of the checklist; defaults to this body's own
+ * @param collapsed - Whether the checklist is collapsed, which a part holding only a section's list cannot tell on its own
  * @returns Each such step's title, as its list line shows it
  */
-export function staleSteps(body, changed, names = listedSteps(body)) {
+export function staleSteps(
+  body,
+  changed,
+  names = undefined,
+  collapsed = isCollapsed(body),
+) {
   if (changed.length === 0) return [];
-  if (isCollapsed(body)) return staleToggleSteps(body, changed, names);
+  if (collapsed) {
+    return staleToggleSteps(body, changed, names ?? listedSteps(body));
+  }
 
   const lines = body.split('\n');
   const fenced = fenceMask(lines);
@@ -1077,18 +1112,23 @@ export async function runGate(
         stale.length > 0 && previous
           ? await changedFiles(api, repo, previous, head)
           : [];
-      // A step's list line and its toggle can land in different parts.
-      const names = new Map(
-        checklist
-          .flatMap((comment) => [...listedSteps(comment.body ?? '')])
-          .reverse(),
-      );
+      // A step's list line and its toggle can land in different parts, and a
+      // part holding only a list cannot tell its layout on its own.
+      const collapsed = checklist.some((comment) => isCollapsed(comment.body));
+      const names =
+        collapsed && changed.length > 0
+          ? new Map(
+              checklist
+                .flatMap((comment) => [...listedSteps(comment.body ?? '')])
+                .reverse(),
+            )
+          : new Map();
       // Steps an earlier push flagged stay flagged until the skill redrafts them.
       const possiblyStale = [
         ...new Set([
           ...listedStaleSteps(main.body ?? ''),
           ...checklist.flatMap((comment) =>
-            staleSteps(comment.body ?? '', changed, names),
+            staleSteps(comment.body ?? '', changed, names, collapsed),
           ),
         ]),
       ];

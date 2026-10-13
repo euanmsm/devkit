@@ -2978,6 +2978,37 @@ describe('pr workflow — the collapsed layout', () => {
     );
   });
 
+  it('numbers a Storybook meta title listed twice, so each item keeps a label of its own', async () => {
+    const source = await prWorkflow('webapp');
+    const { result } = await runWorkflow(
+      source,
+      prArgs({ frontend: true }, { storyCount: 2 }),
+      {
+        reply: prReplies({
+          stories: 2,
+          verify: (label) =>
+            label === 'verify:sb:Features/Thing1'
+              ? {
+                  verdict: 'FAIL',
+                  findings: 'same title',
+                  rewrite:
+                    '**Features/Thing0** — Empty\nThe empty state shows.',
+                }
+              : { verdict: 'PASS', findings: 'holds' },
+        }),
+      },
+    );
+
+    assert.match(
+      result.checklist,
+      /^- \[ \] \*\*Features\/Thing0\*\* — Default\n- \[ \] \*\*Features\/Thing0 \(2\)\*\* — Empty$/m,
+    );
+    assert.match(
+      result.checklist,
+      /<summary><b>Features\/Thing0 \(2\)<\/b> — Empty<\/summary>/,
+    );
+  });
+
   it('gives Local CI a notes toggle even when the config has no note', async () => {
     const source = await prWorkflow('webapp', { localCiNote: '' });
     const { result } = await runWorkflow(source, prArgs({}), {

@@ -18,7 +18,9 @@ import {
   BANNER_START,
   CHECKLIST_MARKER,
   canPush,
+  nextFence,
   partMarker,
+  toggleDelta,
 } from './gate.mjs';
 
 /** Characters per comment, safely under GitHub's 65,536 limit. */
@@ -347,12 +349,6 @@ export function buildComments(checklist, sha, limit = COMMENT_LIMIT) {
   });
 }
 
-/** A line opening a toggle, which the checklist writes on its own line. */
-const TOGGLE_OPEN_PATTERN = /^[ \t]*<details\b[^>]*>/i;
-
-/** A line closing a toggle. */
-const TOGGLE_CLOSE_PATTERN = /^[ \t]*<\/details>/i;
-
 /**
  * A section's first line at the top level of a collapsed checklist: its bold
  * section line, such as `**Backend** · agent · about 7 min`, or a toggle with
@@ -360,9 +356,6 @@ const TOGGLE_CLOSE_PATTERN = /^[ \t]*<\/details>/i;
  */
 const SECTION_START_PATTERN =
   /^(?:\*\*[^*\n]+\*\*(?:[ \t]+·[ \t].*)?|<details><summary><b>.*)[ \t\r]*$/;
-
-/** A fence delimiter: three or more backticks or tildes. */
-const FENCE_PATTERN = /^[ \t]*(`{3,}|~{3,})/;
 
 /**
  * Splits checklist markdown into pieces that each fit within a limit.
@@ -438,46 +431,6 @@ function pack(atoms, limit, separator) {
 
   if (current) pieces.push(current);
   return pieces;
-}
-
-/**
- * Moves a fence's state on by one line.
- *
- * @param fence - The open fence's `char` and `length`, or null outside one
- * @param line - The next line
- * @returns The fence open after the line, or null
- */
-function nextFence(fence, line) {
-  const delimiter = FENCE_PATTERN.exec(line);
-  if (!fence)
-    return delimiter
-      ? { char: delimiter[1][0], length: delimiter[1].length, open: line }
-      : null;
-
-  const closer = /^[ \t]*(`{3,}|~{3,})[ \t\r]*$/.exec(line);
-  return closer &&
-    closer[1][0] === fence.char &&
-    closer[1].length >= fence.length
-    ? null
-    : fence;
-}
-
-/**
- * Counts how many toggles a line opens, less those it closes. A line inside a
- * fence is text, and its tags count for nothing.
- *
- * @param fence - The fence open before the line, or null
- * @param line - The line
- * @returns 1, -1 or 0
- */
-function toggleDelta(fence, line) {
-  if (fence || FENCE_PATTERN.test(line)) return 0;
-  const opens = TOGGLE_OPEN_PATTERN.test(line) ? 1 : 0;
-  const closes =
-    /<\/details>[ \t\r]*$/i.test(line) || TOGGLE_CLOSE_PATTERN.test(line)
-      ? 1
-      : 0;
-  return opens - closes;
 }
 
 /**

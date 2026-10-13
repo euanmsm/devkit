@@ -410,9 +410,9 @@ Hard rules:
 - A title of at most ${TITLE_LIMIT} characters. It is the step's one line in
   the checklist's list, so it names the behaviour, never the route, role and
   build it runs in: those belong in the body.
-- NO \`<details>\`, \`</details>\` or \`<summary>\` tag in a body. Each step is
-  published folded inside a toggle of its own, and a stray tag breaks the
-  toggles around it.
+- NO \`<details>\`, \`</details>\` or \`<summary>\` tag in a body outside a
+  code block or inline code. Each step is published folded inside a toggle of
+  its own, and a stray tag breaks the toggles around it.
 - NO per-step teardown. The section's one teardown undoes everything its
   setup and steps change.
 - NO rationale in steps ("nothing in the suite asserts this…" belongs to the
@@ -527,7 +527,7 @@ const STEP_CHECKS = `
    environment re-derivation, one instruction per sentence, real strings
    quoted, setup commands fenced and inline, a title of at most ${TITLE_LIMIT}
    characters, and no \`<details>\`, \`</details>\` or \`<summary>\` tag in the
-   body. A step that needs no person's judgement and
+   body outside a code block or inline code. A step that needs no person's judgement and
    has no On main line is a FAIL; write one from the code. A violation is a
    FAIL like any other.
 9. COVERED — does a test listed above already assert what this step checks?
@@ -1066,8 +1066,8 @@ merge and another be confirmed after deploy. Each step:
 - body — **Where:** the dashboard, page or command to look in; the action;
   **Expect:** the exact value, setting or result to see; **If wrong:** one
   line. Name the real variable, setting, file or migration from the repo.
-  No \`<details>\`, \`</details>\` or \`<summary>\` tag: the body is published
-  folded inside a toggle of its own.
+  No \`<details>\`, \`</details>\` or \`<summary>\` tag outside a code block
+  or inline code: the body is published folded inside a toggle of its own.
 
 Skip anything a deploy of this PR alone cannot break, such as an API change
 that ships in the same PR as every caller. Read the repo for whether it has
@@ -1452,7 +1452,11 @@ function formatProblems(unit) {
       `a title of ${title.length} characters — shorten it to ${TITLE_LIMIT} or fewer, moving the route, role or build into the body`,
     );
   }
-  if (/<\/?(?:details|summary)\b/i.test(stripTitle(body.trimStart()))) {
+  // A tag in a fence or inline code is shown as text, so only a bare one breaks the toggle.
+  const prose = stripTitle(body.trimStart())
+    .replace(/^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\1[`~]*[ \t\r]*$|(?![\s\S]))/gm, '')
+    .replace(/`[^`\n]*`/g, '');
+  if (/<\/?(?:details|summary)\b/i.test(prose)) {
     problems.push(
       'a <details>, </details> or <summary> tag in the body — the step is published inside a toggle, and a stray tag breaks it, so remove the tag',
     );
@@ -1945,6 +1949,14 @@ function storybookMarkdown(bodies) {
 
     return { label, stories, detail: detail || '_Nothing further to check._' };
   });
+
+  // The gate finds a step by its label, so a meta title listed twice is numbered.
+  const seen = new Map();
+  for (const item of items) {
+    const count = (seen.get(item.label) ?? 0) + 1;
+    seen.set(item.label, count);
+    if (count > 1) item.label = `${item.label} (${count})`;
+  }
 
   return sectionBlock({
     name: 'Storybook',
