@@ -397,3 +397,37 @@ export function prReplies(scenario = {}) {
     throw new Error(`No canned reply for ${label}`);
   };
 }
+
+/**
+ * Checks every toggle in a checklist opens and closes in order, ignoring
+ * fenced blocks, where a tag is only text.
+ *
+ * @param body - Checklist markdown
+ * @returns Whether the `<details>` tags balance
+ */
+export function balancedToggles(body) {
+  let depth = 0;
+  let fence = null;
+
+  for (const line of body.split('\n')) {
+    const delimiter = /^[ \t]*(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (
+        delimiter &&
+        delimiter[1][0] === fence[0] &&
+        delimiter[1].length >= fence.length
+      )
+        fence = null;
+      continue;
+    }
+    if (delimiter) {
+      fence = delimiter[1];
+      continue;
+    }
+    if (/^<details>/.test(line)) depth += 1;
+    if (/<\/details>\s*$/.test(line)) depth -= 1;
+    if (depth < 0) return false;
+  }
+
+  return depth === 0 && fence === null;
+}

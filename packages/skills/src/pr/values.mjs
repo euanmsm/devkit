@@ -138,10 +138,13 @@ function splitSectionsText(pr) {
   if (split.length === 0) return '';
 
   const halves = split
-    .map((section) => `**${section.agent.title}** before **${section.title}**`)
+    .map(
+      (section) =>
+        `${section.agent.title} (\`**${section.label}** · agent\`) before ${section.title} (\`**${section.label}** · human\`)`,
+    )
     .join(', and ');
 
-  return `The checklist writes ${halves}. ${pr.sections.backend.title} and each agent half are for an agent to run, the browser steps with Claude in Chrome, pasting what it observed under each step. Each human half holds only what needs a person's judgement: how it looks, how a flow feels, a real screen reader. The workflow decides which half a step belongs in, and its checker confirms it; that is still only code reading, and nothing is run while the checklist is written.`;
+  return `The checklist writes ${halves}, each half on its own section line. ${pr.sections.backend.title} and each agent half are for an agent to run, the browser steps with Claude in Chrome, pasting what it observed at the end of each step's toggle. Each human half holds only what needs a person's judgement: how it looks, how a flow feels, a real screen reader. The workflow decides which half a step belongs in, and its checker confirms it; that is still only code reading, and nothing is run while the checklist is written.`;
 }
 
 /**

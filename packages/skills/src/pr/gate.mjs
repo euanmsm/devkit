@@ -80,6 +80,45 @@ const STEP_END_PATTERN =
 /** The banner's lead-in to the steps a push may have made stale. */
 const STALE_LEAD = 'so they may be stale';
 
+/** A line opening a toggle, which a collapsed checklist writes on its own line. */
+const TOGGLE_OPEN_PATTERN = /^[ \t]*<details\b[^>]*>/i;
+
+/** A line closing a toggle. */
+const TOGGLE_CLOSE_PATTERN = /^[ \t]*<\/details>/i;
+
+/** The summary on a toggle's opening line. */
+const SUMMARY_PATTERN = /<summary>(.*?)<\/summary>/i;
+
+/** A step toggle's summary, opening with the step's bold label. */
+const STEP_SUMMARY_PATTERN = /^<b>(.+?)<\/b>/i;
+
+/** The summary of the toggle holding a section's steps. */
+const HOW_TO_PATTERN = /^How to run the /;
+
+/** The summary of the toggle holding the Local CI notes. */
+const LOCAL_CI_NOTES = 'Local CI notes';
+
+/**
+ * Tells a collapsed checklist from one written before it: only the collapsed
+ * layout folds steps under toggles.
+ */
+const COLLAPSED_PATTERN =
+  /^[ \t]*<details><summary>(?:How to run the |<b>|Local CI notes<\/summary>)/m;
+
+/** What `manual-qa` appends to a step's list line when the step failed. */
+const FAILED_SUFFIX_PATTERN = /[ \t]*·[ \t]*❌[ \t]*failed[ \t]*(?=\r?$)/;
+
+/**
+ * A list line, boxed or not, up to the bold label linking it to its step's
+ * toggle. A post-deploy check is listed without a box but still has a label.
+ */
+const LABELLED_LINE_PATTERN =
+  /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?: {1,4}|\t)(?:\[[ xX]\](?: {1,4}|\t))?\*\*(.+?)\*\*/;
+
+/** A list line's marker and box, stripped to name its step. */
+const LIST_MARKER_PATTERN =
+  /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?: {1,4}|\t)(?:\[[ xX]\](?=\s|$))?/;
+
 /** The part count a split checklist's first heading carries. */
 const PART_COUNT_PATTERN =
   /^##[ \t]+Manual QA[ \t]+—[ \t]+`[0-9a-fA-F]{7,40}`[ \t]+\(part 1 of (\d+)\)/m;
@@ -151,6 +190,117 @@ function fenceMask(lines) {
   }
 
   return mask;
+}
+
+/**
+ * Tells whether a checklist body is in the collapsed layout, where each step's
+ * instructions are folded under a toggle below a one-line-per-box list.
+ *
+ * @param body - A checklist comment body
+ * @returns Whether it is collapsed; false for one written before that layout
+ */
+export function isCollapsed(body) {
+  return COLLAPSED_PATTERN.test(body ?? '');
+}
+
+/**
+ * Finds the toggles open at each line of a collapsed body.
+ *
+ * A toggle's opening and closing lines belong to it. Every line of one toggle
+ * shares the same frame object, so frames can key a map.
+ *
+ * @param lines - The body split on newlines
+ * @param fenced - Which lines sit inside a fenced block, where tags are text
+ * @returns One stack per line, outermost toggle first, each frame with its `summary`
+ */
+function toggleStacks(lines, fenced) {
+  const stacks = [];
+  let stack = [];
+
+  lines.forEach((line, index) => {
+    if (!fenced[index] && TOGGLE_OPEN_PATTERN.test(line)) {
+      stack = [
+        ...stack,
+        { summary: SUMMARY_PATTERN.exec(line)?.[1]?.trim() ?? '' },
+      ];
+    }
+    stacks.push(stack);
+    if (!fenced[index] && TOGGLE_CLOSE_PATTERN.test(line))
+      stack = stack.slice(0, -1);
+  });
+
+  return stacks;
+}
+
+/**
+ * Reads the step label off a toggle, when the toggle is a step's.
+ *
+ * A step toggle sits directly inside a section's "How to run" toggle and
+ * opens its summary with the step's bold label, so the boot and gaps toggles,
+ * which also have a bold summary, are never taken for steps.
+ *
+ * @param stack - The toggles open at a line, outermost first
+ * @returns The innermost toggle's step label, or null when it is not a step's
+ */
+function stepLabel(stack) {
+  const own = stack.at(-1);
+  const parent = stack.at(-2);
+  if (!own || !parent || !HOW_TO_PATTERN.test(parent.summary)) return null;
+
+  const label = STEP_SUMMARY_PATTERN.exec(own.summary);
+  return label ? plainText(label[1]) : null;
+}
+
+/**
+ * Turns summary HTML back into plain text.
+ *
+ * @param html - Summary HTML
+ * @returns The text, tags dropped and entities decoded
+ */
+function plainText(html) {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .trim();
+}
+
+/**
+ * Names each labelled step by its list line, as a reader sees it.
+ *
+ * @param body - A collapsed checklist comment body
+ * @returns Each label's list line with its marker, box, bold and any failed suffix stripped
+ */
+export function listedSteps(body) {
+  const lines = (body ?? '').split('\n');
+  const fenced = fenceMask(lines);
+  const stacks = toggleStacks(lines, fenced);
+  const names = new Map();
+
+  lines.forEach((line, index) => {
+    if (fenced[index] || stacks[index].length > 0) return;
+    const label = LABELLED_LINE_PATTERN.exec(line);
+    if (!label || names.has(label[1].trim())) return;
+
+    names.set(label[1].trim(), stepName(line));
+  });
+
+  return names;
+}
+
+/**
+ * Strips a list line down to the name the banner shows for its step.
+ *
+ * @param line - A list line
+ * @returns The line without its marker, box, bold or failed suffix
+ */
+function stepName(line) {
+  return line
+    .replace(LIST_MARKER_PATTERN, '')
+    .replace(FAILED_SUFFIX_PATTERN, '')
+    .replace(/\*\*/g, '')
+    .trim();
 }
 
 /**
@@ -285,10 +435,11 @@ export function countBoxes(body) {
 }
 
 /**
- * Composes the warning banner a reset leaves behind.
+ * Composes the banner a reset leaves behind: one visible line, and a toggle
+ * holding what the previous pass ticked and which steps may be stale.
  *
- * @param context - The `headSha` that triggered the reset, the `previousSha` the ticks were made against, the box `counts` before clearing, and the reset time `now`
- * @returns A markdown alert block, without a trailing newline
+ * @param context - The `headSha` that triggered the reset, the `previousSha` the ticks were made against, the box `counts` before clearing, the reset time `now`, the `staleSteps` to name, and the `skill` to re-run
+ * @returns The banner markdown, without a trailing newline
  */
 function buildBanner({
   headSha,
@@ -298,37 +449,31 @@ function buildBanner({
   staleSteps = [],
   skill = DEFAULT_SKILL,
 }) {
-  const lines = [
-    '> [!WARNING]',
-    `> **Reset by push \`${shortSha(headSha)}\` — ${formatStamp(now)}.**`,
+  const before =
+    counts.total === 0
+      ? 'The previous checklist carried no boxes.'
+      : `The previous pass ticked ${counts.ticked} of ${counts.total} boxes${previousSha ? ` against \`${shortSha(previousSha)}\`` : ''}.`;
+  const detail = [
+    before,
+    'Every box below is now clear, and the `Manual QA` check stays red until they are ticked again.',
   ];
 
-  if (counts.total === 0) {
-    lines.push('> The previous checklist carried no boxes.');
-  } else if (previousSha) {
-    lines.push(
-      `> The previous pass ticked ${counts.ticked} of ${counts.total} boxes against \`${shortSha(previousSha)}\`.`,
-    );
-  } else {
-    lines.push(
-      `> The previous pass ticked ${counts.ticked} of ${counts.total} boxes.`,
-    );
-  }
-
-  lines.push(
-    '> Every box below is now clear, and the `Manual QA` check stays red until',
-    '> they are ticked again.',
-  );
-
   if (staleSteps.length > 0) {
-    lines.push(
-      '>',
-      `> Pushes since this checklist was drafted changed files these steps cite, ${STALE_LEAD} — re-run \`/${skill}\` to redraft them:`,
-      ...staleSteps.map((title) => `> - ${title}`),
+    detail.push(
+      `Pushes since this checklist was drafted changed files these steps cite, ${STALE_LEAD} — re-run \`/${skill}\` to redraft them:`,
+      staleSteps.map((title) => `- ${title}`).join('\n'),
     );
   }
 
-  return lines.join('\n');
+  const stale =
+    staleSteps.length > 0
+      ? `, and ${staleSteps.length} ${staleSteps.length === 1 ? 'step' : 'steps'} may be stale`
+      : '';
+
+  return [
+    `**⚠️ Reset by push \`${shortSha(headSha)}\` — ${formatStamp(now)}.** Every box is clear again${stale}.`,
+    `<details><summary>What the reset changed</summary>\n\n${detail.join('\n\n')}\n\n</details>`,
+  ].join('\n\n');
 }
 
 /**
@@ -349,19 +494,23 @@ export function listedStaleSteps(body) {
   const lead = lines.findIndex((line) => line.includes(STALE_LEAD));
   if (lead === -1) return [];
 
-  return lines
-    .slice(lead + 1)
-    .map((line) => /^>[ \t]*-[ \t]+(.+?)[ \t\r]*$/.exec(line)?.[1])
-    .filter(Boolean);
+  return (
+    lines
+      .slice(lead + 1)
+      // An older banner quoted its list; the current one folds it in a toggle.
+      .map((line) => /^(?:>[ \t]*)?-[ \t]+(.+?)[ \t\r]*$/.exec(line)?.[1])
+      .filter(Boolean)
+  );
 }
 
 /**
  * Clears a checklist comment back to untested.
  *
- * Un-ticks every box outside a fenced block, and restamps the hidden SHA
- * marker, the visible heading and, when the body has one, the banner block.
- * Each step also keeps only its latest **Observed** or **Failed** note, so
- * notes from earlier passes do not pile up under it.
+ * Un-ticks every box outside a fenced block, strips the ` · ❌ failed` a
+ * failed step's line carries, and restamps the hidden SHA marker, the visible
+ * heading and, when the body has one, the banner block. Each step also keeps
+ * only its latest **Observed** or **Failed** note, so notes from earlier
+ * passes do not pile up in it.
  *
  * @param body - The current comment body
  * @param context - The `headSha` to stamp, the reset time `now`, `counts` to report in the banner when the checklist spans several comments, the `staleSteps` the push may have made stale, and the `skill` name to re-run
@@ -380,11 +529,17 @@ export function resetBody(
   const previousSha = readStampedSha(body);
   const lines = body.split('\n');
   const fenced = fenceMask(lines);
-  const dropped = olderObservations(lines, fenced);
+  const dropped = isCollapsed(body)
+    ? olderToggleObservations(lines, fenced)
+    : olderObservations(lines, fenced);
 
   let next = lines
     .map((line, index) =>
-      fenced[index] ? line : line.replace(TICKED_BOX_PATTERN, '$1 $2'),
+      fenced[index] || !BOX_PATTERN.test(line)
+        ? line
+        : line
+            .replace(TICKED_BOX_PATTERN, '$1 $2')
+            .replace(FAILED_SUFFIX_PATTERN, ''),
     )
     .filter((_, index) => !dropped.has(index))
     .join('\n');
@@ -444,29 +599,9 @@ function olderObservations(lines, fenced) {
     }
     if (!OBSERVATION_PATTERN.test(lines[i])) continue;
 
-    const note = [i];
-    while (
-      i + 1 < lines.length &&
-      !fenced[i + 1] &&
-      QUOTE_PATTERN.test(lines[i + 1]) &&
-      !OBSERVATION_PATTERN.test(lines[i + 1])
-    ) {
-      note.push((i += 1));
-    }
-
-    // Output pasted in a fence under the note, at most one blank line below it, is the note's.
-    const fence = fenced[i + 1]
-      ? i + 1
-      : blank(i + 1) && fenced[i + 2]
-        ? i + 2
-        : -1;
-    if (fence !== -1) {
-      while (i + 1 < fence) note.push((i += 1));
-      while (i + 1 < lines.length && fenced[i + 1]) note.push((i += 1));
-    }
-
-    if (blank(i + 1)) note.push(i + 1);
+    const note = noteExtent(lines, fenced, i);
     notes.push(note);
+    i = note.at(-1) - (blank(note.at(-1)) ? 1 : 0);
   }
   settle();
 
@@ -474,18 +609,99 @@ function olderObservations(lines, fenced) {
 }
 
 /**
+ * Finds the lines one observation note spans.
+ *
+ * A note is its `> **Observed**` or `> **Failed**` line plus the quoted lines
+ * continuing it, the fenced output pasted right under it, and the blank line
+ * after it.
+ *
+ * @param lines - The body split on newlines
+ * @param fenced - Which lines sit inside a fenced block
+ * @param start - The index of the note's first line
+ * @returns The indices of its lines, in order
+ */
+function noteExtent(lines, fenced, start) {
+  const blank = (index) => index < lines.length && lines[index].trim() === '';
+  const note = [start];
+  let i = start;
+
+  while (
+    i + 1 < lines.length &&
+    !fenced[i + 1] &&
+    QUOTE_PATTERN.test(lines[i + 1]) &&
+    !OBSERVATION_PATTERN.test(lines[i + 1])
+  ) {
+    note.push((i += 1));
+  }
+
+  // Output pasted in a fence under the note, at most one blank line below it, is the note's.
+  const fence = fenced[i + 1]
+    ? i + 1
+    : blank(i + 1) && fenced[i + 2]
+      ? i + 2
+      : -1;
+  if (fence !== -1) {
+    while (i + 1 < fence) note.push((i += 1));
+    while (i + 1 < lines.length && fenced[i + 1]) note.push((i += 1));
+  }
+
+  if (blank(i + 1)) note.push(i + 1);
+  return note;
+}
+
+/**
+ * Finds the observation notes a reset removes from a collapsed body: every
+ * one in a step's toggle, or in the Local CI notes toggle, but the last.
+ *
+ * A note elsewhere, such as in a section's setup toggle, belongs to no step
+ * and is left alone.
+ *
+ * @param lines - The body split on newlines
+ * @param fenced - Which lines sit inside a fenced block
+ * @returns The indices of the lines to remove
+ */
+function olderToggleObservations(lines, fenced) {
+  const stacks = toggleStacks(lines, fenced);
+  const notesByToggle = new Map();
+
+  for (let i = 0; i < lines.length; i += 1) {
+    if (fenced[i] || !OBSERVATION_PATTERN.test(lines[i])) continue;
+
+    const note = noteExtent(lines, fenced, i);
+    const own = stacks[i].at(-1);
+    if (own && (stepLabel(stacks[i]) || own.summary === LOCAL_CI_NOTES)) {
+      notesByToggle.set(own, [...(notesByToggle.get(own) ?? []), note]);
+    }
+    // Stop short of the trailing blank, which may be the line before `</details>`.
+    i = note.at(-1) - (lines[note.at(-1)].trim() === '' ? 1 : 0);
+  }
+
+  const dropped = new Set();
+  for (const notes of notesByToggle.values()) {
+    for (const note of notes.slice(0, -1)) {
+      for (const index of note) dropped.add(index);
+    }
+  }
+
+  return dropped;
+}
+
+/**
  * Names the steps that cite a file a push changed.
  *
- * A step runs from its box to the next box or the next line that is no part
+ * In a collapsed body a step is its list line plus its toggle. In an older
+ * one it runs from its box to the next box or the next line that is no part
  * of it, such as a heading or the section's teardown, so a citation there is
  * never charged to the step above it.
  *
  * @param body - A checklist comment body
  * @param changed - The repo paths the push changed
- * @returns Each such step's title, as its checkbox line shows it
+ * @param names - Each step label's name, from the list lines of every part of the checklist
+ * @returns Each such step's title, as its list line shows it
  */
-export function staleSteps(body, changed) {
+export function staleSteps(body, changed, names = listedSteps(body)) {
   if (changed.length === 0) return [];
+  if (isCollapsed(body)) return staleToggleSteps(body, changed, names);
 
   const lines = body.split('\n');
   const fenced = fenceMask(lines);
@@ -497,12 +713,6 @@ export function staleSteps(body, changed) {
     if (title && cited) titles.push(title);
     title = null;
   };
-  // A bare file name only matches a file at the root; a path also matches a longer path's tail.
-  const changes = (path) =>
-    changed.some(
-      (file) =>
-        file === path || (path.includes('/') && file.endsWith(`/${path}`)),
-    );
 
   lines.forEach((line, index) => {
     if (fenced[index]) return;
@@ -518,12 +728,68 @@ export function staleSteps(body, changed) {
     if (!title || cited) return;
 
     for (const [, path] of line.matchAll(CITED_PATH_PATTERN)) {
-      if (changes(path)) cited = true;
+      if (changes(changed, path)) cited = true;
     }
   });
   close();
 
   return titles;
+}
+
+/**
+ * Tells whether a path cited in a step names a file a push changed.
+ *
+ * A bare file name only matches a file at the root; a path also matches a
+ * longer path's tail.
+ *
+ * @param changed - The repo paths the push changed
+ * @param path - The cited path
+ * @returns Whether the push changed it
+ */
+function changes(changed, path) {
+  return changed.some(
+    (file) =>
+      file === path || (path.includes('/') && file.endsWith(`/${path}`)),
+  );
+}
+
+/**
+ * Names the steps of a collapsed body that cite a file a push changed.
+ *
+ * A step's citations are those in its list line and its own toggle. One in a
+ * section's setup toggle, or anywhere else outside a step, is charged to no
+ * step. A step is named by its list line, which may sit in another part of
+ * the checklist, so `names` comes from every part.
+ *
+ * @param body - A collapsed checklist comment body
+ * @param changed - The repo paths the push changed
+ * @param names - Each step label's name, as its list line shows it
+ * @returns Each such step's name, in the order first cited
+ */
+function staleToggleSteps(body, changed, names) {
+  const lines = body.split('\n');
+  const fenced = fenceMask(lines);
+  const stacks = toggleStacks(lines, fenced);
+  const cited = new Map();
+
+  lines.forEach((line, index) => {
+    if (fenced[index]) return;
+
+    const listed =
+      stacks[index].length === 0 ? LABELLED_LINE_PATTERN.exec(line) : null;
+    const label = listed ? listed[1].trim() : stepLabel(stacks[index]);
+    if (!label || cited.has(label)) return;
+
+    // A step's summary repeats its title, so it is read like any other line.
+    for (const [, path] of line.matchAll(CITED_PATH_PATTERN)) {
+      if (changes(changed, path)) {
+        cited.set(label, names.get(label) ?? (listed ? stepName(line) : label));
+        break;
+      }
+    }
+  });
+
+  return [...cited.values()];
 }
 
 /**
@@ -811,12 +1077,18 @@ export async function runGate(
         stale.length > 0 && previous
           ? await changedFiles(api, repo, previous, head)
           : [];
+      // A step's list line and its toggle can land in different parts.
+      const names = new Map(
+        checklist
+          .flatMap((comment) => [...listedSteps(comment.body ?? '')])
+          .reverse(),
+      );
       // Steps an earlier push flagged stay flagged until the skill redrafts them.
       const possiblyStale = [
         ...new Set([
           ...listedStaleSteps(main.body ?? ''),
           ...checklist.flatMap((comment) =>
-            staleSteps(comment.body ?? '', changed),
+            staleSteps(comment.body ?? '', changed, names),
           ),
         ]),
       ];

@@ -43,8 +43,8 @@ export default {
       stepNames: 'the page and route',
       coveredBy: 'a Playwright spec',
       // Optional: splits the section in two. Steps an agent can run with
-      // Claude in Chrome go under this heading; only steps that need a
-      // person's judgement stay under the title above.
+      // Claude in Chrome go in this half; only steps that need a person's
+      // judgement stay in the half the title above names.
       // agent: { title: 'Agent-Runnable Frontend Checks' },
     },
   },

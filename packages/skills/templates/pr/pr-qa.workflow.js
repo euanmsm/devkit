@@ -381,6 +381,15 @@ const DIMENSIONS = Object.entries(CONFIG.dimensions)
   .map(([name, text]) => `${name} (${text})`)
   .join(', ');
 
+/** The most characters a step title may have, so its list line never wraps. */
+const TITLE_LIMIT = 70;
+
+/**
+ * The most steps the list may hold, whatever the budget allows, so the whole
+ * list fits one browser window with every toggle closed.
+ */
+const LIST_CAP = 20;
+
 const STEP_FORMAT = `
 Every step is the same labelled parts and nothing else, in this order:
 
@@ -398,6 +407,12 @@ Every step is the same labelled parts and nothing else, in this order:
   essays.
 
 Hard rules:
+- A title of at most ${TITLE_LIMIT} characters. It is the step's one line in
+  the checklist's list, so it names the behaviour, never the route, role and
+  build it runs in: those belong in the body.
+- NO \`<details>\`, \`</details>\` or \`<summary>\` tag in a body. Each step is
+  published folded inside a toggle of its own, and a stray tag breaks the
+  toggles around it.
 - NO per-step teardown. The section's one teardown undoes everything its
   setup and steps change.
 - NO rationale in steps ("nothing in the suite asserts this…" belongs to the
@@ -510,9 +525,11 @@ const STEP_CHECKS = `
 8. FORMAT — the step follows the micro-format: Setup/command/Expect/On
    main/If wrong only, no per-step teardown, no rationale paragraphs, no
    environment re-derivation, one instruction per sentence, real strings
-   quoted, setup commands fenced and inline. A step that needs no person's
-   judgement and has no On main line is a FAIL; write one from the code. A
-   violation is a FAIL like any other.
+   quoted, setup commands fenced and inline, a title of at most ${TITLE_LIMIT}
+   characters, and no \`<details>\`, \`</details>\` or \`<summary>\` tag in the
+   body. A step that needs no person's judgement and
+   has no On main line is a FAIL; write one from the code. A violation is a
+   FAIL like any other.
 9. COVERED — does a test listed above already assert what this step checks?
    Open it to be sure. If so, DELETE the step and name the test file and the
    assertion in findings: a step must never repeat a test. A step that only
@@ -783,8 +800,11 @@ and still miss the case that breaks.`,
   },
 ];
 
-/** The most steps the whole checklist may carry, for the size the triage found. */
-const STEP_CAP = () => CONFIG.budget[triage.size] ?? CONFIG.budget.large;
+/**
+ * The most steps the whole checklist may carry, for the size the triage
+ * found, and never more than fit the list in one window.
+ */
+const STEP_CAP = () => Math.min(CONFIG.budget[triage.size] ?? CONFIG.budget.large, LIST_CAP);
 
 /**
  * Tells a drafter its share of the checklist's step budget.
@@ -950,7 +970,7 @@ covered elsewhere. ${sharedSetupRule(group)}\n`
     ? `
 
 ## Who runs each step
-This section is published as two headings: ${section.agent.title}, which an
+This section is published in two halves: ${section.agent.title}, which an
 agent runs, then ${section.title}, which a person runs. Give every step a
 \`runner\`:
 ${RUNNER_RULES}
@@ -1041,9 +1061,13 @@ merge and another be confirmed after deploy. Each step:
 - when — \`pre-merge\` when it must be true before the PR merges (a setting,
   a secret, a project option), \`post-deploy\` when it can only be seen once
   the change is live (a migration on real rows, a call to a live service).
+- title — at most ${TITLE_LIMIT} characters, since it is the check's one line in
+  the checklist's list.
 - body — **Where:** the dashboard, page or command to look in; the action;
   **Expect:** the exact value, setting or result to see; **If wrong:** one
   line. Name the real variable, setting, file or migration from the repo.
+  No \`<details>\`, \`</details>\` or \`<summary>\` tag: the body is published
+  folded inside a toggle of its own.
 
 Skip anything a deploy of this PR alone cannot break, such as an API change
 that ships in the same PR as every caller. Read the repo for whether it has
@@ -1349,7 +1373,8 @@ ${STEP_FORMAT}
 The step:
 ${unit.body}
 
-Return the corrected step as markdown, keeping its bold title line.`;
+Return the corrected step as markdown, keeping its bold title line. Change
+the title only to shorten it when a problem above says it is too long.`;
 }
 
 /**
@@ -1420,7 +1445,18 @@ function formatProblems(unit) {
 
   const problems = [];
   const body = unit.body;
+  const title = readStep(unit).title ?? '';
 
+  if (title.length > TITLE_LIMIT) {
+    problems.push(
+      `a title of ${title.length} characters — shorten it to ${TITLE_LIMIT} or fewer, moving the route, role or build into the body`,
+    );
+  }
+  if (/<\/?(?:details|summary)\b/i.test(stripTitle(body.trimStart()))) {
+    problems.push(
+      'a <details>, </details> or <summary> tag in the body — the step is published inside a toggle, and a stray tag breaks it, so remove the tag',
+    );
+  }
   if (!body.includes('**Expect:**')) problems.push('no **Expect:** line');
   if (body.includes('**Teardown:**')) {
     problems.push(
@@ -1670,44 +1706,147 @@ function stepUnit(kind, step, origin = kind) {
 }
 
 /**
- * Renders steps as a numbered checkbox list with blocking steps first.
+ * Escapes text for a toggle's `<summary>`, where markdown is not parsed:
+ * inline code becomes `<code>` and bold becomes `<b>`.
+ *
+ * @param text - Markdown for one line
+ * @returns The summary HTML
+ */
+function summaryText(text) {
+  return String(text)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+}
+
+/**
+ * Folds markdown away under a toggle.
+ *
+ * GitHub parses markdown inside a toggle only with a blank line after the
+ * summary and another before the close, so both are always there.
+ *
+ * @param summary - The summary HTML, shown while the toggle is closed
+ * @param body - The markdown shown once it is opened
+ * @returns The toggle markdown
+ */
+function toggle(summary, body) {
+  return `<details><summary>${summary}</summary>\n\n${body.trim()}\n\n</details>`;
+}
+
+/**
+ * Writes one step's line in a section's list.
+ *
+ * The bold label links the line to the step's toggle, so it must match the
+ * toggle's summary exactly. Blocking is the default, so only if-time is shown.
+ *
+ * @param label - The step's label, such as `Backend 1`
+ * @param title - The step's title
+ * @param options - `tag` shown before the dash, and `boxed` false for a line nobody ticks
+ * @returns The list line
+ */
+function listLine(label, title, { tag = '', boxed = true } = {}) {
+  const box = boxed ? '[ ] ' : '';
+  const shown = tag ? ` · ${tag}` : '';
+  return `- ${box}**${label}**${shown} — ${String(title).replace(/\s+/g, ' ').trim()}`;
+}
+
+/**
+ * Folds one step's instructions under a toggle named by its label and title.
+ *
+ * @param label - The step's label, matching its list line
+ * @param title - The step's title
+ * @param body - The step's instructions
+ * @returns The toggle markdown
+ */
+function stepToggle(label, title, body) {
+  return toggle(`<b>${summaryText(label)}</b> — ${summaryText(title)}`, body);
+}
+
+/**
+ * Numbers steps with blocking steps first, as list lines and as toggles.
  *
  * @param steps - The steps to render
  * @param prefix - The section name leading each step number
  * @param start - How many steps of the same name came before, in an earlier half
- * @returns The list markdown
+ * @returns The `list` markdown, one line per step, and one `toggles` entry per step
  */
 function numberSteps(steps, prefix, start = 0) {
   const ordered = [
     ...steps.filter((step) => step.priority === 'blocking'),
     ...steps.filter((step) => step.priority !== 'blocking'),
-  ];
+  ].map((step, i) => ({ step, label: `${prefix} ${start + i + 1}` }));
 
-  return ordered
-    .map(
-      (step, i) =>
-        `- [ ] **[${step.priority}] ${prefix} ${start + i + 1} — ${step.title}**\n\n${step.body.trim()}\n`,
-    )
-    .join('\n');
+  return {
+    list: ordered
+      .map(({ step, label }) =>
+        listLine(label, step.title, { tag: step.priority === 'blocking' ? '' : step.priority }),
+      )
+      .join('\n'),
+    toggles: ordered.map(({ step, label }) => stepToggle(label, step.title, step.body)),
+  };
 }
 
 /**
- * Writes a section's timing line from its steps' minute estimates.
+ * Writes who runs a section and roughly how long it takes, for its section line.
  *
  * @param steps - The section's steps
- * @param paste - Whether the tester pastes what they observed
- * @param runs - Who runs the steps, opening the line
- * @returns The timing line
+ * @param runner - `agent` or `human`
+ * @returns The line's tail, such as `agent · about 7 min`
  */
-function timingLine(steps, paste, runs = '') {
+function timingLine(steps, runner) {
   const minutes = totalMinutes(steps);
-  const blocking = steps.filter((step) => step.priority === 'blocking').length;
-  const time = minutes > 0 ? `About ${Math.max(1, Math.round(minutes))} minutes` : 'Time not estimated';
-  const note = paste ? ' Paste what you observed under each step.' : '';
+  const time = minutes > 0 ? `about ${Math.max(1, Math.round(minutes))} min` : 'time not estimated';
 
-  const lead = runs ? `${runs}. ${time}` : time;
+  return `${runner} · ${time}`;
+}
 
-  return `_${lead}; ${blocking} of ${steps.length} steps are blocking.${note}_`;
+/**
+ * Folds a section's setup, teardown and Covered by line under one toggle,
+ * named for what it holds.
+ *
+ * @param parts - `lead` lines opening it, such as who runs the steps, and the `setup`, `teardown` and `covered` markdown
+ * @returns The toggle markdown, or an empty string when there is nothing to fold
+ */
+function setupToggle({ lead = [], setup = '', teardown = '', covered = '' }) {
+  const opening = lead.filter(Boolean);
+  const names = [
+    (opening.length > 0 || setup) && 'setup',
+    teardown && 'teardown',
+    covered && 'coverage',
+  ].filter(Boolean);
+  if (names.length === 0) return '';
+
+  const name =
+    names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+
+  return toggle(
+    name.charAt(0).toUpperCase() + name.slice(1),
+    [...opening, setup, teardown, covered].filter(Boolean).join('\n\n'),
+  );
+}
+
+/**
+ * Lays out one section: its section line, its list, then one toggle holding
+ * how to run every step.
+ *
+ * The list stays tight, with nothing between its lines, so it renders one
+ * line per box. Every instruction sits in the toggle below it instead.
+ *
+ * @param parts - The section `name`, the section line's `meta`, a `note` line under it, the `list`, the `frame` opening the toggle, one of `toggles` per step, and `howTo`, what the toggle calls the steps
+ * @returns The section's markdown
+ */
+function sectionBlock({ name, meta = '', note = '', list = '', frame = '', toggles = [], howTo = 'steps' }) {
+  // With no step to run, the frame (only ever coverage then) stands on its own.
+  const run =
+    toggles.length > 0
+      ? toggle(`How to run the ${name} ${howTo}`, [frame, ...toggles].filter(Boolean).join('\n\n'))
+      : frame;
+
+  return [`**${name}**${meta ? ` · ${meta}` : ''}`, note, list, run].filter(Boolean).join('\n\n');
 }
 
 /**
@@ -1719,78 +1858,106 @@ function timingLine(steps, paste, runs = '') {
  * @param section - The section, with its `agent` half
  * @param steps - Every verified step, each with its `runner`
  * @param frame - The section's `setup`, opening the first half with steps, and its `teardown`, closing the last half with steps
- * @returns The two halves' markdown, each opening with `---`
+ * @param covered - The section's Covered by line, closing the last half with steps
+ * @returns The two halves' markdown
  */
-function splitSectionMarkdown(section, steps, frame = { setup: '', teardown: '' }) {
+function splitSectionMarkdown(section, steps, frame = { setup: '', teardown: '' }, covered = '') {
   const agentSteps = steps.filter((step) => step.runner === 'agent');
   const humanSteps = steps.filter((step) => step.runner !== 'agent');
   const note = section.agent.note
-    ? `\n\n> [!NOTE]\n${section.agent.note
+    ? `> [!NOTE]\n${section.agent.note
         .trim()
         .split('\n')
         .map((line) => `> ${line}`.trimEnd())
         .join('\n')}`
     : '';
+  const runs = section.agent.runs ? `_${section.agent.runs.trim().replace(/\.$/, '')}._` : '';
 
   // The agent half runs first, so it opens with the setup when it has steps,
-  // and the teardown closes whichever half runs last.
-  const agentSetup = agentSteps.length > 0 ? frame.setup : '';
-  const humanSetup = agentSteps.length > 0 ? '' : frame.setup;
-  const agentTeardown = humanSteps.length > 0 ? '' : frame.teardown;
-  const humanTeardown = humanSteps.length > 0 ? frame.teardown : '';
-  const join = (...parts) => parts.filter(Boolean).join('\n\n');
+  // and the teardown and coverage close whichever half runs last.
+  const agentFirst = agentSteps.length > 0;
+  const humanLast = humanSteps.length > 0;
   const after =
-    agentSteps.length > 0 && frame.setup
-      ? '_Run these after the agent half: they rely on its setup._'
-      : '';
+    agentFirst && frame.setup ? '_Run these after the agent half: they rely on its setup._' : '';
 
-  const agentBody =
-    agentSteps.length > 0
-      ? join(
-          `${timingLine(agentSteps, true, section.agent.runs)}${note}`,
-          agentSetup,
-          numberSteps(agentSteps, section.label),
-          agentTeardown,
-        )
-      : '_No step here can be run by an agent._';
-  const humanBody =
-    humanSteps.length > 0
-      ? join(
-          timingLine(humanSteps, false),
-          after,
-          humanSetup,
-          numberSteps(humanSteps, section.label, agentSteps.length),
-          humanTeardown,
-        )
-      : "_Every check above can be run by an agent; nothing here needs a person's judgement._";
+  const agentNumbered = numberSteps(agentSteps, section.label);
+  const humanNumbered = numberSteps(humanSteps, section.label, agentSteps.length);
 
-  return [
-    `---\n\n## ${section.agent.title}\n\n${agentBody}`,
-    `---\n\n## ${section.title}\n\n${humanBody}`,
-  ];
+  const agentHalf = agentFirst
+    ? sectionBlock({
+        name: section.label,
+        meta: timingLine(agentSteps, 'agent'),
+        list: agentNumbered.list,
+        frame: setupToggle({
+          lead: [runs, note],
+          setup: frame.setup,
+          teardown: humanLast ? '' : frame.teardown,
+          covered: humanLast ? '' : covered,
+        }),
+        toggles: agentNumbered.toggles,
+      })
+    : sectionBlock({
+        name: section.label,
+        meta: 'agent',
+        note: '_No step here can be run by an agent._',
+      });
+  const humanHalf = humanLast
+    ? sectionBlock({
+        name: section.label,
+        meta: timingLine(humanSteps, 'human'),
+        list: humanNumbered.list,
+        frame: setupToggle({
+          lead: [after],
+          setup: agentFirst ? '' : frame.setup,
+          teardown: frame.teardown,
+          covered,
+        }),
+        toggles: humanNumbered.toggles,
+      })
+    : sectionBlock({
+        name: section.label,
+        meta: 'human',
+        note: "_Every check above can be run by an agent; nothing here needs a person's judgement._",
+      });
+
+  return [agentHalf, humanHalf];
 }
 
 /**
- * Renders verified Storybook items as checkboxes.
+ * Renders verified Storybook items as a list, each item's detail in a toggle.
  *
  * Each item renders from its verified text, so a meta title or export the
  * checker corrected is the one the reviewer sees.
  *
  * @param bodies - The verified item bodies: a title line, then what changed
- * @returns The list markdown
+ * @returns The section's markdown
  */
 function storybookMarkdown(bodies) {
-  return bodies
-    .map((body) => {
-      const [head, ...rest] = body.trim().split('\n');
-      const lines = rest.map((line) => line.trim()).filter(Boolean);
-      return `- [ ] ${head.trim()}\n      ${lines.join('\n      ')}\n`;
-    })
-    .join('\n');
+  const items = bodies.map((body) => {
+    const [head, ...rest] = body.trim().split('\n');
+    const detail = rest.map((line) => line.trim()).filter(Boolean).join('\n');
+    // The meta title is the label, bold in the list and in the toggle alike. A
+    // checker's rewrite may drop the bold, leaving only the dash between them.
+    const parts =
+      /^\*\*(.+?)\*\*\s*(?:[—–-]\s*)?(.*)$/.exec(head.trim()) ?? /^(.+?)\s+[—–]\s+(.*)$/.exec(head.trim());
+    const label = (parts?.[1] ?? head).replace(/`/g, '').trim();
+    const stories = (parts?.[2] ?? '').trim() || 'Stories';
+
+    return { label, stories, detail: detail || '_Nothing further to check._' };
+  });
+
+  return sectionBlock({
+    name: 'Storybook',
+    meta: 'human',
+    list: items.map((item) => listLine(item.label, item.stories)).join('\n'),
+    toggles: items.map((item) => stepToggle(item.label, item.stories, item.detail)),
+    howTo: 'checks',
+  });
 }
 
 /**
- * Builds the Local CI checklist block.
+ * Builds the Local CI checklist block: its boxes, then a toggle for its notes
+ * and for what an agent observed running them.
  *
  * @param branch - The branch name, filled into the note
  * @param extra - Boxes to add after the configured ones
@@ -1799,10 +1966,10 @@ function storybookMarkdown(bodies) {
 function localCiBlock(branch, extra = []) {
   const boxes = [...CONFIG.localCi, ...extra].map((line) => `- [ ] ${line}`).join('\n');
   const note = CONFIG.localCiNote
-    ? `\n\n${CONFIG.localCiNote.split('{{branch}}').join(branch)}`
-    : '';
+    ? CONFIG.localCiNote.split('{{branch}}').join(branch)
+    : '_What was observed running these boxes goes here._';
 
-  return `### Local CI\n\n${boxes}${note}`;
+  return `**Local CI**\n\n${boxes}\n\n${toggle('Local CI notes', note)}`;
 }
 
 /**
@@ -1877,7 +2044,7 @@ function summaryOnly(summary, why, lead = [], deployOutcomes = []) {
 
   return {
     summary: summary?.markdown ?? '',
-    checklist: [...lead, none, deploy, `---\n\n${localCiBlock(input.branch)}`]
+    checklist: [...lead, none, deploy, localCiBlock(input.branch)]
       .filter(Boolean)
       .join('\n\n'),
     gaps: [],
@@ -2008,6 +2175,24 @@ function triageLine(minutes) {
   return `_Triage: ${kind} · ${needs} · ${time}_`;
 }
 
+/**
+ * Opens the checklist with the triage line and the boot block, folded under
+ * one toggle whose summary gives the time the whole checklist needs.
+ *
+ * @param boot - The settled boot block
+ * @param minutes - The checklist's estimated minutes, or 0 when not estimated
+ * @returns The toggle, or the bare triage line when nothing was booted
+ */
+function openingBlock(boot, minutes) {
+  const line = triageLine(minutes);
+  if (!boot.published.trim()) return line;
+
+  const time = minutes > 0 ? `about ${Math.max(1, Math.round(minutes))} min in all` : 'time not estimated';
+  const warning = boot.failed ? ' · ⚠️ not verified' : '';
+
+  return toggle(`<b>Boot and caveats</b> · ${time}${warning}`, `${line}\n\n${boot.published.trim()}`);
+}
+
 log(`Triage: ${triageLine(0)}`);
 
 if (triage.kind === 'tooling' || touched.length === 0) {
@@ -2066,11 +2251,11 @@ const BOOT_WARNINGS = {
  * is kept, flagged with a warning, rather than dropped.
  *
  * @param outcome - The boot block's verification outcome, or null
- * @returns The `body` drafters write against, and the `published` markdown
+ * @returns The `body` drafters write against, the `published` markdown, and whether it `failed`
  */
 function settleBoot(outcome) {
   const body = outcome?.unit.body ?? '';
-  if (!outcome || outcome.fate === 'pass') return { body, published: body };
+  if (!outcome || outcome.fate === 'pass') return { body, published: body, failed: false };
 
   log(`Boot block did not pass verification (${outcome.fate}) — published with a warning`);
   const why = [BOOT_WARNINGS[outcome.fate], oneLine(outcome.reason)]
@@ -2080,6 +2265,7 @@ function settleBoot(outcome) {
   return {
     body,
     published: `> [!WARNING]\n> **This boot block did not pass verification** — ${why}. Check each command against the repository before relying on it.\n\n${body.trim()}`,
+    failed: true,
   };
 }
 
@@ -2136,14 +2322,17 @@ function splitGaps(drafted) {
 }
 
 /**
- * Renders the tester's gaps as one line each.
+ * Renders the tester's gaps as one line each, folded under one toggle.
  *
  * @param gaps - The tester gaps
- * @returns The block, or an empty string when there are none
+ * @returns The toggle, or an empty string when there are none
  */
 function gapsMarkdown(gaps) {
   if (gaps.length === 0) return '';
-  return `---\n\n**Not covered here:**\n\n${gaps.map((g) => `- ${g.gap} — ${g.why}`).join('\n')}`;
+  return toggle(
+    `<b>Not covered here</b> · ${gaps.length} ${gaps.length === 1 ? 'check' : 'checks'}`,
+    gaps.map((g) => `- ${g.gap} — ${g.why}`).join('\n'),
+  );
 }
 
 /**
@@ -2219,14 +2408,24 @@ function deployMarkdown(outcomes) {
 
   // The gate holds the merge until every box is ticked, and nobody can tick a
   // post-deploy check before merging, so those are listed without a box.
-  const list = checks
-    .map(
-      (c, i) =>
-        `- ${c.when === 'post-deploy' ? '' : '[ ] '}**[${c.when}] Deploy ${i + 1} — ${c.title}**\n\n${c.body.trim()}\n`,
-    )
-    .join('\n');
+  const meta = checks.some((c) => c.when === 'pre-merge') ? 'pre-merge' : 'post-deploy';
+  const numbered = checks.map((c, i) => ({ ...c, label: `Deploy ${i + 1}` }));
 
-  return `---\n\n## Deploy and Config Checks\n\n_For someone with access to the hosted dashboards. Pre-merge checks must hold before merging. Post-deploy ones have no box, since the merge cannot wait for them: run them once it is live._\n\n${list}`;
+  return sectionBlock({
+    name: 'Deploy and Config',
+    meta,
+    list: numbered
+      .map((c) =>
+        listLine(c.label, c.title, {
+          tag: c.when === meta ? '' : c.when,
+          boxed: c.when !== 'post-deploy',
+        }),
+      )
+      .join('\n'),
+    frame:
+      '_For someone with access to the hosted dashboards. Pre-merge checks must hold before merging. Post-deploy ones have no box, since the merge cannot wait for them: run them once it is live._',
+    toggles: numbered.map((c) => stepToggle(c.label, c.title, c.body.trim())),
+  });
 }
 
 /**
@@ -2250,7 +2449,7 @@ function deployMinutes(outcomes) {
  */
 function stopLine(boot) {
   return CONFIG.boot.stop.run && boot.body && bootNeeds(CONFIG.boot.stop.when)
-    ? `---\n\n**When you're finished**, stop the stack: \`${CONFIG.boot.stop.run}\``
+    ? `**When you're finished**, stop the stack: \`${CONFIG.boot.stop.run}\``
     : '';
 }
 
@@ -2351,16 +2550,22 @@ if (triage.kind === 'move') {
   const deployOutcomes = await deployRun;
   const moveGaps = splitGaps(drafted?.gaps ?? []);
 
+  const smoke = numberSteps(steps, 'Smoke');
   const checklist = [
-    triageLine(totalMinutes(steps) + deployMinutes(deployOutcomes)),
-    boot.published.trim(),
+    openingBlock(boot, totalMinutes(steps) + deployMinutes(deployOutcomes)),
     deployMarkdown(deployOutcomes),
     steps.length > 0
-      ? `---\n\n## Smoke Check\n\n${[timingLine(steps, true), frame.setup, numberSteps(steps, 'Smoke'), frame.teardown].filter(Boolean).join('\n\n')}`
+      ? sectionBlock({
+          name: 'Smoke',
+          meta: timingLine(steps, 'agent'),
+          list: smoke.list,
+          frame: setupToggle(frame),
+          toggles: smoke.toggles,
+        })
       : '',
     gapsMarkdown(moveGaps.gaps),
     stopLine(boot),
-    `---\n\n${localCiBlock(input.branch, ['The type check and the production build pass'])}`,
+    localCiBlock(input.branch, ['The type check and the production build pass']),
   ].filter(Boolean);
 
   return {
@@ -2987,32 +3192,26 @@ const reportNotes = [
   ...(budget.over ? [{ kind: 'over budget', item: 'the checklist', why: budget.over }] : []),
 ];
 
-const sectionsMd = [boot.published.trim(), deployMarkdown(deployVerified)];
+const sectionsMd = [deployMarkdown(deployVerified)];
 let stepCount = 0;
-
-/**
- * Ends a section's blocks with its Covered by line.
- *
- * @param blocks - The section's markdown blocks, the last one closing it
- * @param key - The section key
- * @returns The blocks, the last carrying the line when the section has one
- */
-function withCovered(blocks, key) {
-  const line = coveredLine(key);
-  if (!line || blocks.length === 0) return blocks;
-  return [...blocks.slice(0, -1), `${blocks.at(-1).trimEnd()}\n\n${line}`];
-}
 
 /**
  * Renders a section whose steps all turned out to be proven by tests.
  *
- * @param title - The section heading
+ * @param name - The section's name
  * @param key - The section key
  * @returns The section's blocks, or none when nothing in it was covered either
  */
-function coveredOnly(title, key) {
-  return coveredLine(key)
-    ? withCovered([`---\n\n## ${title}\n\n_Every change here is proven by a test._`], key)
+function coveredOnly(name, key) {
+  const covered = coveredLine(key);
+  return covered
+    ? [
+        sectionBlock({
+          name,
+          note: '_Every change here is proven by a test._',
+          frame: setupToggle({ covered }),
+        }),
+      ]
     : [];
 }
 
@@ -3020,33 +3219,31 @@ const backendSteps = keep('backend');
 stepCount += backendSteps.length;
 
 /**
- * Renders an unsplit section: timing, setup, steps, then teardown.
+ * Renders an unsplit section: its section line, its list, then how to run it.
  *
- * @param title - The section heading
  * @param key - The section key
  * @param steps - The section's verified steps
- * @param prefix - The name leading each step number
- * @param paste - Whether the tester pastes what they observed
+ * @param prefix - The name leading each step number, and naming the section
+ * @param runner - Who runs the steps, `agent` or `human`
  * @returns The section's markdown block
  */
-function sectionMarkdown(title, key, steps, prefix, paste) {
+function sectionMarkdown(key, steps, prefix, runner) {
   const frame = sectionFrame(allVerified, key);
-  const body = [timingLine(steps, paste), frame.setup, numberSteps(steps, prefix), frame.teardown]
-    .filter(Boolean)
-    .join('\n\n');
+  const numbered = numberSteps(steps, prefix);
 
-  return `---\n\n## ${title}\n\n${body}`;
+  return sectionBlock({
+    name: prefix,
+    meta: timingLine(steps, runner),
+    list: numbered.list,
+    frame: setupToggle({ ...frame, covered: coveredLine(key) }),
+    toggles: numbered.toggles,
+  });
 }
 
 if (backendSteps.length > 0) {
-  sectionsMd.push(
-    ...withCovered(
-      [sectionMarkdown(BACKEND.title, 'backend', backendSteps, BACKEND.label, true)],
-      'backend',
-    ),
-  );
+  sectionsMd.push(sectionMarkdown('backend', backendSteps, BACKEND.label, 'agent'));
 } else if (input.sections.backend) {
-  sectionsMd.push(...coveredOnly(BACKEND.title, 'backend'));
+  sectionsMd.push(...coveredOnly(BACKEND.label, 'backend'));
 }
 
 for (const key of HUMAN_KEYS.filter((k) => input.sections[k])) {
@@ -3057,18 +3254,19 @@ for (const key of HUMAN_KEYS.filter((k) => input.sections[k])) {
   // With no step left, a test that proves the section's changes is what it shows,
   // drafted or not, split or not.
   if (steps.length === 0 && coveredLine(key)) {
-    sectionsMd.push(...coveredOnly(section.title, key));
+    sectionsMd.push(...coveredOnly(section.label, key));
   } else if (section.agent && humanKeys.includes(key)) {
     sectionsMd.push(
-      ...withCovered(splitSectionMarkdown(section, steps, sectionFrame(allVerified, key)), key),
+      ...splitSectionMarkdown(section, steps, sectionFrame(allVerified, key), coveredLine(key)),
     );
   } else if (steps.length > 0) {
-    sectionsMd.push(
-      ...withCovered([sectionMarkdown(section.title, key, steps, section.label, false)], key),
-    );
+    sectionsMd.push(sectionMarkdown(key, steps, section.label, 'human'));
   } else if (!humanKeys.includes(key)) {
     sectionsMd.push(
-      `---\n\n## ${section.title}\n\n_Nothing ${section.audience} could notice changed on this branch._`,
+      sectionBlock({
+        name: section.label,
+        note: `_Nothing ${section.audience} could notice changed on this branch._`,
+      }),
     );
   }
 }
@@ -3078,16 +3276,15 @@ const storybookItems = storybookVerified
   .map((v) => v.unit.body);
 
 if (storybookItems.length > 0) {
-  sectionsMd.push(
-    `---\n\n## Storybook Review Checks\n\n${storybookMarkdown(storybookItems)}`,
-  );
+  sectionsMd.push(storybookMarkdown(storybookItems));
 }
 
 sectionsMd.push(gapsMarkdown(gaps), stopLine(boot));
 
-sectionsMd.push(`---\n\n${localCiBlock(input.branch)}`);
+sectionsMd.push(localCiBlock(input.branch));
 sectionsMd.unshift(
-  triageLine(
+  openingBlock(
+    boot,
     totalMinutes([
       ...keep('backend'),
       ...HUMAN_KEYS.flatMap((key) => keep(key)),

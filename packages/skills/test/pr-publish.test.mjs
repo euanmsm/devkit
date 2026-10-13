@@ -25,7 +25,7 @@ import {
   readResult,
   splitChecklist,
 } from '../src/pr/publish.mjs';
-import { TEMPLATE, prRepo } from './pr-helpers.mjs';
+import { TEMPLATE, balancedToggles, prRepo } from './pr-helpers.mjs';
 import { write } from './repo.mjs';
 
 const SHA = 'def5678def5678def5678def5678def5678def56';
@@ -253,6 +253,139 @@ describe('pr publish — pieces', () => {
     assert.ok(COMMENT_LIMIT < 65536);
     const bodies = buildComments('- [ ] x\n'.repeat(20000), SHA);
     assert.ok(bodies.every((body) => body.length <= COMMENT_LIMIT));
+  });
+});
+
+/** The checklist part of a cut-down real collapsed checklist, without the comment's markers. */
+const COLLAPSED = (() => {
+  const body = readFileSync(
+    new URL('./fixtures/pr/checklist-collapsed.md', import.meta.url),
+    'utf8',
+  );
+  return body.slice(body.indexOf('<details><summary><b>Boot')).trim();
+})();
+
+describe('pr publish — splitting a collapsed checklist', () => {
+  it('leaves a checklist under the limit as it is', () => {
+    assert.deepEqual(splitChecklist(COLLAPSED, COLLAPSED.length), [COLLAPSED]);
+  });
+
+  it('splits only between sections or step toggles, every part balanced', () => {
+    for (const limit of [700, 1000, 1500, 2500]) {
+      const pieces = splitChecklist(COLLAPSED, limit);
+
+      assert.ok(pieces.length > 1, `limit ${limit}`);
+      for (const piece of pieces) {
+        assert.ok(piece.length <= limit, `limit ${limit}: ${piece.length}`);
+        assert.ok(balancedToggles(piece), `limit ${limit}:\n${piece}`);
+        // A piece opens on a section, a toggle or a list, never mid-step.
+        assert.match(piece, /^(?:\*\*|<details>)/, `limit ${limit}:\n${piece}`);
+      }
+      assert.equal(
+        pieces.reduce((sum, piece) => sum + countBoxes(piece).total, 0),
+        8,
+      );
+      // Every step's toggle is still there, whole.
+      for (const label of [
+        'Backend 1',
+        'Backend 2',
+        'Backend 3',
+        'Frontend 1',
+        'Frontend 2',
+      ]) {
+        assert.ok(
+          pieces.some((piece) => piece.includes(`<summary><b>${label}</b>`)),
+          `limit ${limit}: ${label}`,
+        );
+      }
+    }
+  });
+
+  it('keeps a section’s list whole and carries its toggle on as part 2', () => {
+    const pieces = splitChecklist(COLLAPSED, 1500);
+    const first = pieces.findIndex((piece) =>
+      piece.includes('**Backend** · agent'),
+    );
+
+    assert.match(
+      pieces[first],
+      /- \[x\] \*\*Backend 1\*\*[^\n]*\n- \[x\] \*\*Backend 2\*\*[^\n]*\n- \[ \] \*\*Backend 3\*\*[^\n]*/,
+    );
+    const later = pieces.slice(first + 1);
+    assert.ok(
+      later.some((piece) =>
+        piece.startsWith(
+          '<details><summary>How to run the Backend steps</summary>',
+        ),
+      ),
+    );
+    assert.ok(
+      later.some((piece) =>
+        piece.startsWith(
+          '<details><summary>How to run the Backend steps (part 2)</summary>\n\n<details>',
+        ),
+      ),
+    );
+  });
+
+  it('re-opens a toggle around each piece of a step too long for one comment', () => {
+    const body = [
+      '```bash',
+      ...Array.from({ length: 60 }, (_, i) => `echo line ${i}`),
+      '```',
+      '',
+      '**Expect:** `ok`',
+    ].join('\n');
+    const checklist = [
+      '**Backend** · agent · about 2 min',
+      '- [ ] **Backend 1** — A long step',
+      `<details><summary>How to run the Backend steps</summary>\n\n<details><summary><b>Backend 1</b> — A long step</summary>\n\n${body}\n\n</details>\n\n</details>`,
+    ].join('\n\n');
+    const pieces = splitChecklist(checklist, 500);
+
+    assert.ok(pieces.length > 2);
+    for (const piece of pieces) {
+      assert.ok(piece.length <= 500, String(piece.length));
+      assert.ok(balancedToggles(piece), piece);
+    }
+    assert.ok(
+      pieces.some((piece) =>
+        piece.includes(
+          '<details><summary><b>Backend 1</b> — A long step (part 2)</summary>\n\n```bash\n',
+        ),
+      ),
+    );
+    // Every line of the step survives, in order.
+    const lines = pieces
+      .join('\n')
+      .split('\n')
+      .filter((line) => line.startsWith('echo line'));
+    assert.deepEqual(
+      lines,
+      Array.from({ length: 60 }, (_, i) => `echo line ${i}`),
+    );
+  });
+
+  it('cuts by lines when a limit leaves no room to re-open a toggle', () => {
+    const pieces = splitChecklist(COLLAPSED, 70);
+    assert.ok(pieces.every((piece) => piece.length <= 70));
+    assert.equal(
+      pieces.reduce((sum, piece) => sum + countBoxes(piece).total, 0),
+      8,
+    );
+  });
+
+  it('builds comments whose parts the gate reads as one checklist', () => {
+    const bodies = buildComments(COLLAPSED, SHA, 1500);
+
+    assert.ok(bodies.length > 1);
+    assert.ok(
+      bodies.every((body) => body.length <= 1500 && balancedToggles(body)),
+    );
+    assert.equal(
+      bodies.reduce((sum, body) => sum + countBoxes(body).total, 0),
+      8,
+    );
   });
 });
 

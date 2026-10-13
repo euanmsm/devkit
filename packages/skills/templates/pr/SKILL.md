@@ -120,8 +120,13 @@ applied.
 It fills `{{template}}` with the summary, creates the PR as a draft or edits the
 open one, and writes the checklist into the Manual QA
 comment — editing the existing one, so its place in the timeline and everyone's
-notifications stay put. A checklist longer than one GitHub comment is split
-across numbered comments. It prints the PR's `url`, whether it was `created`,
+notifications stay put. The comment is collapsed so the boxes fit one screen:
+each section is a bold line naming who runs it and roughly how long it takes,
+then one line per box, then one "How to run" toggle holding each step's
+instructions in a toggle of its own. The boot block, the gaps and the Local CI
+notes are toggles too. A checklist longer than one GitHub comment is split
+across numbered comments, between sections or between step toggles, never
+inside a toggle. It prints the PR's `url`, whether it was `created`,
 how many comment `parts` it wrote, the `unresolved` units, the
 `trapCandidates`, and the `reportNotes`.
 
@@ -138,7 +143,9 @@ refuses a result with an empty summary.
 Give the PR URL, and say:
 
 - **The checklist arrives unticked**, and that is correct: its steps have
-  never been run against this commit.
+  never been run against this commit. Whoever runs a step opens its toggle,
+  ticks its line in the list, and pastes what they observed at the end of that
+  step's toggle; a failed step gets ` · ❌ failed` at the end of its list line.
 - **Each unresolved unit**, by name. It failed verification twice, or its
   checker gave no verdict for it, so it was left out of the checklist;
   shipping a step that never passed is not an option. The checklist itself

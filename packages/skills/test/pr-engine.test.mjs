@@ -8,8 +8,16 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import {
+  countBoxes,
+  listedSteps,
+  resetBody,
+  staleSteps,
+} from '../src/pr/gate.mjs';
+import { splitChecklist } from '../src/pr/publish.mjs';
 import webapp from './fixtures/pr/webapp.mjs';
 import {
+  balancedToggles,
   prArgs,
   prReplies,
   prWorkflow,
@@ -21,8 +29,12 @@ import { runWorkflow } from './workflow.mjs';
 const labels = (calls) => calls.map((call) => call.label);
 const find = (calls, label) => calls.find((call) => call.label === label);
 const unitNames = (call) => promptUnits(call.prompt).map((unit) => unit.name);
+// The triage line opens the boot toggle when there is a boot block, and the checklist when there is not.
 const afterTriage = (checklist) =>
-  checklist.replace(/^_Triage: [^\n]*_\n\n/, '');
+  checklist.replace(
+    /^(?:<details><summary><b>Boot and caveats<\/b>[^\n]*<\/summary>\n\n)?_Triage: [^\n]*_\n\n/,
+    '',
+  );
 const gapText = (result) =>
   result.gaps.map((g) => `- ${g.gap} — ${g.why}`).join('\n');
 const noteText = (result) =>
@@ -42,7 +54,7 @@ describe('pr workflow — what runs', () => {
     assert.equal(result.summary, 'Adds the thing.');
     assert.match(
       result.checklist,
-      /^_No manual checks needed — no runtime surface touched\._\n\n---\n\n### Local CI\n\n- \[ \] Review agents/,
+      /^_No manual checks needed — no runtime surface touched\._\n\n\*\*Local CI\*\*\n\n- \[ \] Review agents/,
     );
     assert.deepEqual(result.unresolved, []);
   });
@@ -88,7 +100,7 @@ describe('pr workflow — what runs', () => {
       { reply: prReplies() },
     );
 
-    assert.match(result.checklist, /## Agent-Runnable Backend Checks/);
+    assert.match(result.checklist, /\*\*Backend\*\* · agent · about/);
   });
 
   it('uses Opus for judgement and Sonnet for the narrow checks', async () => {
@@ -129,7 +141,7 @@ describe('pr workflow — what runs', () => {
     assert.ok(!labels(calls).includes('draft:frontend'));
     assert.match(
       result.checklist,
-      /## Human Browser Checks\n\n_Nothing a signed-in member could notice changed on this branch._/,
+      /\*\*Frontend\*\*\n\n_Nothing a signed-in member could notice changed on this branch._/,
     );
   });
 
@@ -154,7 +166,7 @@ describe('pr workflow — what runs', () => {
     );
     assert.match(
       withStories.result.checklist,
-      /## Storybook Review Checks\n\n- \[ \] \*\*Features\/Thing0\*\* — Default/,
+      /\*\*Storybook\*\* · human\n\n- \[ \] \*\*Features\/Thing0\*\* — Default\n- \[ \] \*\*Features\/Thing1\*\* — Default\n\n<details><summary>How to run the Storybook checks<\/summary>\n\n<details><summary><b>Features\/Thing0<\/b> — Default<\/summary>\n\n/,
     );
     assert.equal(withStories.result.stats.storybookItems, 2);
 
@@ -190,7 +202,7 @@ describe('pr workflow — triage', () => {
     // No prepass hints, so anything could need running.
     assert.match(
       result.checklist,
-      /^_Triage: behaviour change \(small\) · needs database, api, page · about \d+ minutes_\n\n/,
+      /^(?:<details><summary><b>Boot and caveats<\/b>[^\n]*\n\n)?_Triage: behaviour change \(small\) · needs database, api, page · about \d+ minutes_\n\n/,
     );
   });
 
@@ -257,12 +269,12 @@ describe('pr workflow — triage', () => {
     );
     assert.match(
       result.checklist,
-      /\n\n---\n\n## Deploy and Config Checks\n\n_For someone with access to the hosted dashboards\.[^\n]*_\n\n- \[ \] \*\*\[pre-merge\] Deploy 1 — Confirm New service\?\*\*\n\n\*\*Where:\*\* the dashboard\n\n\*\*Expect:\*\* set \(src\/pay\.ts\)\n\n- \*\*\[post-deploy\] Deploy 2 — Confirm Hosting config\?\*\*/,
+      /<\/details>\n\n\*\*Deploy and Config\*\* · pre-merge\n\n- \[ \] \*\*Deploy 1\*\* — Confirm New service\?\n- \*\*Deploy 2\*\* · post-deploy — Confirm Hosting config\?\n\n<details><summary>How to run the Deploy and Config steps<\/summary>\n\n_For someone with access to the hosted dashboards\.[^\n]*_\n\n<details><summary><b>Deploy 1<\/b> — Confirm New service\?<\/summary>\n\n\*\*Where:\*\* the dashboard\n\n\*\*Expect:\*\* set \(src\/pay\.ts\)\n\n<\/details>/,
     );
-    // Deploy checks sit right after the boot block, ahead of every other section.
+    // Deploy checks sit right after the boot toggle, ahead of every other section.
     assert.ok(
-      result.checklist.indexOf('## Deploy and Config Checks') <
-        result.checklist.indexOf('## Human Browser Checks'),
+      result.checklist.indexOf('**Deploy and Config**') <
+        result.checklist.indexOf('**Frontend** · human'),
     );
     assert.equal(result.stats.deployChecks, 2);
   });
@@ -312,7 +324,10 @@ describe('pr workflow — triage', () => {
         labels(calls).includes('context-pack'),
         `${kind} ran the full pipeline`,
       );
-      assert.match(result.checklist, /^_Triage: behaviour change/);
+      assert.match(
+        result.checklist,
+        /^(?:<details><summary><b>Boot and caveats<\/b>[^\n]*\n\n)?_Triage: behaviour change/,
+      );
       assert.ok(
         result.reportNotes.some(
           (n) =>
@@ -365,7 +380,10 @@ describe('pr workflow — triage', () => {
     );
 
     // Two 2-minute backend steps, plus one 5-minute pre-merge check; the post-deploy one is not counted.
-    assert.match(result.checklist, /^_Triage: [^\n]*about 9 minutes_/);
+    assert.match(
+      result.checklist,
+      /^(?:<details><summary><b>Boot and caveats<\/b>[^\n]*\n\n)?_Triage: [^\n]*about 9 minutes_/,
+    );
   });
 
   it('writes no deploy checks when nothing lives outside the repo', async () => {
@@ -393,7 +411,10 @@ describe('pr workflow — triage', () => {
     );
 
     assert.ok(labels(calls).includes('context-pack'));
-    assert.match(result.checklist, /^_Triage: behaviour change \(large\)/);
+    assert.match(
+      result.checklist,
+      /^(?:<details><summary><b>Boot and caveats<\/b>[^\n]*\n\n)?_Triage: behaviour change \(large\)/,
+    );
   });
 
   it('writes only a summary for a tooling-only diff', async () => {
@@ -409,7 +430,7 @@ describe('pr workflow — triage', () => {
     assert.deepEqual(labels(calls), ['draft:summary', 'triage']);
     assert.match(
       result.checklist,
-      /^_Triage: tooling only · needs database, api, page · time not estimated_\n\n_No manual checks needed — nothing this branch changes runs in the product\._\n\n---\n\n### Local CI/,
+      /^_Triage: tooling only · needs database, api, page · time not estimated_\n\n_No manual checks needed — nothing this branch changes runs in the product\._\n\n\*\*Local CI\*\*/,
     );
   });
 
@@ -435,11 +456,11 @@ describe('pr workflow — triage', () => {
     assert.doesNotMatch(find(calls, 'draft:boot').prompt, /Context pack:/);
     assert.match(
       result.checklist,
-      /^_Triage: pure move · needs database, api, page · about 5 minutes_/,
+      /^(?:<details><summary><b>Boot and caveats<\/b>[^\n]*\n\n)?_Triage: pure move · needs database, api, page · about 5 minutes_/,
     );
     assert.match(
       result.checklist,
-      /## Smoke Check\n\n.*\n\n- \[ \] \*\*\[blocking\] Smoke 1 — Load the moved page\*\*/,
+      /\*\*Smoke\*\* · agent · about \d+ min\n\n- \[ \] \*\*Smoke 1\*\* — Load the moved page\n/,
     );
     assert.match(
       result.checklist,
@@ -653,7 +674,7 @@ describe('pr workflow — verification', () => {
 
     assert.match(
       result.checklist,
-      /## Agent-Runnable Backend Checks\n\n_Every change here is proven by a test\._\n\n\*\*Covered by:\*\* `src\/a\.test\.ts`/,
+      /\*\*Backend\*\*\n\n_Every change here is proven by a test\._\n\n<details><summary>Coverage<\/summary>\n\n\*\*Covered by:\*\* `src\/a\.test\.ts`\n\n<\/details>/,
     );
   });
 
@@ -941,7 +962,7 @@ describe('pr workflow — batched verification', () => {
     assert.equal(result.stats.checkerAgents, 4);
     assert.match(
       result.checklist,
-      /Frontend \d+ — See frontend-4 again\*\*\n\nOpen the page\.\n\n\*\*Expect:\*\* "Done"/,
+      /<b>Frontend \d+<\/b> — See frontend-4 again<\/summary>\n\nOpen the page\.\n\n\*\*Expect:\*\* "Done"/,
     );
   });
 
@@ -1038,7 +1059,7 @@ describe('pr workflow — batched verification', () => {
     assert.equal(find(calls, 'verify:sb:r2').model, 'sonnet');
     assert.match(
       result.checklist,
-      /- \[ \] \*\*Fixed\/Title\*\* — Default\n      The badge is now blue\./,
+      /- \[ \] \*\*Fixed\/Title\*\* — Default\n[\s\S]*<details><summary><b>Fixed\/Title<\/b> — Default<\/summary>\n\nThe badge is now blue\.\n\n<\/details>/,
     );
     assert.doesNotMatch(result.checklist, /Features\/Thing0/);
     assert.match(result.checklist, /\*\*Features\/Thing1\*\* — Default/);
@@ -1063,12 +1084,13 @@ describe('pr workflow — batched verification', () => {
 
     assert.match(
       result.checklist,
-      /- \[ \] \*\*\[if-time\] Backend 2 — Check the body only\*\*\n\n```bash/,
+      /- \[ \] \*\*Backend 2\*\* · if-time — Check the body only\n[\s\S]*<summary><b>Backend 2<\/b> — Check the body only<\/summary>\n\n```bash/,
     );
     assert.doesNotMatch(result.checklist, /Check be-1/);
+    // The rewrite made it if-time, so it moves below the blocking step.
     assert.match(
       result.checklist,
-      /_About \d+ minutes; 1 of 2 steps are blocking\./,
+      /- \[ \] \*\*Backend 1\*\* — [^\n]*\n- \[ \] \*\*Backend 2\*\* · if-time — /,
     );
   });
 });
@@ -1084,11 +1106,13 @@ describe('pr workflow — the assembled checklist', () => {
     const text = result.checklist;
 
     const order = [
+      '<details><summary><b>Boot and caveats</b> · about 14 min in all</summary>',
       '```bash\nnpm run dev\n```',
-      '## Agent-Runnable Backend Checks',
-      '## Human Browser Checks',
+      '**Backend** · agent · about 8 min',
+      '**Frontend** · human · about 6 min',
+      '<details><summary><b>Not covered here</b> · 1 check</summary>',
       "**When you're finished**, stop the stack: `npm run db:stop`",
-      '### Local CI',
+      '**Local CI**',
     ].map((part) => text.indexOf(part));
     assert.ok(
       order.every((index) => index !== -1),
@@ -1099,36 +1123,29 @@ describe('pr workflow — the assembled checklist', () => {
       [...order].sort((a, b) => a - b),
     );
 
+    // One tight line per box, blocking first, then one toggle holding every step.
     assert.match(
       text,
-      /_About 8 minutes; 4 of 4 steps are blocking\. Paste what you observed under each step\._/,
-    );
-    assert.match(text, /_About 6 minutes; 1 of 2 steps are blocking\._/);
-    assert.match(text, /- \[ \] \*\*\[blocking\] Backend 1 — Check be-1\*\*/);
-    assert.match(
-      text,
-      /- \[ \] \*\*\[blocking\] Frontend 1 — See frontend-1\*\*/,
+      /\*\*Backend\*\* · agent · about 8 min\n\n- \[ \] \*\*Backend 1\*\* — Check be-1\n- \[ \] \*\*Backend 2\*\* — [^\n]+\n- \[ \] \*\*Backend 3\*\* — [^\n]+\n- \[ \] \*\*Backend 4\*\* — [^\n]+\n\n<details><summary>How to run the Backend steps<\/summary>\n\n<details><summary><b>Backend 1<\/b> — Check be-1<\/summary>\n\n```bash\ncurl -s "\$PORT\/x"\n```\n\n\*\*Expect:\*\* `200`\n\n<\/details>/,
     );
     assert.match(
       text,
-      /- \[ \] \*\*\[if-time\] Frontend 2 — See frontend-2\*\*/,
+      /\*\*Frontend\*\* · human · about 6 min\n\n- \[ \] \*\*Frontend 1\*\* — See frontend-1\n- \[ \] \*\*Frontend 2\*\* · if-time — See frontend-2\n\n<details><summary>How to run the Frontend steps<\/summary>/,
     );
+    // Blocking is the default, so no line says it.
+    assert.doesNotMatch(text, /blocking/);
+    assert.doesNotMatch(text, /^---$|^## /m);
     assert.match(
       gapText(result),
       /- screen reader output — needs a screen reader/,
     );
-    // A tester's gap is one line in the checklist, just above Local CI.
     assert.match(
       text,
-      /---\n\n\*\*Not covered here:\*\*\n\n- screen reader output — needs a screen reader\n\n---/,
+      /<details><summary><b>Not covered here<\/b> · 1 check<\/summary>\n\n- screen reader output — needs a screen reader\n\n<\/details>/,
     );
     assert.match(
       text,
-      /- \[ \] Review agents \(run locally before merge\)\n- \[ \] Full test suite passes/,
-    );
-    assert.match(
-      text,
-      /Storybook tests run on demand: `gh workflow run storybook\.yml --ref feature\/thing`\./,
+      /\*\*Local CI\*\*\n\n- \[ \] Review agents \(run locally before merge\)\n- \[ \] Full test suite passes [^\n]*\n\n<details><summary>Local CI notes<\/summary>\n\nStorybook tests run on demand: `gh workflow run storybook\.yml --ref feature\/thing`\.\n\n<\/details>$/,
     );
     assert.equal(result.stats.steps, 6);
   });
@@ -1143,8 +1160,8 @@ describe('pr workflow — the assembled checklist', () => {
       },
     );
 
-    assert.match(result.checklist, /## Human TUI Checks/);
-    assert.match(result.checklist, /TUI 1 — See tui-1/);
+    assert.match(result.checklist, /\*\*TUI\*\* · human/);
+    assert.match(result.checklist, /\*\*TUI 1\*\* — See tui-1/);
     assert.match(result.checklist, /stop the stack: `docker compose down`/);
     assert.match(
       result.checklist,
@@ -1212,10 +1229,10 @@ describe('pr workflow — a section split between an agent and a person', () => 
     const text = result.checklist;
 
     const order = [
-      '## Agent-Runnable Backend Checks',
-      '## Agent-Runnable Frontend Checks',
-      '## Human UI / UX Checks',
-      '## Storybook Review Checks',
+      '**Backend** · agent',
+      '**Frontend** · agent',
+      '**Frontend** · human',
+      '**Storybook** · human',
     ].map((part) => text.indexOf(part));
     assert.ok(
       order.every((index) => index !== -1),
@@ -1226,14 +1243,14 @@ describe('pr workflow — a section split between an agent and a person', () => 
       [...order].sort((a, b) => a - b),
     );
 
+    // Who runs the agent half and its note sit in its setup toggle, not under the section line.
     assert.match(
       text,
-      /## Agent-Runnable Frontend Checks\n\n_Claude in Chrome runs these\. About 6 minutes; 1 of 2 steps are blocking\. Paste what you observed under each step\._\n\n> \[!NOTE\]\n> Console snippets run through `javascript_tool`\.\n\n- \[ \] \*\*\[blocking\] Frontend 1 — See frontend-1\*\*/,
+      /\*\*Frontend\*\* · agent · about 6 min\n\n- \[ \] \*\*Frontend 1\*\* — See frontend-1\n- \[ \] \*\*Frontend 2\*\* · if-time — See frontend-3\n\n<details><summary>How to run the Frontend steps<\/summary>\n\n<details><summary>Setup<\/summary>\n\n_Claude in Chrome runs these\._\n\n> \[!NOTE\]\n> Console snippets run through `javascript_tool`\.\n\n<\/details>\n\n<details><summary><b>Frontend 1<\/b> — See frontend-1<\/summary>/,
     );
-    assert.match(text, /\*\*\[if-time\] Frontend 2 — See frontend-3\*\*/);
     assert.match(
       text,
-      /## Human UI \/ UX Checks\n\n_About 3 minutes; 0 of 1 steps are blocking\._\n\n- \[ \] \*\*\[if-time\] Frontend 3 — See frontend-2\*\*/,
+      /\*\*Frontend\*\* · human · about 3 min\n\n- \[ \] \*\*Frontend 3\*\* · if-time — See frontend-2\n\n<details><summary>How to run the Frontend steps<\/summary>\n\n<details><summary><b>Frontend 3<\/b> — See frontend-2<\/summary>/,
     );
 
     assert.match(find(calls, 'draft:frontend').prompt, /## Who runs each step/);
@@ -1265,7 +1282,7 @@ describe('pr workflow — a section split between an agent and a person', () => 
 
     assert.match(
       result.checklist,
-      /## Human UI \/ UX Checks\n\n_About 3 minutes; 0 of 1 steps are blocking\._\n\n- \[ \] \*\*\[if-time\] Frontend 2 — See frontend-2\*\*/,
+      /\*\*Frontend\*\* · human · about 3 min\n\n- \[ \] \*\*Frontend 2\*\* · if-time — See frontend-2\n/,
     );
     assert.doesNotMatch(result.checklist, /> \[!NOTE\]/);
   });
@@ -1283,11 +1300,11 @@ describe('pr workflow — a section split between an agent and a person', () => 
     );
     assert.match(
       allAgent.result.checklist,
-      /_An agent runs these\. About 6 minutes;/,
+      /\*\*Frontend\*\* · agent · about 6 min\n[\s\S]*<details><summary>Setup<\/summary>\n\n_An agent runs these\._/,
     );
     assert.match(
       allAgent.result.checklist,
-      /## Human UI \/ UX Checks\n\n_Every check above can be run by an agent; nothing here needs a person's judgement\._/,
+      /\*\*Frontend\*\* · human\n\n_Every check above can be run by an agent; nothing here needs a person's judgement\._/,
     );
 
     const noRunner = await runWorkflow(
@@ -1297,9 +1314,12 @@ describe('pr workflow — a section split between an agent and a person', () => 
     );
     assert.match(
       noRunner.result.checklist,
-      /## Agent-Runnable Frontend Checks\n\n_No step here can be run by an agent\._/,
+      /\*\*Frontend\*\* · agent\n\n_No step here can be run by an agent\._/,
     );
-    assert.match(noRunner.result.checklist, /Frontend 1 — See frontend-1/);
+    assert.match(
+      noRunner.result.checklist,
+      /\*\*Frontend 1\*\* — See frontend-1/,
+    );
   });
 });
 
@@ -1403,7 +1423,7 @@ describe('pr workflow — config reaches the prompts', () => {
     );
     assert.match(
       nothing.result.checklist,
-      /^_Triage: [^\n]*_\n\n---\n\n## Agent-Runnable Backend Checks/,
+      /^_Triage: [^\n]*_\n\n\*\*Backend\*\* · agent/,
     );
   });
 
@@ -1475,7 +1495,7 @@ describe('pr workflow — edges', () => {
       promptEntries(find(calls, 'draft:frontend').prompt).map((e) => e.id),
       ['aud-hunks-1'],
     );
-    assert.match(result.checklist, /Frontend 1 — See aud-hunks-1/);
+    assert.match(result.checklist, /\*\*Frontend 1\*\* — See aud-hunks-1/);
     assert.doesNotMatch(result.checklist, /_Nothing a signed-in member/);
   });
 
@@ -1739,9 +1759,9 @@ describe('pr workflow — edges', () => {
     );
     assert.match(
       result.checklist,
-      /## Human Web Checks[\s\S]*## Human CLI Checks/,
+      /\*\*Web\*\* · human[\s\S]*\*\*Cli\*\* · human/,
     );
-    assert.match(result.checklist, /Cli 1 — See cli-1/);
+    assert.match(result.checklist, /\*\*Cli 1\*\* — See cli-1/);
   });
 
   it('writes no stop line or note when the config has none, though the stack booted', async () => {
@@ -1765,7 +1785,7 @@ describe('pr workflow — edges', () => {
     );
     assert.match(
       result.checklist,
-      /### Local CI\n\n- \[ \] Review agents \(run locally before merge\)\n- \[ \] Full test suite passes \(unit, integration, e2e — run locally\)$/,
+      /\*\*Local CI\*\*\n\n- \[ \] Review agents \(run locally before merge\)\n- \[ \] Full test suite passes \(unit, integration, e2e — run locally\)\n\n<details><summary>Local CI notes<\/summary>\n\n_What was observed running these boxes goes here\._\n\n<\/details>$/,
     );
   });
 
@@ -1788,7 +1808,7 @@ describe('pr workflow — edges', () => {
 
     assert.match(
       result.checklist,
-      /_Time not estimated; 2 of 2 steps are blocking\./,
+      /\*\*Backend\*\* · agent · time not estimated\n/,
     );
   });
 });
@@ -1846,16 +1866,10 @@ describe('pr workflow — section setup and the On main line', () => {
       /## Section setup these steps may rely on[^\n]*\n\*\*Setup:\*\*\n\n```sql\ninsert into seats -- draft:backend:1/,
     );
 
-    const section = result.checklist.split(
-      '## Agent-Runnable Backend Checks',
-    )[1];
+    const section = result.checklist.split('**Backend** · agent')[1];
     assert.match(
       section,
-      /each step\._\n\n\*\*Setup:\*\*\n\n```sql\ninsert into seats -- draft:backend:1\n```\n\n```sql\ninsert into seats -- draft:backend:2\n```\n\n- \[ \] /,
-    );
-    assert.match(
-      section,
-      /\*\*Teardown:\*\*\n\n```sql\ndelete from seats -- draft:backend:1\n```\n\n```sql\ndelete from seats -- draft:backend:2\n```/,
+      /<details><summary>How to run the Backend steps<\/summary>\n\n<details><summary>Setup and teardown<\/summary>\n\n\*\*Setup:\*\*\n\n```sql\ninsert into seats -- draft:backend:1\n```\n\n```sql\ninsert into seats -- draft:backend:2\n```\n\n\*\*Teardown:\*\*\n\n```sql\ndelete from seats -- draft:backend:1\n```\n\n```sql\ndelete from seats -- draft:backend:2\n```\n\n<\/details>\n\n<details><summary><b>Backend 1<\/b>/,
     );
     assert.equal(
       (result.checklist.match(/\*\*Teardown:\*\*/g) ?? []).length,
@@ -1990,8 +2004,8 @@ describe('pr workflow — budget', () => {
 
     // Three blocking backend steps and one blocking frontend step already exceed the cap of three.
     assert.equal(result.stats.cutForBudget, 3);
-    assert.doesNotMatch(result.checklist, /\[if-time\]/);
-    assert.match(result.checklist, /\[blocking\] Backend 3/);
+    assert.doesNotMatch(result.checklist, /if-time/);
+    assert.match(result.checklist, /- \[ \] \*\*Backend 3\*\* — /);
     assert.match(
       noteText(result),
       /- \[cut for budget\] frontend:See frontend-4 — cut to keep the checklist within 3 steps and 100 minutes/,
@@ -2162,7 +2176,7 @@ describe('pr workflow — review fixes', () => {
       },
     );
     const [agentHalf, humanHalf] = result.checklist.split(
-      '## Human UI / UX Checks',
+      '**Frontend** · human',
     );
 
     assert.match(agentHalf, /\*\*Teardown:\*\*\n\ndelete the row/);
@@ -2232,7 +2246,7 @@ describe('pr workflow — review fixes', () => {
 
     assert.match(
       result.checklist,
-      /\*\*\[blocking\] Frontend 1 — See frontend-2\*\*/,
+      /- \[ \] \*\*Frontend 1\*\* — See frontend-2\n/,
     );
     assert.equal(result.stats.duplicates, 1);
     assert.match(noteText(result), /\[over budget\] the checklist/);
@@ -2306,7 +2320,7 @@ describe('pr workflow — review fixes', () => {
     });
     const setup = rewritten.result.checklist
       .split('**Setup:**')[1]
-      .split('- [ ]')[0];
+      .split('**Teardown:**')[0];
     assert.doesNotMatch(setup, /delete seat 7/);
     assert.match(
       rewritten.result.checklist,
@@ -2348,7 +2362,7 @@ describe('pr workflow — review fixes', () => {
     assert.ok(labels(noSurface.calls).includes('draft:deploy'));
     assert.match(
       noSurface.result.checklist,
-      /^_No checks in the product needed — no runtime surface touched\._\n\n---\n\n## Deploy and Config Checks/,
+      /^_No checks in the product needed — no runtime surface touched\._\n\n\*\*Deploy and Config\*\* · post-deploy/,
     );
 
     const tooling = await runWorkflow(
@@ -2361,7 +2375,7 @@ describe('pr workflow — review fixes', () => {
     );
     assert.match(
       tooling.result.checklist,
-      /_No checks in the product needed — nothing this branch changes runs in the product\._\n\n---\n\n## Deploy and Config Checks/,
+      /_No checks in the product needed — nothing this branch changes runs in the product\._\n\n\*\*Deploy and Config\*\* · /,
     );
     assert.equal(tooling.result.stats.deployChecks, 1);
   });
@@ -2565,7 +2579,7 @@ describe('pr workflow — review fixes', () => {
     });
     assert.match(
       covered.result.checklist,
-      /## Human UI \/ UX Checks\n\n_Every change here is proven by a test\._\n\n\*\*Covered by:\*\* `src\/a\.test\.ts`/,
+      /\*\*Frontend\*\*\n\n_Every change here is proven by a test\._\n\n<details><summary>Coverage<\/summary>\n\n\*\*Covered by:\*\* `src\/a\.test\.ts`/,
     );
     assert.doesNotMatch(
       covered.result.checklist,
@@ -2608,7 +2622,371 @@ describe('pr workflow — review fixes', () => {
     });
     assert.match(
       pruned.result.checklist,
-      /## Human Browser Checks\n\n_Every change here is proven by a test\._\n\n\*\*Covered by:\*\* `e2e\/banner\.spec\.ts`/,
+      /\*\*Frontend\*\*\n\n_Every change here is proven by a test\._\n\n<details><summary>Coverage<\/summary>\n\n\*\*Covered by:\*\* `e2e\/banner\.spec\.ts`/,
+    );
+  });
+});
+
+describe('pr workflow — the collapsed layout', () => {
+  /** A config shaped like the one PR #990 ran under: a split frontend section. */
+  const split = {
+    sections: {
+      ...webapp.sections,
+      frontend: {
+        ...webapp.sections.frontend,
+        title: 'Human UI / UX Checks',
+        agent: {
+          title: 'Agent-Runnable Frontend Checks',
+          note: 'Check `document.visibilityState` first.',
+        },
+      },
+    },
+  };
+
+  /**
+   * Runs a checklist shaped like PR #990's: four backend steps, a frontend
+   * section split two to the agent and three to a person, a Storybook item,
+   * a setup and teardown per section, a test cited, and a gap.
+   *
+   * @returns The workflow result
+   */
+  async function pr990() {
+    const source = await prWorkflow('webapp', split);
+    const { result } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }, { storyCount: 1 }),
+      {
+        reply: prReplies({
+          backend: 4,
+          human: 5,
+          claims: ['be-1'],
+          runner: (entry, i) => (i < 2 ? 'agent' : 'human'),
+          setup: (label) => ({
+            setup: `Seed the rows for ${label}.`,
+            teardown: `Delete the rows for ${label}.`,
+          }),
+        }),
+      },
+    );
+    return result;
+  }
+
+  /**
+   * Counts the lines a reader sees with every toggle closed: each top-level
+   * line, and one per top-level toggle.
+   *
+   * @param text - Checklist markdown
+   * @returns The visible line count
+   */
+  function collapsedLines(text) {
+    let depth = 0;
+    let visible = 0;
+
+    for (const line of text.split('\n')) {
+      if (depth === 0 && line.trim()) visible += 1;
+      if (/^<details>/.test(line)) depth += 1;
+      if (/<\/details>\s*$/.test(line)) depth -= 1;
+    }
+
+    return visible;
+  }
+
+  it('renders PR #990 as a tight list per section, every step folded in a balanced toggle', async () => {
+    const { checklist, stats } = await pr990();
+
+    assert.ok(balancedToggles(checklist));
+    // No blank line between two list lines, and nothing nested under one.
+    assert.doesNotMatch(checklist, /^- (?:\[ \] )?\*\*[^\n]*\n\n- /m);
+    assert.doesNotMatch(checklist, /^- \[ \] [^\n]*\n[ \t]+\S/m);
+    // No old-layout rules, headings, tags or paste instructions.
+    assert.doesNotMatch(
+      checklist,
+      /^---$|^#{2,3} |\[blocking\]|\[if-time\]|under each step/m,
+    );
+
+    // Each section opens with its section line.
+    for (const line of [
+      '**Backend** · agent · about 8 min',
+      '**Frontend** · agent · about 6 min',
+      '**Frontend** · human · about 9 min',
+      '**Storybook** · human',
+      '**Local CI**',
+    ]) {
+      assert.ok(checklist.includes(`\n\n${line}\n\n`), line);
+    }
+
+    // Every list label has a toggle with exactly the same label, and back.
+    const listed = [...checklist.matchAll(/^- (?:\[ \] )?\*\*(.+?)\*\*/gm)].map(
+      (m) => m[1],
+    );
+    const folded = [
+      ...checklist.matchAll(/^<details><summary><b>(.+?)<\/b> — /gm),
+    ].map((m) => m[1]);
+    assert.deepEqual(listed, [
+      'Backend 1',
+      'Backend 2',
+      'Backend 3',
+      'Backend 4',
+      'Frontend 1',
+      'Frontend 2',
+      'Frontend 3',
+      'Frontend 4',
+      'Frontend 5',
+      'Features/Thing0',
+    ]);
+    assert.deepEqual(folded, listed);
+
+    // Setup, teardown and coverage open the backend toggle.
+    assert.match(
+      checklist,
+      /<details><summary>How to run the Backend steps<\/summary>\n\n<details><summary>Setup, teardown and coverage<\/summary>\n\n\*\*Setup:\*\*\n\nSeed the rows for draft:backend\.\n\n\*\*Teardown:\*\*\n\nDelete the rows for draft:backend\.\n\n\*\*Covered by:\*\* `src\/a\.test\.ts`\n\n<\/details>/,
+    );
+    // The human half opens with the reminder to run it after the agent half, and closes the section.
+    assert.match(
+      checklist,
+      /<details><summary>Setup and teardown<\/summary>\n\n_Run these after the agent half: they rely on its setup\._\n\n\*\*Teardown:\*\*/,
+    );
+
+    // With every toggle closed it fits one window.
+    assert.ok(
+      collapsedLines(checklist) <= 30,
+      String(collapsedLines(checklist)),
+    );
+    assert.equal(stats.steps, 9);
+  });
+
+  it('gives the gate the boxes, the steps and the notes it needs', async () => {
+    const { checklist } = await pr990();
+    const body = `<!-- pr-qa:manual-checklist -->\n<!-- pr-qa:sha=abc1234 -->\n<!-- pr-qa:banner:start -->\n<!-- pr-qa:banner:end -->\n\n## Manual QA — \`abc1234\`\n\n${checklist}`;
+
+    // Nine steps, one Storybook item and two Local CI boxes.
+    assert.equal(countBoxes(body).total, 12);
+    assert.equal(
+      listedSteps(body).get('Frontend 3'),
+      'Frontend 3 · if-time — See frontend-3',
+    );
+
+    // A pasted note and a failed suffix survive only until the next push.
+    const second = /^- \[ \] \*\*Backend 2\*\* — .*$/m.exec(body)[0];
+    const ticked = body
+      .replace(second, `${second.replace('[ ]', '[x]')} · ❌ failed`)
+      .replace(
+        /(<summary><b>Backend 2<\/b>[\s\S]*?)(\n\n<\/details>)/,
+        '$1\n\n> **Observed** (agent): old\n\n> **Failed** (agent): new$2',
+      );
+    const reset = resetBody(ticked, { headSha: 'def5678', now: new Date(0) });
+    assert.ok(reset.split('\n').includes(second));
+    assert.doesNotMatch(reset, /\(agent\): old/);
+    assert.match(reset, /> \*\*Failed\*\* \(agent\): new\n\n<\/details>/);
+    assert.ok(balancedToggles(reset));
+
+    // A step citing a changed file is named by its list line.
+    const cited = body.replace(
+      /(<summary><b>Backend 3<\/b>[^\n]*\n\n)/,
+      '$1Reads `src/api/seats.ts`.\n\n',
+    );
+    const third = /^- \[ \] \*\*Backend 3\*\* — (.*)$/m.exec(body)[1];
+    assert.deepEqual(staleSteps(cited, ['src/api/seats.ts']), [
+      `Backend 3 — ${third}`,
+    ]);
+  });
+
+  it('splits a long PR #990 only between sections and step toggles', async () => {
+    const { checklist } = await pr990();
+    const pieces = splitChecklist(checklist, 900);
+
+    assert.ok(pieces.length > 2);
+    assert.ok(
+      pieces.every((piece) => piece.length <= 900 && balancedToggles(piece)),
+    );
+    assert.equal(
+      pieces.reduce((sum, piece) => sum + countBoxes(piece).total, 0),
+      countBoxes(checklist).total,
+    );
+  });
+
+  it('escapes a title for its summary, where markdown is not parsed', async () => {
+    const source = await prWorkflow('webapp');
+    const replies = prReplies({ backend: 1 });
+    const { result } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: (label, prompt) => {
+        const reply = replies(label, prompt);
+        if (label === 'draft:backend')
+          reply.steps[0].title = 'Returns `<Seat>` & **two** rows';
+        return reply;
+      },
+    });
+
+    assert.match(
+      result.checklist,
+      /^- \[ \] \*\*Backend 1\*\* — Returns `<Seat>` & \*\*two\*\* rows$/m,
+    );
+    assert.match(
+      result.checklist,
+      /^<details><summary><b>Backend 1<\/b> — Returns <code>&lt;Seat&gt;<\/code> &amp; <b>two<\/b> rows<\/summary>$/m,
+    );
+  });
+
+  it('folds the boot block and triage line under one toggle, flagging a boot block that failed', async () => {
+    const source = await prWorkflow('webapp');
+    const passed = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies(),
+    });
+    assert.match(
+      passed.result.checklist,
+      /^<details><summary><b>Boot and caveats<\/b> · about 8 min in all<\/summary>\n\n_Triage: [^\n]*_\n\n```bash\nnpm run dev\n```\n\n<\/details>\n\n\*\*Backend\*\*/,
+    );
+
+    const failed = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({
+        verify: (label) =>
+          label.startsWith('verify:boot')
+            ? { verdict: 'DELETE', findings: 'no port' }
+            : { verdict: 'PASS', findings: '' },
+      }),
+    });
+    assert.match(
+      failed.result.checklist,
+      /^<details><summary><b>Boot and caveats<\/b> · about 8 min in all · ⚠️ not verified<\/summary>\n\n_Triage: [^\n]*_\n\n> \[!WARNING\]/,
+    );
+  });
+
+  it('lists post-deploy checks without a box, on a post-deploy section line when none is pre-merge', async () => {
+    const source = await prWorkflow('webapp', {
+      outsideRepo: [{ ask: 'Hosting config?', paths: ['vercel.json'] }],
+    });
+    const hint = { ask: 'Hosting config?', files: ['vercel.json'] };
+    const { result } = await runWorkflow(
+      source,
+      prArgs({}, { triage: { touches: [], outsideRepo: [hint] } }),
+      { reply: prReplies() },
+    );
+
+    assert.match(
+      result.checklist,
+      /\*\*Deploy and Config\*\* · post-deploy\n\n- \*\*Deploy 1\*\* — Confirm Hosting config\?\n\n<details><summary>How to run the Deploy and Config steps<\/summary>/,
+    );
+    assert.equal(
+      countBoxes(result.checklist).total,
+      2,
+      'only the Local CI boxes',
+    );
+  });
+
+  it('never lets the list grow past twenty steps, whatever the budget allows', async () => {
+    const source = await prWorkflow('webapp', {
+      budget: { large: 30, minutes: 1000 },
+    });
+    const { result, calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      { reply: prReplies({ backend: 4, human: 24 }) },
+    );
+
+    assert.match(find(calls, 'draft:backend').prompt, /a budget of 20 steps/);
+    assert.equal(result.stats.steps, 20);
+    // Five backend steps (four plus the cross-cutting one) and 24 frontend ones.
+    assert.equal(result.stats.cutForBudget, 9);
+    assert.match(noteText(result), /cut to keep the checklist within 20 steps/);
+  });
+
+  it('asks for short titles and no toggle tags, and sends a step breaking either back', async () => {
+    const source = await prWorkflow('webapp');
+    const replies = prReplies({ backend: 1 });
+    const long =
+      'Student room PDF in dev and production build, plus the image route (student)';
+    const { calls } = await runWorkflow(
+      source,
+      prArgs({ backend: true, frontend: true }),
+      {
+        reply: (label, prompt) => {
+          const reply = replies(label, prompt);
+          if (label === 'draft:backend') {
+            reply.steps[0].title = long;
+            reply.steps[0].body +=
+              '\n\n<details><summary>More</summary>\n\nx\n\n</details>';
+          }
+          return reply;
+        },
+      },
+    );
+
+    for (const label of ['draft:backend', 'draft:frontend']) {
+      assert.match(
+        find(calls, label).prompt,
+        /A title of at most 70 characters/,
+      );
+      assert.match(
+        find(calls, label).prompt,
+        /NO `<details>`, `<\/details>` or `<summary>` tag in a body/,
+      );
+    }
+    assert.match(
+      find(calls, 'verify:backend').prompt,
+      /a title of at most 70\s+characters/,
+    );
+    const fix = calls.find((call) => call.label.startsWith('format:backend:'));
+    assert.ok(fix, 'the format check sent the step back');
+    assert.match(
+      fix.prompt,
+      new RegExp(
+        `a title of ${long.length} characters — shorten it to 70 or fewer`,
+      ),
+    );
+    assert.match(
+      fix.prompt,
+      /a <details>, <\/details> or <summary> tag in the body/,
+    );
+    assert.match(fix.prompt, /Change\nthe title only to shorten it/);
+  });
+
+  it('leaves a short title and a tag-free body alone', async () => {
+    const source = await prWorkflow('webapp');
+    const { calls } = await runWorkflow(source, prArgs({ backend: true }), {
+      reply: prReplies({ backend: 1 }),
+    });
+    assert.ok(!calls.some((call) => call.label.startsWith('format:')));
+  });
+
+  it('keeps a Storybook item’s label and stories when its checker drops the bold', async () => {
+    const source = await prWorkflow('webapp');
+    const { result } = await runWorkflow(
+      source,
+      prArgs({ frontend: true }, { storyCount: 1 }),
+      {
+        reply: prReplies({
+          // Only the first round fails it; the re-check passes the rewrite.
+          verify: (label) =>
+            label === 'verify:sb:Features/Thing0'
+              ? {
+                  verdict: 'FAIL',
+                  findings: 'renamed',
+                  rewrite: '`Fixed/Title` — Default, Empty\nThe badge is blue.',
+                }
+              : { verdict: 'PASS', findings: 'holds' },
+        }),
+      },
+    );
+
+    assert.match(
+      result.checklist,
+      /^- \[ \] \*\*Fixed\/Title\*\* — Default, Empty$/m,
+    );
+    assert.match(
+      result.checklist,
+      /^<details><summary><b>Fixed\/Title<\/b> — Default, Empty<\/summary>\n\nThe badge is blue\.$/m,
+    );
+  });
+
+  it('gives Local CI a notes toggle even when the config has no note', async () => {
+    const source = await prWorkflow('webapp', { localCiNote: '' });
+    const { result } = await runWorkflow(source, prArgs({}), {
+      reply: prReplies(),
+    });
+
+    assert.match(
+      result.checklist,
+      /\*\*Local CI\*\*\n\n- \[ \] [^\n]*\n- \[ \] [^\n]*\n\n<details><summary>Local CI notes<\/summary>\n\n_What was observed running these boxes goes here\._\n\n<\/details>$/,
     );
   });
 });

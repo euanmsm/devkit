@@ -347,11 +347,31 @@ export function buildComments(checklist, sha, limit = COMMENT_LIMIT) {
   });
 }
 
+/** A line opening a toggle, which the checklist writes on its own line. */
+const TOGGLE_OPEN_PATTERN = /^[ \t]*<details\b[^>]*>/i;
+
+/** A line closing a toggle. */
+const TOGGLE_CLOSE_PATTERN = /^[ \t]*<\/details>/i;
+
+/**
+ * A section's first line at the top level of a collapsed checklist: its bold
+ * section line, such as `**Backend** · agent · about 7 min`, or a toggle with
+ * a bold summary, such as the boot block or the gaps.
+ */
+const SECTION_START_PATTERN =
+  /^(?:\*\*[^*\n]+\*\*(?:[ \t]+·[ \t].*)?|<details><summary><b>.*)[ \t\r]*$/;
+
+/** A fence delimiter: three or more backticks or tildes. */
+const FENCE_PATTERN = /^[ \t]*(`{3,}|~{3,})/;
+
 /**
  * Splits checklist markdown into pieces that each fit within a limit.
  *
- * Sections are kept whole where they fit, steps where a section does not, and
- * a step is cut between lines only when it alone is over the limit.
+ * Sections are kept whole where they fit. In a collapsed checklist, one that
+ * does not keeps its list whole and splits its toggle between steps, and
+ * every piece opens and closes each toggle it holds. In an older one, a
+ * section splits between steps. Either way a step is cut between lines only
+ * when it alone is over the limit.
  *
  * @param text - The checklist markdown
  * @param limit - The most characters one piece may hold
@@ -359,7 +379,26 @@ export function buildComments(checklist, sha, limit = COMMENT_LIMIT) {
  */
 export function splitChecklist(text, limit) {
   if (text.length <= limit) return [text];
+  if (!/^[ \t]*<details\b/im.test(text)) return splitFlat(text, limit);
 
+  const atoms = topLevelSections(text).flatMap((section) =>
+    section.length <= limit
+      ? [section]
+      : splitBlocks(parseBlocks(section.split('\n')), limit),
+  );
+
+  return pack(atoms, limit, '\n\n');
+}
+
+/**
+ * Splits a checklist written before the collapsed layout, where sections open
+ * with a `---` rule and steps with their box.
+ *
+ * @param text - The checklist markdown
+ * @param limit - The most characters one piece may hold
+ * @returns The pieces, in order
+ */
+function splitFlat(text, limit) {
   const units = text
     .split(/\n(?=---\n)/)
     .flatMap((section) =>
@@ -372,16 +411,28 @@ export function splitChecklist(text, limit) {
             ),
     );
 
+  return pack(units, limit, '\n');
+}
+
+/**
+ * Joins pieces in order, starting a new one whenever the next would not fit.
+ *
+ * @param atoms - Pieces that each fit within the limit
+ * @param limit - The most characters one joined piece may hold
+ * @param separator - What goes between two atoms in one piece
+ * @returns The joined pieces
+ */
+function pack(atoms, limit, separator) {
   const pieces = [];
   let current = '';
 
-  for (const unit of units) {
-    const joined = current ? `${current}\n${unit}` : unit;
+  for (const atom of atoms) {
+    const joined = current ? `${current}${separator}${atom}` : atom;
     if (joined.length <= limit) {
       current = joined;
     } else {
-      pieces.push(current);
-      current = unit;
+      if (current) pieces.push(current);
+      current = atom;
     }
   }
 
@@ -390,30 +441,206 @@ export function splitChecklist(text, limit) {
 }
 
 /**
+ * Moves a fence's state on by one line.
+ *
+ * @param fence - The open fence's `char` and `length`, or null outside one
+ * @param line - The next line
+ * @returns The fence open after the line, or null
+ */
+function nextFence(fence, line) {
+  const delimiter = FENCE_PATTERN.exec(line);
+  if (!fence)
+    return delimiter
+      ? { char: delimiter[1][0], length: delimiter[1].length, open: line }
+      : null;
+
+  const closer = /^[ \t]*(`{3,}|~{3,})[ \t\r]*$/.exec(line);
+  return closer &&
+    closer[1][0] === fence.char &&
+    closer[1].length >= fence.length
+    ? null
+    : fence;
+}
+
+/**
+ * Counts how many toggles a line opens, less those it closes. A line inside a
+ * fence is text, and its tags count for nothing.
+ *
+ * @param fence - The fence open before the line, or null
+ * @param line - The line
+ * @returns 1, -1 or 0
+ */
+function toggleDelta(fence, line) {
+  if (fence || FENCE_PATTERN.test(line)) return 0;
+  const opens = TOGGLE_OPEN_PATTERN.test(line) ? 1 : 0;
+  const closes =
+    /<\/details>[ \t\r]*$/i.test(line) || TOGGLE_CLOSE_PATTERN.test(line)
+      ? 1
+      : 0;
+  return opens - closes;
+}
+
+/**
+ * Splits a collapsed checklist into its top-level sections.
+ *
+ * @param text - The checklist markdown
+ * @returns Each section's markdown, the opening block first
+ */
+function topLevelSections(text) {
+  const sections = [];
+  let current = [];
+  let depth = 0;
+  let fence = null;
+
+  for (const line of text.split('\n')) {
+    if (
+      !fence &&
+      depth === 0 &&
+      SECTION_START_PATTERN.test(line) &&
+      current.some((l) => l.trim())
+    ) {
+      sections.push(current.join('\n').trim());
+      current = [];
+    }
+    current.push(line);
+    depth = Math.max(0, depth + toggleDelta(fence, line));
+    fence = nextFence(fence, line);
+  }
+
+  if (current.some((l) => l.trim())) sections.push(current.join('\n').trim());
+  return sections;
+}
+
+/**
+ * Parses lines into the blocks at their top level: runs of text, and whole
+ * toggles with what they hold.
+ *
+ * @param lines - Markdown lines
+ * @returns Each block's `text`, and for a toggle its `open` line and `inner` lines
+ */
+function parseBlocks(lines) {
+  const blocks = [];
+  let text = [];
+  let held = [];
+  let depth = 0;
+  let fence = null;
+
+  const flush = () => {
+    const joined = text.join('\n').trim();
+    if (joined) blocks.push({ text: joined });
+    text = [];
+  };
+
+  for (const line of lines) {
+    const delta = toggleDelta(fence, line);
+    fence = nextFence(fence, line);
+
+    if (depth === 0 && delta <= 0) {
+      text.push(line);
+      continue;
+    }
+    if (depth === 0) flush();
+
+    held.push(line);
+    depth += delta;
+    if (depth === 0) {
+      blocks.push({
+        text: held.join('\n'),
+        open: held[0],
+        inner: held.slice(1, -1),
+      });
+      held = [];
+    }
+  }
+
+  // A toggle left open is text: there is nothing to split it between.
+  text.push(...held);
+  flush();
+  return blocks;
+}
+
+/**
+ * Turns blocks into pieces that each fit within a limit, splitting an
+ * oversized toggle between what it holds and oversized text between lines.
+ *
+ * @param blocks - Blocks from `parseBlocks`
+ * @param limit - The most characters one piece may hold
+ * @returns The pieces, in order, each with its toggles balanced
+ */
+function splitBlocks(blocks, limit) {
+  return blocks.flatMap((block) => {
+    if (block.text.length <= limit) return [block.text];
+    return block.open
+      ? splitToggle(block, limit)
+      : byLines(block.text, limit, { fences: true });
+  });
+}
+
+/**
+ * Splits one toggle into several, each holding a share of what it held.
+ *
+ * Every piece re-opens the toggle and closes it, so no piece ends inside a
+ * toggle. The second and later name themselves `(part 2)` and on.
+ *
+ * @param block - A toggle block from `parseBlocks`
+ * @param limit - The most characters one piece may hold
+ * @returns The pieces, in order
+ */
+function splitToggle(block, limit) {
+  const opener = (part) =>
+    part === 1
+      ? block.open
+      : block.open.replace(/<\/summary>/i, ` (part ${part})</summary>`);
+  // Room for the longest opener, the close, and the blank lines around the content.
+  const room = limit - opener(999).length - '</details>'.length - 4;
+  if (room < 40) return byLines(block.text, limit, { fences: true });
+
+  const contents = pack(
+    splitBlocks(parseBlocks(block.inner), room),
+    room,
+    '\n\n',
+  );
+  return contents.map(
+    (content, i) => `${opener(i + 1)}\n\n${content}\n\n</details>`,
+  );
+}
+
+/**
  * Splits text at line breaks into pieces that each fit within a limit.
  *
  * @param text - The text
  * @param limit - The most characters one piece may hold
+ * @param options - `fences` true to close a fenced block a cut falls inside and re-open it in the next piece
  * @returns The pieces; a single line longer than the limit is cut mid-line
  */
-function byLines(text, limit) {
+function byLines(text, limit, { fences = false } = {}) {
   const pieces = [];
-  let current = '';
+  let current = [];
+  let fence = null;
+  // A cut inside a fence adds its closer here and its opener to the next piece.
+  const chunk = fences ? Math.max(1, Math.floor(limit / 2)) : limit;
+  const closer = (open) => (open ? [open.char.repeat(open.length)] : []);
+  const size = (lines) => lines.join('\n').length;
 
   for (const line of text.split('\n')) {
-    for (let start = 0; start < Math.max(line.length, 1); start += limit) {
-      const part = line.slice(start, start + limit);
-      const joined = current ? `${current}\n${part}` : part;
-      if (joined.length <= limit) {
-        current = joined;
-      } else {
-        pieces.push(current);
-        current = part;
+    // A line opening a fence must leave room for the closer a later cut adds.
+    const after = fences ? nextFence(fence, line) : null;
+
+    for (let start = 0; start < Math.max(line.length, 1); start += chunk) {
+      const part = line.slice(start, start + chunk);
+      if (
+        current.length > 0 &&
+        size([...current, part, ...closer(after)]) > limit
+      ) {
+        pieces.push([...current, ...closer(fence)].join('\n'));
+        current = fence ? [fence.open] : [];
       }
+      current.push(part);
     }
+    fence = after;
   }
 
-  if (current) pieces.push(current);
+  if (current.length > 0) pieces.push(current.join('\n'));
   return pieces;
 }
 
