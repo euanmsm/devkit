@@ -34,8 +34,8 @@ skill is called `pr` unless the `name` option says otherwise; this page writes
   section: terminal checks an agent could run, such as SQL and curl. A
   repository adds **human** sections for what needs a person, such as Frontend
   (a browser) or TUI (a terminal UI). A human section can be **split**: steps an
-  agent can run in a browser go under one heading, and only the steps that need
-  a person's judgement stay under the other.
+  agent can run in a browser go in one half, and only the steps that need a
+  person's judgement stay in the other.
 - **Layer** — a group of paths, such as migrations or API routes. Each layer
   belongs to one section; a changed file in that layer switches the section on.
 - **Entry** — one behaviour the branch changes, found by the inventory. Every
@@ -167,8 +167,9 @@ against the real boot block and the known traps saves a rewrite and a re-check
 for each of them.
 
 Before a step reaches a checker, a script checks its format — an `Expect:` line,
-labels in order, a fenced command in a terminal step, no per-step `Teardown:`. A
-step that fails gets a quick Sonnet fix first, so an Opus round is not spent on
+labels in order, a fenced command in a terminal step, no per-step `Teardown:`, a
+title of 70 characters or fewer, and no `<details>` or `<summary>` tag. A step
+that fails gets a quick Sonnet fix first, so an Opus round is not spent on
 formatting.
 
 Verification works in groups: one drafter's setup, steps and "covered by test"
@@ -231,18 +232,69 @@ skill relays to the author, never to the PR.
 
 The workflow returns
 `{ summary, checklist, gaps, reportNotes, unresolved, trapCandidates, stats }`.
-The checklist is laid out as: the triage line (kind, what it needs running,
-estimated minutes), the boot block, the Deploy and Config Checks, the backend
-section, each human section, Storybook items, the one-line gaps, how to stop the
-stack, and the Local CI boxes. Each section opens with a timing line built from
-the drafters' minute estimates, then its setup, its steps, its teardown and its
-Covered by line.
+The checklist is collapsed, so that with every toggle closed the boxes fit one
+browser window and ticking them never means scrolling past instructions. In
+order, it holds:
+
+- One toggle, `Boot and caveats`, with the checklist's total minutes in its
+  summary, holding the triage line (kind, what it needs running, estimated
+  minutes) and the boot block. With nothing to boot, the triage line stands on
+  its own.
+- The Deploy and Config checks, the backend section, each human section, and the
+  Storybook items, each laid out the same way (below).
+- A `Not covered here` toggle holding the one-line gaps.
+- How to stop the stack.
+- The Local CI boxes, then a `Local CI notes` toggle for the config's note and
+  for what an agent observed running them.
+
+Each section is three parts:
+
+```markdown
+**Backend** · agent · about 7 min
+
+- [ ] **Backend 1** — Atlas refuses a request that has only a system message
+- [ ] **Backend 2** · if-time — The lockfile keeps msw nested under apps/main
+
+<details><summary>How to run the Backend steps</summary>
+
+<details><summary>Setup, teardown and coverage</summary>
+
+…the section's setup, teardown and Covered by line…
+
+</details>
+
+<details><summary><b>Backend 1</b> — Atlas refuses a request that has only a system message</summary>
+
+…the step's commands, Expect, On main and If wrong, then any pasted observation…
+
+</details>
+
+</details>
+```
+
+1. **The section line**: the section's label, who runs it, and its minutes from
+   the drafters' estimates. Deploy and Config shows `pre-merge` instead, or
+   `post-deploy` when every check is.
+2. **The list**: one line per box, with no blank line between them, so GitHub
+   keeps it tight. Blocking is the default, so only `· if-time` is shown. A
+   post-deploy check is listed without a box.
+3. **The "How to run" toggle**, opening with a toggle for the section's setup,
+   teardown and Covered by line, then one toggle per step. A step's bold label
+   is what links its list line to its toggle, so the two always match.
+
+GitHub only parses markdown inside a toggle with a blank line after `</summary>`
+and another before `</details>`, and never inside `<summary>` itself, so a
+summary uses `<b>` and `<code>`. A `<details>` tag inside a step would close the
+section's toggle early, so the format check sends back any step whose body has
+one, and any step whose title is over 70 characters, since a longer title wraps
+its list line. The list is also capped at 20 steps whatever the `budget` allows,
+with if-time steps cut first.
 
 #### Split sections
 
 A human section with an `agent` half is still drafted and verified as one
-section, but it is published under two headings. The drafter marks each step
-`agent` or `human`:
+section, but it is published in two halves. The drafter marks each step `agent`
+or `human`:
 
 - **agent** — every action and result is something an agent can do and read for
   itself. That means opening pages, clicking and typing, reading the page, its
@@ -255,12 +307,15 @@ A step that needs both is split into two steps. The checker also checks each
 step's runner, and it can move a step to the other half without failing it. A
 step that comes back with no runner stays with the person.
 
-The agent half comes first, with a timing line that opens with its `runs` text
-(`_Claude in Chrome runs these. About 40 minutes; 14 of 16 steps are blocking. Paste what you observed under each step._`),
-and then its `note`, when one is given, as a `> [!NOTE]` block. The human half
-follows. Numbering runs on across the two headings, so with 14 agent steps the
-first human step is `Frontend 15`. When one half has no steps, it says so in a
-line rather than disappearing.
+The agent half comes first, on its own section line
+(`**Frontend** · agent · about 40 min`). Its setup toggle opens with its `runs`
+text (`_Claude in Chrome runs these._`) and then its `note`, when one is given,
+as a `> [!NOTE]` block. The human half follows
+(`**Frontend** · human · about 13 min`), its setup toggle opening with a
+reminder to run it after the agent half. Numbering runs on across the two
+halves, so with 14 agent steps the first human step is `Frontend 15`. When one
+half has no steps, it says so in a line under its section line rather than
+disappearing.
 
 ### 3. Publishing — `npx --no-install skills pr publish --result <file> --base <branch> --head <sha> [--set-base]`
 
@@ -284,7 +339,12 @@ It:
    in the timeline. Only a comment whose author can push to the repository
    counts as the existing one. A checklist over 60,000 characters is split
    between sections into numbered comments (GitHub's limit is 65,536); parts no
-   longer needed are deleted.
+   longer needed are deleted. A section too long for one comment keeps its list
+   whole and splits its "How to run" toggle between steps, the later piece named
+   `How to run the Backend steps (part 2)`. Every piece opens and closes each
+   toggle it holds, and a single step too long for one comment is cut between
+   lines inside a re-opened toggle of its own, closing and re-opening any code
+   block the cut falls in.
 
 It prints the PR's URL, whether it was created, how many comment parts it wrote,
 the unresolved units, the trap candidates, the number of tester gaps, the report
@@ -405,8 +465,8 @@ section. Every human section needs a layer pointing at it.
 
 | Field            | Default                                                 | What it is                                                      |
 | ---------------- | ------------------------------------------------------- | --------------------------------------------------------------- |
-| `title`          | required                                                | The section heading, e.g. `Human Frontend Checks`               |
-| `label`          | the key, capitalised                                    | What each step is numbered with, e.g. `Frontend 3`              |
+| `title`          | required                                                | The section's name to agents, e.g. `Human Frontend Checks`      |
+| `label`          | the key, capitalised                                    | The section line's name, and each step's, e.g. `Frontend 3`     |
 | `where`          | `the running product`                                   | Where the person is: `a rendered page`, `a running terminal UI` |
 | `audience`       | `a person using the product`                            | Who notices a change: `a signed-in user`                        |
 | `surface`        | a place in the product, and the state it must be in     | What one surface is, for the surfaces agent                     |
@@ -421,9 +481,9 @@ section. Every human section needs a layer pointing at it.
 
 | Field   | Default                       | What it is                                                                               |
 | ------- | ----------------------------- | ---------------------------------------------------------------------------------------- |
-| `title` | required                      | The agent half's heading, e.g. `Agent-Runnable Frontend Checks`                          |
-| `runs`  | `Claude in Chrome runs these` | Opens the agent half's timing line                                                       |
-| `note`  | none                          | Shown as a `> [!NOTE]` under that line: how an agent runs these steps in this repository |
+| `title` | required                      | The agent half's name to agents, e.g. `Agent-Runnable Frontend Checks`                   |
+| `runs`  | `Claude in Chrome runs these` | Opens the agent half's setup toggle                                                      |
+| `note`  | none                          | Shown as a `> [!NOTE]` after that line: how an agent runs these steps in this repository |
 
 With `agent` set, `title` names the human half, e.g. `Human UI / UX Checks`.
 [Split sections](#split-sections) covers how steps are divided.
@@ -521,6 +581,8 @@ budget: { move: 2, small: 8, large: 20, minutes: 30 },
 The most steps a checklist carries for a pure move, a small change and a large
 one, and the minutes a tester should need for all of it. Any key you leave out
 keeps its default. Deploy checks and Storybook items do not count against it.
+However large you set it, a checklist never carries more than 20 steps, so its
+list fits one browser window.
 
 ### `tests`
 
@@ -569,15 +631,22 @@ See [Experiments](#experiments).
 With `qaGate` on, `sync` writes `.github/workflows/pr-manual-qa.yml`. It keeps
 the checklist honest about which commit was tested:
 
-- **On every push** it un-ticks every box outside a code block, restamps the
-  comment with the new head commit, and writes a banner saying how many boxes
-  the previous pass had ticked and against which commit. It keeps only the
-  latest `> **Observed**` or `> **Failed**` note under each step, with any
+- **On every push** it un-ticks every box outside a code block, strips the
+  ` · ❌ failed` a failed step's list line carries, restamps the comment with
+  the new head commit, and writes a banner: one visible line saying it was
+  reset, and a toggle saying how many boxes the previous pass had ticked and
+  against which commit. It keeps only the latest `> **Observed**` or
+  `> **Failed**` note in each step's toggle and in the Local CI notes, with any
   fenced output pasted under an older one going too. It also asks GitHub which
   files differ from the stamped commit, a force-push included, and the banner
-  names every step citing one of them in backticks as possibly stale, with a
-  suggestion to re-run the skill. A step stays named after later pushes until
-  the skill redrafts the checklist.
+  names every step whose list line or toggle cites one of them in backticks as
+  possibly stale, by its list line, with a suggestion to re-run the skill. A
+  path in a section's setup toggle is charged to no step. A step stays named
+  after later pushes until the skill redrafts the checklist.
+- **On a checklist from before the collapsed layout**, still open on a PR, it
+  resets and counts the same way, treating a step as its box down to the next
+  box or heading. `/pr` rewrites it in the collapsed layout the next time it
+  runs on that PR.
 - **On a push to a checklist with no boxes at all**, it leaves the stamp on the
   old commit and posts red with `checklist predates <sha>, re-run /pr`, so new
   code is never passed on a checklist nobody could tick.

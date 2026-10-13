@@ -6,9 +6,12 @@
 // the GitHub API half, run against a fake API.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import { qaGate } from '../src/pr/cli.mjs';
+import { buildComments } from '../src/pr/publish.mjs';
+import { balancedToggles } from './pr-helpers.mjs';
 import {
   CHECKLIST_MARKER,
   canPush,
@@ -16,6 +19,8 @@ import {
   countBoxes,
   findChecklistComments,
   githubClient,
+  isCollapsed,
+  listedSteps,
   partMarker,
   readGateEnv,
   readStampedSha,
@@ -406,17 +411,22 @@ describe('resetBody', () => {
   it('keeps a part suffix on the heading when restamping', () => {
     const result = resetBody(part(2, OLD_SHA), { headSha: HEAD_SHA, now: NOW });
     assert.ok(result.includes('## Manual QA — `def5678` (part 2 of 2)'));
-    assert.ok(!result.includes('[!WARNING]'));
+    assert.ok(!result.includes('Reset by push'));
   });
 
   it('writes a banner naming the push, the time and the cleared ticks', () => {
     const result = resetBody(checklist(), { headSha: HEAD_SHA, now: NOW });
 
-    assert.ok(result.includes('> [!WARNING]'));
-    assert.ok(
-      result.includes('**Reset by push `def5678` — 18 Aug 2026, 14:02 UTC.**'),
+    // One visible line, the rest folded under a toggle.
+    assert.match(
+      result,
+      /<!-- pr-qa:banner:start -->\n\n\*\*⚠️ Reset by push `def5678` — 18 Aug 2026, 14:02 UTC\.\*\* Every box is clear again\.\n\n<details><summary>What the reset changed<\/summary>\n\n/,
     );
     assert.ok(result.includes('ticked 3 of 5 boxes against `abc1234`'));
+    assert.match(
+      result,
+      /ticked again\.\n\n<\/details>\n\n<!-- pr-qa:banner:end -->/,
+    );
   });
 
   it('reports the counts it is given for a checklist spanning comments', () => {
@@ -431,7 +441,7 @@ describe('resetBody', () => {
   it('says so when there was no stamp to report', () => {
     const body = checklist().replace(/<!-- pr-qa:sha=\w+ -->\n/, '');
     const result = resetBody(body, { headSha: HEAD_SHA, now: NOW });
-    assert.ok(result.includes('> The previous pass ticked 3 of 5 boxes.'));
+    assert.ok(result.includes('\nThe previous pass ticked 3 of 5 boxes.\n'));
   });
 
   it('produces one banner when run twice, not two stacked ones', () => {
@@ -440,7 +450,8 @@ describe('resetBody', () => {
       { headSha: HEAD_SHA, now: NOW },
     );
 
-    assert.equal((twice.match(/> \[!WARNING\]/g) ?? []).length, 1);
+    assert.equal((twice.match(/Reset by push/g) ?? []).length, 1);
+    assert.equal((twice.match(/<details>/g) ?? []).length, 1);
     assert.ok(twice.includes('Reset by push `def5678`'));
     assert.ok(!twice.includes('Reset by push `abc1234`'));
   });
@@ -473,7 +484,7 @@ describe('resetBody', () => {
 
     assert.ok(result.includes('- [ ] A box'));
     assert.equal(readStampedSha(result), HEAD_SHA);
-    assert.ok(!result.includes('[!WARNING]'));
+    assert.ok(!result.includes('Reset by push'));
   });
 });
 
@@ -530,7 +541,7 @@ describe('resetBody — observations', () => {
 
     assert.match(
       result,
-      /> they are ticked again\.\n>\n> Pushes since this checklist was drafted changed files these steps cite, so they may be stale — re-run `\/ship` to redraft them:\n> - \[blocking\] Sign in as an admin\n/,
+      /they are ticked again\.\n\nPushes since this checklist was drafted changed files these steps cite, so they may be stale — re-run `\/ship` to redraft them:\n\n- \[blocking\] Sign in as an admin\n\n<\/details>/,
     );
     assert.deepEqual(listedStaleSteps(result), [
       '[blocking] Sign in as an admin',
@@ -920,7 +931,7 @@ describe('runGate', () => {
     );
     assert.match(
       comments[0].body,
-      /may be stale — re-run `\/pr` to redraft them:\n> - Backend 9 — Seats/,
+      /may be stale — re-run `\/pr` to redraft them:\n\n- Backend 9 — Seats\n/,
     );
   });
 
@@ -971,9 +982,9 @@ describe('runGate', () => {
 
     assert.match(
       comments[0].body,
-      /redraft them:\n> - Backend 9 — Seats\n> - Backend 10 — Gone\n/,
+      /redraft them:\n\n- Backend 9 — Seats\n- Backend 10 — Gone\n/,
     );
-    assert.doesNotMatch(comments[0].body, /> - Backend 8/);
+    assert.doesNotMatch(comments[0].body, /- Backend 8/);
   });
 
   it('keeps naming a step a push flagged until the checklist is redrafted', async () => {
@@ -1008,7 +1019,7 @@ describe('runGate', () => {
     });
 
     assert.equal(readStampedSha(second.comments[0].body), NEXT_SHA);
-    assert.match(second.comments[0].body, /> - Backend 9 — Seats\n/);
+    assert.match(second.comments[0].body, /\n- Backend 9 — Seats\n/);
   });
 
   it('still resets when GitHub cannot compare the commits', async () => {
@@ -1382,5 +1393,444 @@ describe('the gate against the real client', () => {
       logged[0],
       'Manual QA on def5678: failure — 2 of 5 checks outstanding',
     );
+  });
+});
+
+/** A cut-down real checklist in the collapsed layout, ticked, with notes from two passes. */
+const COLLAPSED = readFileSync(
+  new URL('./fixtures/pr/checklist-collapsed.md', import.meta.url),
+  'utf8',
+);
+
+/** The same checklist in the layout before it, as open PRs still carry it. */
+const FLAT = readFileSync(
+  new URL('./fixtures/pr/checklist-flat.md', import.meta.url),
+  'utf8',
+);
+
+describe('the collapsed layout', () => {
+  it('is told apart from the layout before it', () => {
+    assert.equal(isCollapsed(COLLAPSED), true);
+    assert.equal(isCollapsed(FLAT), false);
+    assert.equal(isCollapsed(checklist()), false);
+  });
+
+  it('counts the list lines as boxes, the same boxes the old layout had', () => {
+    // Three backend, two frontend, one Storybook and two Local CI boxes. The
+    // `- [x]` pasted inside a fenced block in Backend 2's toggle is output, not a box.
+    assert.deepEqual(countBoxes(COLLAPSED), {
+      total: 8,
+      ticked: 3,
+      unticked: 5,
+    });
+    assert.equal(countBoxes(FLAT).total, 8);
+    assert.equal(countBoxes(FLAT).ticked, 3);
+  });
+
+  it('computes the status from the list lines', () => {
+    const body = COLLAPSED.replaceAll(OLD_SHA, HEAD_SHA);
+    assert.deepEqual(computeStatus({ main: { body }, headSha: HEAD_SHA }), {
+      state: 'failure',
+      description: '5 of 8 checks outstanding',
+    });
+
+    const ticked = body.replace(/^(- )\[ \]/gm, '$1[x]');
+    assert.deepEqual(
+      computeStatus({ main: { body: ticked }, headSha: HEAD_SHA }),
+      {
+        state: 'success',
+        description: '8 checks ticked against def5678',
+      },
+    );
+  });
+
+  it('names each step by its list line, without markdown or the failed suffix', () => {
+    const names = listedSteps(COLLAPSED);
+
+    assert.equal(
+      names.get('Backend 2'),
+      'Backend 2 — The lockfile keeps msw nested under apps/web',
+    );
+    assert.equal(
+      names.get('Backend 3'),
+      'Backend 3 · if-time — The monitoring tunnel is not redirected to login',
+    );
+    assert.equal(
+      names.get('Teacher/Recall/New'),
+      'Teacher/Recall/New — DeadlineOpen',
+    );
+    // Lines inside a toggle are a step's instructions, never its name.
+    assert.ok(![...names.keys()].some((label) => label.startsWith('Setup')));
+  });
+});
+
+describe('the collapsed layout — reset', () => {
+  const reset = resetBody(COLLAPSED, { headSha: HEAD_SHA, now: NOW });
+
+  it('un-ticks every box and strips the failed suffix, leaving fenced output alone', () => {
+    assert.equal(countBoxes(reset).ticked, 0);
+    assert.equal(countBoxes(reset).total, 8);
+    assert.doesNotMatch(reset, /❌/);
+    assert.match(
+      reset,
+      /^- \[ \] \*\*Backend 2\*\* — The lockfile keeps msw nested under apps\/web$/m,
+    );
+    assert.match(reset, /^- \[x\] not a box, it is output$/m);
+  });
+
+  it('keeps only the latest note in each step’s toggle and in the Local CI notes', () => {
+    assert.doesNotMatch(reset, /an earlier pass/);
+    assert.doesNotMatch(reset, /```\nnode_modules\/msw\n```/);
+    assert.match(
+      reset,
+      /> \*\*Failed\*\* \(agent, `abc1234`\): a root `node_modules\/msw` entry is still there\.\n> The alias would point at a missing file\.\n\n<\/details>/,
+    );
+    assert.doesNotMatch(reset, /an earlier run/);
+    assert.match(reset, /`npm run test:suite` exit 0\.\n\n<\/details>/);
+    // A step with one note keeps it, and a note in a setup toggle belongs to no step.
+    assert.match(reset, /> \*\*Observed\*\* \(agent, `abc1234`\): `400`\./);
+    assert.match(reset, /the DSN had the usual shape/);
+  });
+
+  it('leaves every toggle balanced and every step where it was', () => {
+    assert.ok(balancedToggles(COLLAPSED));
+    assert.ok(balancedToggles(reset));
+    assert.equal(
+      (reset.match(/<details>/g) ?? []).length,
+      (COLLAPSED.match(/<details>/g) ?? []).length + 1,
+      'one more for the banner',
+    );
+  });
+
+  it('keeps one note per step when run twice', () => {
+    const twice = resetBody(reset, { headSha: OLD_SHA, now: NOW });
+    assert.equal(twice.match(/\*\*Failed\*\*/g).length, 1);
+    // Backend 1's, the setup toggle's and the Local CI notes' latest.
+    assert.equal(twice.match(/\*\*Observed\*\*/g).length, 3);
+  });
+
+  it('reads a CRLF body, as GitHub’s web editor saves it', () => {
+    const crlf = resetBody(COLLAPSED.replace(/\n/g, '\r\n'), {
+      headSha: HEAD_SHA,
+      now: NOW,
+    });
+    assert.equal(countBoxes(crlf).ticked, 0);
+    assert.doesNotMatch(crlf, /❌|an earlier pass|an earlier run/);
+  });
+});
+
+describe('the collapsed layout — edges', () => {
+  it('treats a missing body as no checklist', () => {
+    assert.equal(isCollapsed(undefined), false);
+    assert.deepEqual([...listedSteps(undefined)], []);
+  });
+
+  it('drops an older note with no blank line before the next or before the close', () => {
+    const body = [
+      '- [x] **Backend 1** — A',
+      '',
+      '<details><summary>How to run the Backend steps</summary>',
+      '',
+      '<details><summary><b>Backend 1</b> — A</summary>',
+      '',
+      '**Expect:** `200`',
+      '> **Observed** (agent): old',
+      '> **Observed** (agent): new',
+      '</details>',
+      '',
+      '</details>',
+    ].join('\n');
+    const reset = resetBody(body, { headSha: HEAD_SHA, now: NOW });
+
+    assert.doesNotMatch(reset, /old/);
+    assert.match(
+      reset,
+      /`200`\n> \*\*Observed\*\* \(agent\): new\n<\/details>/,
+    );
+  });
+
+  it('leaves notes alone in a toggle that is no step’s, such as one with no summary', () => {
+    const body = [
+      '- [x] **Backend 1** — A',
+      '',
+      '<details><summary>How to run the Backend steps</summary>',
+      '',
+      '<details>',
+      '',
+      '> **Observed** (agent): one',
+      '',
+      '> **Observed** (agent): two',
+      '',
+      '</details>',
+      '',
+      '</details>',
+    ].join('\n');
+    const reset = resetBody(body, { headSha: HEAD_SHA, now: NOW });
+
+    assert.match(reset, /one/);
+    assert.match(reset, /two/);
+    assert.deepEqual(
+      staleSteps(body.replace('one', '`src/a.ts`'), ['src/a.ts']),
+      [],
+    );
+  });
+});
+
+describe('the collapsed layout — stale steps', () => {
+  it('names only the step whose toggle cites the changed file', () => {
+    assert.deepEqual(staleSteps(COLLAPSED, ['apps/web/next.config.ts']), [
+      'Backend 2 — The lockfile keeps msw nested under apps/web',
+    ]);
+    // A path matches by its tail, and one only inside a fenced command is no citation.
+    assert.deepEqual(staleSteps(COLLAPSED, ['repo/apps/web/next.config.ts']), [
+      'Backend 2 — The lockfile keeps msw nested under apps/web',
+    ]);
+    assert.deepEqual(staleSteps(COLLAPSED, ['package-lock.json']), []);
+  });
+
+  it('charges no step for a path in a setup toggle, the boot block or the gaps', () => {
+    assert.deepEqual(staleSteps(COLLAPSED, ['apps/web/.env.local']), []);
+    assert.deepEqual(
+      staleSteps(COLLAPSED, ['apps/web/src/app/api/agents/route.test.ts']),
+      [],
+    );
+    assert.deepEqual(
+      staleSteps(COLLAPSED, ['apps/web/e2e/deadline.spec.ts']),
+      [],
+    );
+  });
+
+  it('names a human step, a step cited in its list line, and each step once', () => {
+    assert.deepEqual(
+      staleSteps(COLLAPSED, [
+        'components/primitives/calendar.tsx',
+        'apps/web/src/app/api/agents/route.ts',
+      ]),
+      [
+        'Backend 1 — The assistant refuses a request with only a system message',
+        'Frontend 2 — Deadline calendar looks right and works from the keyboard',
+      ],
+    );
+
+    const cited = COLLAPSED.replace(
+      '**Backend 3** · if-time — The monitoring tunnel',
+      '**Backend 3** · if-time — The `src/tunnel.ts` monitoring tunnel',
+    );
+    assert.deepEqual(staleSteps(cited, ['src/tunnel.ts']), [
+      'Backend 3 · if-time — The `src/tunnel.ts` monitoring tunnel is not redirected to login',
+    ]);
+  });
+
+  it('ignores a path in a fenced block inside a toggle', () => {
+    const fenced = COLLAPSED.replace(
+      "jq -r '.packages | keys[]' package-lock.json | grep msw",
+      'cat `src/only/in/a/fence.ts`',
+    );
+    assert.deepEqual(staleSteps(fenced, ['src/only/in/a/fence.ts']), []);
+  });
+
+  it('falls back to the toggle’s label when the list line is in another part', () => {
+    const toggles = COLLAPSED.slice(
+      COLLAPSED.indexOf('<details><summary>How to run the Backend steps'),
+    );
+    assert.deepEqual(
+      staleSteps(toggles, ['apps/web/next.config.ts'], new Map()),
+      ['Backend 2'],
+    );
+    assert.deepEqual(
+      staleSteps(toggles, ['apps/web/next.config.ts'], listedSteps(COLLAPSED)),
+      ['Backend 2 — The lockfile keeps msw nested under apps/web'],
+    );
+  });
+
+  it('names a list-only part’s steps as the collapsed layout does when told it is one', () => {
+    const list = [
+      '**Backend** · agent · about 5 min',
+      '',
+      '- [ ] **Backend 1** — Reads `src/a.ts` · ❌ failed',
+    ].join('\n');
+
+    assert.equal(isCollapsed(list), false);
+    assert.deepEqual(staleSteps(list, ['src/a.ts'], undefined, true), [
+      'Backend 1 — Reads `src/a.ts`',
+    ]);
+  });
+
+  it('ignores a toggle tag inside a fence when telling the layout', () => {
+    assert.equal(
+      isCollapsed('```\n<details><summary><b>x</b></summary>\n```'),
+      false,
+    );
+  });
+
+  it('closes a toggle written on a single line', () => {
+    const body = COLLAPSED.replace(
+      '**Frontend** · agent',
+      '<details><summary>Log</summary>pasted</details>\n\n**Frontend** · agent',
+    );
+    assert.equal(listedSteps(body).has('Frontend 1'), true);
+  });
+
+  it('keeps only the latest note in a split Local CI notes toggle', () => {
+    const body = COLLAPSED.replace(
+      '<details><summary>Local CI notes</summary>',
+      '<details><summary>Local CI notes (part 2)</summary>',
+    );
+    const reset = resetBody(body, { headSha: HEAD_SHA, now: NOW });
+    assert.equal(reset.includes('an earlier run'), false);
+    assert.equal(reset.includes('`npm run test:suite` exit 0'), true);
+  });
+});
+
+describe('the collapsed layout — banner', () => {
+  it('writes one visible line, with the counts and stale steps in a toggle', () => {
+    const body = resetBody(COLLAPSED, {
+      headSha: HEAD_SHA,
+      now: NOW,
+      staleSteps: ['Backend 2 — The lockfile keeps msw nested under apps/web'],
+    });
+    const banner = body.slice(
+      body.indexOf('<!-- pr-qa:banner:start -->'),
+      body.indexOf('<!-- pr-qa:banner:end -->'),
+    );
+
+    assert.equal(
+      banner,
+      [
+        '<!-- pr-qa:banner:start -->',
+        '',
+        '**⚠️ Reset by push `def5678` — 18 Aug 2026, 14:02 UTC.** Every box is clear again, and 1 step may be stale.',
+        '',
+        '<details><summary>What the reset changed</summary>',
+        '',
+        'The previous pass ticked 3 of 8 boxes against `abc1234`.',
+        '',
+        'Every box below is now clear, and the `Manual QA` check stays red until they are ticked again.',
+        '',
+        'Pushes since this checklist was drafted changed files these steps cite, so they may be stale — re-run `/pr` to redraft them:',
+        '',
+        '- Backend 2 — The lockfile keeps msw nested under apps/web',
+        '',
+        '</details>',
+        '',
+        '',
+      ].join('\n'),
+    );
+    assert.deepEqual(listedStaleSteps(body), [
+      'Backend 2 — The lockfile keeps msw nested under apps/web',
+    ]);
+  });
+
+  it('counts several stale steps in its visible line', () => {
+    const body = resetBody(COLLAPSED, {
+      headSha: HEAD_SHA,
+      now: NOW,
+      staleSteps: ['Backend 1 — a', 'Backend 2 — b'],
+    });
+    assert.match(body, /Every box is clear again, and 2 steps may be stale\./);
+    assert.deepEqual(listedStaleSteps(body), [
+      'Backend 1 — a',
+      'Backend 2 — b',
+    ]);
+  });
+
+  it('still reads the stale steps an older, quoted banner listed', () => {
+    const old = checklist({
+      banner: [
+        '',
+        '> [!WARNING]',
+        '> **Reset by push `abc1234` — 13 Oct 2026, 10:06 UTC.**',
+        '> The previous pass ticked 0 of 12 boxes against `0ld0ld0`.',
+        '>',
+        '> Pushes since this checklist was drafted changed files these steps cite, so they may be stale — re-run `/pr` to redraft them:',
+        '> - [blocking] Frontend 3 — Recall deadline calendar',
+        '',
+      ].join('\n'),
+    });
+
+    assert.deepEqual(listedStaleSteps(old), [
+      '[blocking] Frontend 3 — Recall deadline calendar',
+    ]);
+    const reset = resetBody(old, {
+      headSha: HEAD_SHA,
+      now: NOW,
+      staleSteps: listedStaleSteps(old),
+    });
+    assert.doesNotMatch(reset, /\[!WARNING\]/);
+    assert.match(
+      reset,
+      /\n- \[blocking\] Frontend 3 — Recall deadline calendar\n\n<\/details>/,
+    );
+  });
+});
+
+describe('the collapsed layout — runGate', () => {
+  it('names a stale step by its list line when its toggle landed in a later part', async () => {
+    const checklistOnly = COLLAPSED.slice(
+      COLLAPSED.indexOf('<details><summary><b>Boot'),
+    );
+    const bodies = buildComments(checklistOnly, OLD_SHA, 1500);
+    assert.ok(bodies.length > 2);
+    // The Backend list and Backend 2's toggle sit in different comments.
+    const listIn = bodies.findIndex((b) => b.includes('- [x] **Backend 2**'));
+    const toggleIn = bodies.findIndex((b) =>
+      b.includes('<summary><b>Backend 2</b>'),
+    );
+    assert.notEqual(listIn, toggleIn);
+
+    const { api, comments } = fakeApi(
+      bodies.map((body, i) => ({ id: i + 1, body })),
+      HEAD_SHA,
+      { files: [{ filename: 'apps/web/next.config.ts' }] },
+    );
+    const status = await runGate('reset', {
+      api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+      now: NOW,
+    });
+
+    assert.match(
+      comments[0].body,
+      /redraft them:\n\n- Backend 2 — The lockfile keeps msw nested under apps\/web\n\n<\/details>/,
+    );
+    assert.ok(comments.every((comment) => balancedToggles(comment.body)));
+    assert.ok(comments.every((comment) => !comment.body.includes('❌')));
+    assert.deepEqual(status, {
+      headSha: HEAD_SHA,
+      state: 'failure',
+      description: '8 of 8 checks outstanding',
+    });
+  });
+
+  it('still resets an old-layout checklist and computes its status', async () => {
+    const { api, comments } = fakeApi([{ id: 1, body: FLAT }], HEAD_SHA, {
+      files: [{ filename: 'apps/web/next.config.ts' }],
+    });
+    const status = await runGate('reset', {
+      api,
+      repo: 'o/r',
+      prNumber: '5',
+      headSha: HEAD_SHA,
+      now: NOW,
+    });
+    const body = comments[0].body;
+
+    assert.equal(countBoxes(body).ticked, 0);
+    assert.doesNotMatch(body, /an earlier pass|an earlier run/);
+    assert.match(
+      body,
+      /> \*\*Failed\*\* \(agent, `abc1234`\): a root entry is still there\./,
+    );
+    assert.match(
+      body,
+      /redraft them:\n\n- \[blocking\] Backend 2 — The lockfile keeps msw nested under apps\/web\n/,
+    );
+    assert.deepEqual(status, {
+      headSha: HEAD_SHA,
+      state: 'failure',
+      description: '8 of 8 checks outstanding',
+    });
   });
 });

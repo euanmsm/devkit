@@ -5,3 +5,6 @@ node_modules
 
 # Templates carry {{placeholder}} blocks that reflowing would break.
 packages/skills/templates/
+
+# Checklist comment bodies, kept exactly as GitHub stores them.
+packages/skills/test/fixtures/pr/*.md
