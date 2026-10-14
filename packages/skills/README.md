@@ -18,6 +18,7 @@ Full documentation — exactly how each skill works and every option it takes:
 - [clean-comments](docs/clean-comments.md)
 - [code-review](docs/code-review.md)
 - [dead-code](docs/dead-code.md)
+- [issues](docs/issues.md)
 - [pr](docs/pr.md)
 - [reading-order](docs/reading-order.md)
 
@@ -75,6 +76,7 @@ are never reported as edited. Without it, add the generated paths to
 | `clean-comments`       | Fixes comment debt found by [`@euanmsm/terse`](../terse), fanning out to parallel agents on a big change. Needs terse             |
 | `code-review`          | Deep multi-agent review of a branch or named files, every finding checked by a second agent trying to disprove it                 |
 | `dead-code`            | Finds, verifies and removes dead code with [`@euanmsm/dead-code`](../dead-code), keeping recorded false positives out. Needs it   |
+| `issues`               | How to write, link and plan Linear and GitHub issues: titles, leaf and parent templates, writing style and status                 |
 | `pr`                   | Opens the PR with a summary and a Manual QA checklist whose every step is checked against the code                                |
 | `reading-order`        | Writes an ordered list of links to the branch's changed files, so a reviewer reads them in the order that explains the change     |
 
@@ -182,6 +184,18 @@ with its reason. A file `sync` generates, such as a `.workflow.js`, is loaded by
 its path, so dead-code lists it as known rather than unused, and the skill never
 deletes one. When the skill is enabled, the code review's `dead-code` lens loads
 it. [docs/dead-code.md](docs/dead-code.md) covers the rest.
+
+### `issues`
+
+| Option         | Default                                               | What it is                                                                 |
+| -------------- | ----------------------------------------------------- | -------------------------------------------------------------------------- |
+| `name`         | `issues`                                              | The skill's folder and slash command: lowercase letters, digits and dashes |
+| `trackers`     | `["linear", "github"]`                                | Which trackers the skill covers; the other's sections are left out         |
+| `layerOrder`   | migrations → data access → services → API routes → UI | The layers a feature is split into leaves by, first to last                |
+| `testingRules` | none                                                  | Path to the repository's testing conventions                               |
+
+[docs/issues.md](docs/issues.md) covers what the skill teaches and how it
+differs between Linear and GitHub.
 
 ### `pr`
 

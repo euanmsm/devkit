@@ -35,6 +35,7 @@ const EVERYTHING = {
     ...BOTH.skills,
     'code-review': { githubReview: true },
     'dead-code': {},
+    issues: {},
     pr: { qaGate: true },
     'reading-order': {},
   },

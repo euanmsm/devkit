@@ -32,6 +32,29 @@ const NAME_PATTERN = {
     'lowercase letters, digits and dashes, starting with a letter or digit',
 };
 
+/** The trackers the issues skill knows, in the order its sections appear. */
+const TRACKERS = ['linear', 'github'];
+
+/** How each tracker is named in the issues skill's prose. */
+const TRACKER_NAMES = { linear: 'Linear', github: 'GitHub' };
+
+/**
+ * Says what the issues skill's `trackers` option should have been, when it is wrong.
+ *
+ * @param value - The value the config gives
+ * @returns What the value must be, or null when it is fine
+ */
+function trackersProblem(value) {
+  const valid =
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((tracker) => TRACKERS.includes(tracker)) &&
+    new Set(value).size === value.length;
+  return valid
+    ? null
+    : `a list of one or both of ${TRACKERS.map((tracker) => `"${tracker}"`).join(' and ')}, without repeats`;
+}
+
 /**
  * Words limiting the typecheck to changes under some folders.
  *
@@ -161,6 +184,42 @@ export const SKILLS = {
       },
     ],
     values: (options) => ({ typecheck: options.typecheck }),
+  },
+
+  issues: {
+    defaults: {
+      name: 'issues',
+      trackers: ['linear', 'github'],
+      layerOrder: ['migrations', 'data access', 'services', 'API routes', 'UI'],
+      testingRules: '',
+    },
+    patterns: { name: NAME_PATTERN },
+    validate: { trackers: trackersProblem },
+    files: (options) => [
+      {
+        template: 'issues/SKILL.md',
+        dir: 'skillsDir',
+        path: `${options.name}/SKILL.md`,
+      },
+    ],
+    values: (options) => {
+      const trackers = TRACKERS.filter((tracker) =>
+        options.trackers.includes(tracker),
+      );
+      return {
+        name: options.name,
+        linear: trackers.includes('linear'),
+        github: trackers.includes('github'),
+        both: trackers.length === 2,
+        trackerNames: trackers
+          .map((tracker) => TRACKER_NAMES[tracker])
+          .join(' or '),
+        layerOrder: options.layerOrder.join(' → '),
+        testingStyle: options.testingRules
+          ? `Follow the testing conventions in \`${options.testingRules}\` for which kind of test each layer gets and which config it runs under`
+          : 'Match the test to the layer the code lives in — integration tests for code that talks to the database, unit tests for pure logic, request-level tests for API routes — following what the repository already does',
+      };
+    },
   },
 
   pr: {
