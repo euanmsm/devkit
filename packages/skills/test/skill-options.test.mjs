@@ -152,6 +152,59 @@ describe('reading-order — output folder', () => {
   });
 });
 
+describe('issues — trackers and conventions', () => {
+  const path = '.claude/skills/issues/SKILL.md';
+
+  it('covers both trackers by default', async () => {
+    const skill = await generated({ issues: {} }, path);
+    assert.match(skill, /^name: issues$/m);
+    assert.match(skill, /any\s+Linear or GitHub issue/);
+    assert.match(skill, /### Linear fields/);
+    assert.match(skill, /### GitHub fields/);
+    assert.match(skill, /only the mechanics/);
+    assert.doesNotMatch(skill, /\{\{/);
+  });
+
+  it('leaves out the tracker the repository does not use', async () => {
+    const github = await generated({ issues: { trackers: ['github'] } }, path);
+    assert.match(github, /any\s+GitHub issue/);
+    assert.match(github, /### On GitHub/);
+    assert.doesNotMatch(github, /Linear|save_issue|only the mechanics/);
+
+    const linear = await generated({ issues: { trackers: ['linear'] } }, path);
+    assert.match(linear, /save_document/);
+    assert.doesNotMatch(linear, /GitHub fields|gh issue|gh api/);
+  });
+
+  it('writes the skill under its name, with the layers and testing rules given', async () => {
+    const skill = await generated(
+      {
+        issues: {
+          name: 'linear',
+          layerOrder: ['schema', 'API', 'web'],
+          testingRules: 'docs/testing.md',
+        },
+      },
+      '.claude/skills/linear/SKILL.md',
+    );
+    assert.match(skill, /^name: linear$/m);
+    assert.match(skill, /by \*\*layer\*\*: schema → API → web\./);
+    assert.match(skill, /testing conventions in `docs\/testing\.md`/);
+  });
+
+  it('rejects a tracker it does not know, a repeat or an empty list', async () => {
+    for (const trackers of [['jira'], ['github', 'github'], [], 'github']) {
+      const root = makeRepo({
+        'skills.json': { skills: { issues: { trackers } } },
+      });
+      await assert.rejects(
+        () => sync(root),
+        /Option "trackers" for skill "issues".*must be a list of one or both of "linear" and "github"/,
+      );
+    }
+  });
+});
+
 describe('pr — skill name', () => {
   it('writes the skill under its name and uses it everywhere', async () => {
     const root = prRepo('sales', {
