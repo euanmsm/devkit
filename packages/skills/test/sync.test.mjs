@@ -38,6 +38,7 @@ const EVERYTHING = {
     issues: {},
     pr: { qaGate: true },
     'reading-order': {},
+    'review-page': {},
   },
 };
 

@@ -6,5 +6,8 @@ node_modules
 # Templates carry {{placeholder}} blocks that reflowing would break.
 packages/skills/templates/
 
+# The review page is one hand-laid HTML file with its script and styles inline.
+packages/skills/src/review-page/template.html
+
 # Checklist comment bodies, kept exactly as GitHub stores them.
 packages/skills/test/fixtures/pr/*.md

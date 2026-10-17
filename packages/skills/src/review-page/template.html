@@ -1,0 +1,1742 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Branch Review</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
+<style>
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --border: #e2e5ea;
+  --border-strong: #cfd4dc;
+  --text: #1c2129;
+  --text-2: #4d5664;
+  --text-3: #808a99;
+  --accent: #4f5bd5;
+  --accent-soft: #eceefe;
+  --add-bg: #e9f7ee;
+  --add-num: #d3efdc;
+  --add-mark: #b4e5c3;
+  --add-fg: #1a7f37;
+  --del-bg: #fdeeee;
+  --del-num: #f8d9d9;
+  --del-mark: #f3b7b7;
+  --del-fg: #c4302b;
+  --hunk-bg: #eef1fb;
+  --hunk-fg: #5a6488;
+  --move-fg: #0969da;
+  --watch-bg: #fff8e6;
+  --watch-border: #f0c75e;
+  --watch-fg: #6b5210;
+  --done: #2e9b57;
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.05), 0 1px 3px rgb(16 24 40 / 0.06);
+  --blk: rgb(79 91 213 / 0.05);
+  --note-head: #e9ecfb;
+  --note-head-hover: #dfe3fa;
+  --note-card: #ffffff;
+  --ui: #0e8a7a;
+  --ui-soft: #def5f1;
+  --term-bg: #12161d;
+  --term-bar: #1c222c;
+  --term-fg: #d6dde8;
+  --note-border: #cdd3f3;
+  --notes-w: clamp(380px, 34vw, 600px);
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1115; --surface: #161a20; --surface-2: #1c2129; --border: #262c36;
+    --border-strong: #333b47; --text: #e6e9ef; --text-2: #aab2bf; --text-3: #737d8c;
+    --accent: #8b94f7; --accent-soft: #23264a;
+    --add-bg: #12261a; --add-num: #173322; --add-mark: #1f5a33; --add-fg: #5fd38a;
+    --del-bg: #2a1517; --del-num: #3a1b1e; --del-mark: #6e2a2e; --del-fg: #f2817c;
+    --hunk-bg: #1a1f33; --hunk-fg: #9aa3d6; --move-fg: #58a6ff;
+    --watch-bg: #2a2310; --watch-border: #8a6d1d; --watch-fg: #e8cf86;
+    --done: #4cc47a; --blk: rgb(139 148 247 / 0.06); --note-head: #1d2240; --note-head-hover: #252b52; --note-card: #12151f; --ui: #3cc8b4; --ui-soft: #11302c; --term-bg: #0b0e13; --term-bar: #151a22; --term-fg: #d6dde8; --note-border: #343b6b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1115; --surface: #161a20; --surface-2: #1c2129; --border: #262c36;
+  --border-strong: #333b47; --text: #e6e9ef; --text-2: #aab2bf; --text-3: #737d8c;
+  --accent: #8b94f7; --accent-soft: #23264a;
+  --add-bg: #12261a; --add-num: #173322; --add-mark: #1f5a33; --add-fg: #5fd38a;
+  --del-bg: #2a1517; --del-num: #3a1b1e; --del-mark: #6e2a2e; --del-fg: #f2817c;
+  --hunk-bg: #1a1f33; --hunk-fg: #9aa3d6; --move-fg: #58a6ff;
+  --watch-bg: #2a2310; --watch-border: #8a6d1d; --watch-fg: #e8cf86;
+  --done: #4cc47a; --blk: rgb(139 148 247 / 0.06); --note-head: #1d2240; --note-head-hover: #252b52; --note-card: #12151f; --ui: #3cc8b4; --ui-soft: #11302c; --term-bg: #0b0e13; --term-bar: #151a22; --term-fg: #d6dde8; --note-border: #343b6b; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-padding-top: 12px; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased;
+}
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+p code, li code, .summary code {
+  background: var(--surface-2); border: 1px solid var(--border);
+  padding: 0 4px; border-radius: 4px;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button { font: inherit; color: inherit; }
+
+/* ---------- Layout ---------- */
+.layout { display: grid; grid-template-columns: var(--side-w, clamp(280px, 22vw, 380px)) minmax(0, 1fr); min-height: 100vh; }
+.side-resize { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; z-index: 5; touch-action: none; }
+.side-resize::after { content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: 2px; background: var(--accent); opacity: 0; transition: opacity .12s; }
+.side-resize:hover::after, .resizing .side-resize::after { opacity: 1; }
+.resizing { cursor: col-resize; user-select: none; }
+.sidebar {
+  position: sticky; top: 0; height: 100vh; overflow: hidden;
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--border); background: var(--surface);
+}
+main { padding: 28px 32px 120px; max-width: 1760px; width: 100%; }
+
+/* ---------- Sidebar ---------- */
+.side-head { padding: 18px 18px 14px; border-bottom: 1px solid var(--border); }
+.side-title { font-weight: 650; font-size: 13px; margin: 0 0 2px; }
+.side-branch { font-family: var(--mono); font-size: 11.5px; color: var(--text-3); word-break: break-all; }
+.progress { margin-top: 14px; }
+.progress-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); margin-bottom: 6px; }
+.progress-label b { color: var(--text); font-weight: 600; }
+.bar { height: 6px; background: var(--surface-2); border-radius: 99px; overflow: hidden; }
+.bar > span { display: block; height: 100%; width: 0; background: var(--done); border-radius: 99px; transition: width .25s ease; }
+.toggles { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 12px; padding: 3px 9px; border-radius: 99px; user-select: none;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
+}
+.chip[hidden] { display: none; }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+.nav { flex: 1; overflow-y: auto; padding: 10px 8px 16px; }
+.nav-overview { display: block; padding: 6px 10px; border-radius: 6px; color: var(--text-2); font-size: 12.5px; }
+.nav-section { margin-top: 12px; }
+.nav-section-title {
+  display: flex; justify-content: space-between; padding: 4px 10px;
+  font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3);
+}
+.nav-item {
+  display: grid; grid-template-columns: 16px 22px minmax(0,1fr) auto; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 6px; cursor: pointer; color: var(--text-2); font-size: 12.5px;
+}
+.nav-item:hover { background: var(--surface-2); text-decoration: none; }
+.nav-item.current { background: var(--accent-soft); color: var(--text); }
+.nav-item .num { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+.nav-item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-item .delta { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); }
+.nav-item.read .name { color: var(--text-3); }
+.nav-item.hidden-read { display: none; }
+/* Read is a quiet check; unread shows nothing. Changed since read stays loud. */
+.dot { width: 12px; height: 12px; }
+.read .dot { background: var(--done); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.3 2.3 4.7-5' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.3 2.3 4.7-5' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat; opacity: .85; }
+.stale .dot { width: 8px; height: 8px; margin: 2px; border-radius: 50%; background: var(--watch-border); -webkit-mask: none; mask: none; }
+/* ---------- Sidebar views: review order or file tree ---------- */
+.views { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; margin-top: 14px; padding: 2px; border-radius: 8px; background: var(--surface-2); }
+.views button { border: 0; background: none; padding: 4px 8px; border-radius: 6px; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.views button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.tree-root { padding: 2px 10px 8px; font-family: var(--mono); font-size: 10.5px; color: var(--text-3); word-break: break-all; }
+.tree-file { color: var(--text); }
+.tree-plain { color: var(--text-3); opacity: .75; }
+.tree-plain:hover { color: var(--text-2); opacity: 1; }
+.tree-row {
+  display: grid; grid-template-columns: 14px 14px minmax(0,1fr) auto; align-items: center; gap: 5px;
+  padding: 3px 10px 3px calc(10px + var(--d, 0) * 10px); border-radius: 6px;
+  color: var(--text-2); font-size: 12.5px; cursor: pointer; user-select: none;
+}
+.tree-row:hover { background: var(--surface-2); text-decoration: none; }
+.tree-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-dir { color: var(--text); }
+.tree-dir .chev { display: grid; place-items: center; color: var(--text-3); }
+.tree-dir[aria-expanded="false"] .chev svg { transform: rotate(-90deg); }
+.tree-dir .ico { width: 12px; height: 10px; border-radius: 2px; border: 1.5px solid var(--st, var(--text-3)); border-top-width: 3px; }
+.tree-dir .name { font-weight: 550; color: var(--st, var(--text-3)); }
+.tree-dir.st-none .name { font-weight: 450; }
+.tree-dir.st-none .ico { opacity: .6; }
+.tree-dir.read .name, .tree-dir.read .ico { opacity: .5; }
+.tree-dir.st-deleted .name { text-decoration: line-through; }
+.st { font-family: var(--mono); font-size: 10.5px; font-weight: 700; text-align: center; }
+/* A changed file's name, letter and strikethrough all take its git status colour. */
+.st-added { --st: var(--add-fg); }
+.st-deleted { --st: var(--del-fg); }
+.st-renamed, .tree-ghost { --st: var(--move-fg); }
+.st-modified { --st: var(--watch-fg); }
+.tree-file .st, .tree-file .name, .tree-ghost .st, .tree-ghost .name { color: var(--st); }
+.tree-file.read .name { opacity: .5; }
+.tree-file.st-deleted .name { text-decoration: line-through; }
+.tree-file, .tree-plain { grid-template-columns: 14px minmax(0,1fr) auto; }
+.tree-file .st { grid-column: 3; }
+.tree-file.stale .name::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--watch-border); vertical-align: middle; }
+.tree-ghost { opacity: .62; font-style: italic; grid-template-columns: 14px minmax(0,1fr); }
+.tree-ghost:hover { opacity: 1; }
+.tree-ghost .name { text-decoration: line-through; }
+.tree-ghost .to { grid-column: 2; font-family: var(--mono); font-size: 10.5px; font-style: normal; color: var(--move-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-row.on { background: var(--accent-soft); color: var(--text); }
+/* Tests of the focused file, and closed folders holding it, get a lighter shade. */
+.tree-row.on-sub, .tree-row.holds { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+.tree-row.hidden-read, .tree-folder.hidden-read { display: none; }
+.tree-row.flash { animation: tree-flash 1.2s ease; }
+@keyframes tree-flash { from { background: var(--accent-soft); } to { background: transparent; } }
+
+.side-foot {
+  padding: 10px 18px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-3);
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+}
+.side-foot select { font: inherit; font-size: 12px; background: var(--surface); color: var(--text-2); border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; }
+kbd {
+  font-family: var(--mono); font-size: 11px; padding: 1px 5px; border-radius: 4px;
+  border: 1px solid var(--border-strong); border-bottom-width: 2px; background: var(--surface); color: var(--text-2);
+}
+
+/* ---------- Overview ---------- */
+.hero {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 26px 28px; box-shadow: var(--shadow); margin-bottom: 36px;
+}
+.kicker { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12.5px; color: var(--text-3); }
+.kicker .mono { color: var(--text-2); }
+.arrow { color: var(--text-3); }
+.hero h1 { font-size: 24px; line-height: 1.25; margin: 10px 0 8px; letter-spacing: -.01em; }
+.stats { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: var(--text-2); margin-bottom: 16px; }
+.stats .add { color: var(--add-fg); font-family: var(--mono); }
+.stats .del { color: var(--del-fg); font-family: var(--mono); }
+.hero .summary { font-size: 15px; color: var(--text); max-width: 78ch; margin: 0 0 22px; }
+.columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.col h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); margin: 0 0 8px; font-weight: 650; }
+.col ul { margin: 0; padding-left: 18px; }
+.col li { margin-bottom: 6px; color: var(--text-2); }
+.commits { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 16px; }
+.commits h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); margin: 0 0 8px; font-weight: 650; }
+.commit { display: flex; gap: 10px; font-size: 13px; padding: 2px 0; color: var(--text-2); }
+.commit .mono { color: var(--text-3); }
+.hero-actions { margin-top: 20px; display: flex; gap: 10px; align-items: center; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px;
+  border: 1px solid var(--accent); background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; font-size: 13px;
+}
+.btn.ghost { background: transparent; color: var(--text-2); border-color: var(--border-strong); font-weight: 500; }
+
+/* ---------- Sections ---------- */
+.section { margin-bottom: 40px; }
+.section-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+.section-no { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 600; }
+.section-head h2 { font-size: 18px; margin: 0; letter-spacing: -.005em; }
+.section-count { font-size: 12px; color: var(--text-3); }
+.section-intro { color: var(--text-2); margin: 0 0 14px; max-width: 80ch; }
+
+/* ---------- File card ---------- */
+.file {
+  position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  margin-bottom: 14px; box-shadow: var(--shadow);
+}
+/* The focus ring is drawn over the card, so turning it on leaves the code alone. */
+.file::after, .skim-group::after, .ui-card::after {
+  content: ""; position: absolute; inset: -1px; border-radius: 11px; pointer-events: none; z-index: 5;
+  border: 1px solid var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+  opacity: 0;
+}
+.file.current::after, .skim-group.current::after, .ui-card.current::after { opacity: 1; }
+.file.hidden-read { display: none; }
+.file-head {
+  position: sticky; top: 0; z-index: 3;
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  background: var(--surface); border-bottom: 1px solid var(--border); border-radius: 10px 10px 0 0;
+}
+.file.collapsed .file-head { border-bottom-color: transparent; border-radius: 10px; }
+.chev {
+  width: 22px; height: 22px; display: grid; place-items: center; border: 0; background: none;
+  border-radius: 5px; cursor: pointer; color: var(--text-3); flex: none;
+}
+.chev:hover { background: var(--surface-2); }
+.chev svg { transition: transform .15s ease; }
+.collapsed > .file-head .chev svg, .test.collapsed .chev svg, .skim-file.collapsed .chev svg { transform: rotate(-90deg); }
+.file-no { font-family: var(--mono); font-size: 12px; color: var(--text-3); min-width: 20px; }
+.path { font-family: var(--mono); font-size: 12.5px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; flex: 1; }
+.path span { direction: ltr; unicode-bidi: plaintext; }
+.path .dir { color: var(--text-3); }
+.path .base { color: var(--text); font-weight: 600; }
+.badge { font-size: 10.5px; font-weight: 600; padding: 1px 7px; border-radius: 99px; text-transform: uppercase; letter-spacing: .04em; flex: none; }
+.badge.added { background: var(--add-bg); color: var(--add-fg); }
+.badge.deleted { background: var(--del-bg); color: var(--del-fg); }
+.badge.renamed { background: var(--hunk-bg); color: var(--move-fg); }
+.badge.modified { background: var(--surface-2); color: var(--text-2); }
+.badge.stale { background: var(--watch-bg); color: var(--watch-fg); }
+.delta { font-family: var(--mono); font-size: 11.5px; display: inline-flex; gap: 6px; align-items: center; flex: none; }
+.delta .a { color: var(--add-fg); } .delta .d { color: var(--del-fg); }
+.blocks { display: inline-flex; gap: 1px; }
+.blocks i { width: 7px; height: 7px; border-radius: 1.5px; background: var(--border); }
+.blocks i.a { background: var(--add-fg); } .blocks i.d { background: var(--del-fg); }
+.open { font-size: 12px; color: var(--text-2); flex: none; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); }
+.open:hover { text-decoration: none; border-color: var(--border-strong); color: var(--text); }
+.read-toggle {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; cursor: pointer; font-size: 12px; color: var(--text-2);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 9px 2px 6px; user-select: none; background: var(--surface);
+}
+.read-toggle input { margin: 0; accent-color: var(--done); }
+.is-read > .file-head .read-toggle, .is-read > .row-head .read-toggle { border-color: var(--done); color: var(--done); }
+
+.file-body {
+  display: grid; grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr); gap: 0;
+}
+.collapsed > .file-body { display: none; }
+.file-main { padding: 14px 16px 16px; min-width: 0; }
+.notes { border-left: 1px solid var(--border); background: var(--surface-2); border-radius: 0 0 10px 0; }
+.notes-inner {
+  position: sticky; top: 46px; max-height: calc(100vh - 56px); overflow-y: auto;
+  padding: 16px 18px 18px; font-size: 13.5px; line-height: 1.6;
+}
+.notes .summary { margin: 0 0 14px; font-size: 14.5px; font-weight: 550; color: var(--text); line-height: 1.5; }
+.notes h4 {
+  margin: 16px 0 6px; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3);
+}
+.notes .context p { margin: 0 0 8px; color: var(--text-2); }
+.renamed-from { font-size: 12px; color: var(--text-3); margin: -6px 0 12px; font-family: var(--mono); word-break: break-all; }
+
+/* ---------- Tests and skim rows ---------- */
+.tests { margin-top: 14px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.tests-title { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); padding: 7px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.test + .test, .skim-file + .skim-file { border-top: 1px solid var(--border); }
+.row-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px; }
+.row-head .note { color: var(--text-3); font-size: 12.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-head .path { flex: 0 1 auto; max-width: 55%; }
+.row-body { padding: 0 12px 12px; }
+.collapsed > .row-body { display: none; }
+.is-read > .row-head .path .base { color: var(--text-3); font-weight: 500; }
+
+.skim-group { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 14px; box-shadow: var(--shadow); }
+.skim-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.skim-head h3 { margin: 0; font-size: 14px; flex: 1; }
+.skim-head .note { color: var(--text-3); font-size: 12.5px; }
+
+/* ---------- Diff ---------- */
+.diff {
+  border: 1px solid var(--border); border-radius: 8px; overflow-x: hidden; overflow-y: hidden;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+}
+/* A diff only scrolls sideways while the mouse is over it. A scrolling box is
+   its own compositing layer, and so is everything drawn over it; dozens at once
+   left blank areas during fast page scrolls. One live box at a time does not. */
+.diff.live { overflow-x: auto; }
+.diff table { width: max-content; min-width: 100%; border-collapse: collapse; }
+.diff td { padding: 0; vertical-align: top; }
+.ln {
+  width: 48px; min-width: 48px; position: relative; z-index: 1; transform: translateX(var(--sx, 0px)); text-align: right; padding: 0 8px !important; color: var(--text-3); user-select: none;
+  font-size: 11.5px; background: var(--surface);
+}
+.ln a { color: inherit; display: block; }
+.ln a:hover { color: var(--accent); text-decoration: none; }
+.code { white-space: pre; padding: 0 20px 0 22px !important; position: relative; tab-size: 2; }
+td.ln + td.ln { box-shadow: 1px 0 0 var(--border); }
+/* A block of the cell's own colour past the diff's left edge (clipped there),
+   so no sliver of code shows beside the shifted line numbers. */
+td.ln:first-child::before { content: ""; position: absolute; top: 0; bottom: 0; left: -8px; width: 9px; background: inherit; }
+.code::before { position: absolute; left: 8px; color: var(--text-3); }
+tr.add .code { background: var(--add-bg); } tr.add .code::before { content: "+"; color: var(--add-fg); }
+tr.add .ln { background: var(--add-num); }
+tr.del .code { background: var(--del-bg); } tr.del .code::before { content: "−"; color: var(--del-fg); }
+tr.del .ln { background: var(--del-num); }
+tr.add mark { background: var(--add-mark); color: inherit; border-radius: 2px; }
+tr.del mark { background: var(--del-mark); color: inherit; border-radius: 2px; }
+tr.hunk td { background: var(--hunk-bg); color: var(--hunk-fg); padding: 5px 12px !important; font-size: 12px; border-top: 1px solid var(--border); }
+tr.hunk:first-child td { border-top: 0; }
+/* Line numbers and full-width rows stay in view while the code scrolls sideways:
+   a script copies the diff's scrollLeft into --sx, and they shift back by it.
+   Sticky positioning did this too, but on thousands of cells it made fast
+   vertical scrolling leave blank areas. */
+.hunk-line, .block-note-body, .gap-inner { transform: translateX(var(--sx, 0px)); width: calc(var(--diff-w, 100%) - 24px); box-sizing: border-box; }
+.hunk-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.hunk-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hunk-fg); opacity: .75; }
+.hunk-meta .ctx { color: var(--text-2); margin-left: 8px; }
+.hunk-open { font-family: var(--sans); font-size: 11.5px; flex: none; }
+tr.has-note, tr.blk-hover:not(.block-note) { cursor: pointer; }
+tr.has-note td { background: var(--note-head); }
+tr.has-note:hover td, tr.has-note.blk-hover td { background: var(--note-head-hover); }
+tr.part td { border-top: 1px dashed var(--border-strong); }
+.block-toggle {
+  display: inline-flex; align-items: center; gap: 7px; border: 0; background: none; padding: 0; cursor: pointer;
+  font: 600 12.5px/1.4 var(--sans); color: var(--text); text-align: left; min-width: 0; flex: 0 1 auto;
+}
+.block-toggle .caret { flex: none; color: var(--accent); transition: transform .15s ease; }
+tr.open .block-toggle .caret { transform: rotate(90deg); }
+.block-title code { font-size: 11.5px; }
+tr.has-note .hunk-meta { font-size: 11px; }
+tr.block-note td { padding: 2px 12px 12px !important; background: var(--note-head); }
+.block-note-body {
+  position: relative; margin: 6px 0 0; padding: 12px 16px;
+  background: var(--note-card); border: 1px solid var(--note-border); border-radius: 8px;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 0.06), 0 2px 6px rgb(16 24 40 / 0.05);
+  font: 13.5px/1.6 var(--sans); color: var(--text); white-space: normal; cursor: auto;
+}
+.block-note-body::before {
+  content: ""; position: absolute; top: -6px; left: 14px; width: 10px; height: 10px; transform: rotate(45deg);
+  background: var(--note-card); border-left: 1px solid var(--note-border); border-top: 1px solid var(--note-border);
+}
+.block-note-body p { margin: 0 0 6px; max-width: 92ch; }
+.block-note-body p:last-child { margin-bottom: 0; }
+tr.has-note.open td { background: var(--note-head); }
+tr.blk-hover:not(.hunk):not(.block-note) td.code { box-shadow: inset 0 0 0 9999px var(--blk); }
+tr.gap td {
+  background: var(--surface-2); color: var(--text-3); font: 12px var(--sans); padding: 3px 12px !important;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); cursor: pointer; text-align: center;
+}
+tr.gap:hover td { color: var(--accent); background: var(--accent-soft); }
+.gap-inner { display: block; }
+.gap-dots { letter-spacing: 2px; margin-right: 8px; }
+tr.ctx-full td.code, tr.ctx-full td.ln { background: var(--surface); }
+.full-toggle { cursor: pointer; background: var(--surface); }
+.full-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.notes-hint { font-size: 12px; color: var(--text-3); margin: 8px 0 0; }
+.more { display: block; width: 100%; padding: 7px; border: 0; border-top: 1px solid var(--border); background: var(--surface-2); color: var(--accent); cursor: pointer; font-size: 12.5px; }
+.diff-note { padding: 10px 14px; color: var(--text-3); font-family: var(--sans); font-size: 13px; background: var(--surface-2); }
+.hljs { background: transparent !important; padding: 0 !important; }
+
+/* ---------- UI / UX review ---------- */
+.ui-section { padding-top: 8px; border-top: 2px dashed var(--border-strong); margin-top: 48px; }
+.ui-section .section-no { color: var(--ui); }
+.ui-bar > span { background: var(--ui); }
+.ui-setup, .ui-missing {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
+  padding: 16px 20px; margin-bottom: 14px;
+}
+.ui-setup h3, .ui-missing h3 { margin: 0 0 10px; font-size: 14px; }
+.ui-setup ol { margin: 0; padding-left: 20px; }
+.ui-setup li { margin-bottom: 12px; color: var(--text-2); }
+.ui-setup li:last-child { margin-bottom: 0; }
+.ui-setup li p { margin: 0 0 6px; }
+.cmd {
+  display: flex; align-items: center; gap: 10px; max-width: 520px;
+  background: var(--term-bg); color: var(--term-fg); border-radius: 7px; padding: 7px 8px 7px 12px;
+}
+.cmd code { flex: 1; font-size: 12.5px; color: inherit; background: none; border: 0; padding: 0; }
+.cmd code::before { content: "$ "; opacity: .5; }
+.copy {
+  border: 1px solid rgb(255 255 255 / .18); background: transparent; color: var(--term-fg); border-radius: 5px;
+  font-size: 11.5px; padding: 2px 8px; cursor: pointer;
+}
+.copy:hover { background: rgb(255 255 255 / .1); }
+.ui-missing { background: var(--surface-2); box-shadow: none; }
+.ui-missing ul { margin: 0; padding-left: 18px; color: var(--text-2); }
+.ui-missing li + li { margin-top: 6px; }
+
+.ui-card {
+  position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  margin-bottom: 14px; box-shadow: var(--shadow);
+}
+.ui-head {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border-bottom: 1px solid var(--border); border-radius: 10px 10px 0 0;
+}
+.ui-card.collapsed .ui-head { border-bottom-color: transparent; }
+.ui-card.collapsed .chev svg { transform: rotate(-90deg); }
+.ui-no {
+  font: 650 11px var(--sans); letter-spacing: .04em; color: var(--ui); background: var(--ui-soft);
+  border-radius: 5px; padding: 2px 7px; flex: none;
+}
+.ui-head h3 { margin: 0; font-size: 14px; flex: 0 1 auto; }
+.ui-where { font-size: 12px; color: var(--text-3); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-flag { font: 600 10.5px var(--sans); text-transform: uppercase; letter-spacing: .04em; background: var(--watch-bg); color: var(--watch-fg); border-radius: 99px; padding: 1px 8px; }
+.ui-count { font: 600 12px var(--mono); color: var(--text-3); flex: none; }
+.ui-complete .ui-count { color: var(--done); }
+.ui-complete .ui-count::before { content: "✓ "; }
+.ui-body { display: grid; grid-template-columns: minmax(0, 1fr) var(--notes-w); }
+.ui-card.collapsed .ui-body { display: none; }
+.ui-main { padding: 12px 16px 16px; min-width: 0; }
+.ui-steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.ui-step { counter-increment: step; border-radius: 8px; }
+.ui-step + .ui-step { margin-top: 2px; }
+.ui-step label { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; padding: 9px 10px; cursor: pointer; border-radius: 8px; }
+.ui-step label:hover { background: var(--surface-2); }
+.ui-step input { margin: 3px 0 0; width: 16px; height: 16px; accent-color: var(--done); cursor: pointer; }
+.ui-step-text { display: flex; flex-direction: column; gap: 3px; }
+.ui-do { color: var(--text); font-weight: 550; }
+.ui-do::before { content: counter(step) ". "; color: var(--text-3); font-weight: 600; }
+.ui-expect { color: var(--text-2); font-size: 13px; padding-left: 16px; position: relative; }
+.ui-expect::before { content: "→"; position: absolute; left: 0; color: var(--ui); }
+.ui-step.done .ui-do, .ui-step.done .ui-expect { color: var(--text-3); }
+.ui-step.done .ui-do { text-decoration: line-through; text-decoration-color: var(--border-strong); }
+.ui-note-label { display: block; margin-top: 14px; font-size: 12px; color: var(--text-3); }
+.ui-note-label textarea {
+  display: block; width: 100%; margin-top: 6px; resize: vertical; min-height: 44px;
+  font: 13px/1.5 var(--sans); color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px;
+}
+.ui-note-label textarea:focus { outline: 2px solid var(--ui-soft); border-color: var(--ui); }
+.ui-aside .notes-inner { top: 12px; }
+.term { border-radius: 8px; overflow: hidden; background: var(--term-bg); box-shadow: 0 1px 3px rgb(0 0 0 / .2); }
+.term-bar { display: flex; gap: 5px; padding: 7px 10px; background: var(--term-bar); }
+.term-bar i { width: 8px; height: 8px; border-radius: 50%; background: rgb(255 255 255 / .22); }
+.term pre { margin: 0; padding: 10px 12px 12px; color: var(--term-fg); font: 12px/1.55 var(--mono); overflow-x: auto; }
+.ui-files { display: flex; flex-wrap: wrap; gap: 6px; }
+.ui-file {
+  font: 11.5px var(--mono); color: var(--text-2); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 5px; padding: 2px 7px;
+}
+a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decoration: none; }
+@media (max-width: 1180px) {
+  .ui-body { grid-template-columns: 1fr; }
+  .ui-aside { order: -1; border-left: 0; border-bottom: 1px solid var(--border); border-radius: 0; }
+}
+
+/* ---------- Overlay ---------- */
+.overlay { position: fixed; inset: 0; background: rgb(10 12 16 / .45); display: none; place-items: center; z-index: 20; }
+.overlay.open { display: grid; }
+.sheet { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; min-width: 340px; box-shadow: 0 20px 50px rgb(0 0 0 / .25); }
+.sheet h3 { margin: 0 0 12px; font-size: 15px; }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-size: 13px; color: var(--text-2); }
+.toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 30; }
+.toast.show { opacity: 1; }
+
+@media (max-width: 1180px) {
+  .file-body { grid-template-columns: 1fr; }
+  .notes { order: -1; border-left: 0; border-bottom: 1px solid var(--border); border-radius: 0; }
+  .notes-inner { position: static; max-height: none; }
+}
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  .side-resize { display: none; }
+  .sidebar { position: static; height: auto; max-height: 50vh; border-right: 0; border-bottom: 1px solid var(--border); }
+  main { padding: 16px 16px 80px; }
+
+  .columns { grid-template-columns: 1fr; }
+  .open, .blocks { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="side-resize" title="Drag to resize · double-click to reset"></div>
+    <div class="side-head">
+      <p class="side-title" id="side-title"></p>
+      <div class="side-branch" id="side-branch"></div>
+      <div class="progress">
+        <div class="progress-label"><span><b id="read-count">0</b> of <span id="total-count">0</span> files read</span><span id="read-pct">0%</span></div>
+        <div class="bar"><span id="bar"></span></div>
+      </div>
+      <div class="progress ui-progress" id="ui-progress" hidden>
+        <div class="progress-label"><span><b id="ui-count">0</b> of <span id="ui-total">0</span> UI checks done</span><span id="ui-pct">0%</span></div>
+        <div class="bar ui-bar"><span id="ui-bar"></span></div>
+      </div>
+      <div class="toggles">
+        <button class="chip" id="t-hide" aria-pressed="false">Hide read</button>
+        <button class="chip" id="t-notes" aria-pressed="false" title="Open every hunk note (m)">Open all notes</button>
+        <button class="chip" id="t-unchanged" data-tree-all aria-pressed="true" title="Show the files this branch did not change" hidden>Unchanged files</button>
+      </div>
+      <div class="views" role="tablist" title="Switch view (t)">
+        <button role="tab" data-view="order" aria-selected="true">Review order</button>
+        <button role="tab" data-view="tree" aria-selected="false">Files</button>
+      </div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <nav class="nav" id="tree" hidden></nav>
+    <div class="side-foot">
+      <span><kbd>?</kbd> shortcuts</span>
+      <label>Open in <select id="editor">
+        <option value="vscode">VS Code</option>
+        <option value="cursor">Cursor</option>
+      </select></label>
+    </div>
+  </aside>
+  <main id="main"></main>
+</div>
+
+<div class="overlay" id="help" role="dialog" aria-label="Keyboard shortcuts">
+  <div class="sheet">
+    <h3>Keyboard shortcuts</h3>
+    <div class="keys">
+      <kbd>j</kbd><span>Next file</span>
+      <kbd>k</kbd><span>Previous file</span>
+      <kbd>n</kbd><span>Next unread file</span>
+      <kbd>v</kbd><span>Mark read and move on</span>
+      <kbd>x</kbd><span>Collapse or expand</span>
+      <kbd>o</kbd><span>Open in editor</span>
+      <kbd>h</kbd><span>Hide read files</span>
+      <kbd>t</kbd><span>Review order or file tree</span>
+      <kbd>f</kbd><span>Full file or changes only</span>
+      <kbd>m</kbd><span>Open or close this file's hunk notes</span>
+      <kbd>M</kbd><span>Open or close every hunk note</span>
+      <kbd>?</kbd><span>This sheet</span>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script id="review-data" type="application/json">__REVIEW_DATA__</script>
+<script>
+(() => {
+  const data = JSON.parse(document.getElementById('review-data').textContent);
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const inline = (s) => {
+    const codes = [];
+    return esc(s)
+      .replace(/`([^`]+)`/g, (_, code) => `\u0000${codes.push(code) - 1}\u0000`)
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*\w])\*([^*\s][^*]*)\*(?!\w)/g, '$1<em>$2</em>')
+      .replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[i]}</code>`);
+  };
+  const LONG_DIFF = 260;
+
+  // ---------- Stored state ----------
+  const storeKey = `review-page:${data.repoRoot}:${data.branch}`;
+  const prefKey = 'review-page:prefs';
+  const load = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
+  const save = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+  const readMap = load(storeKey, {});
+  const prefs = { hideRead: false, layout: 'unified', editor: data.editor || 'vscode', ...load(prefKey, {}) };
+  const query = new URLSearchParams(location.search);
+  const theme = query.get('theme');
+  if (theme) {
+    document.documentElement.dataset.theme = theme;
+    $('#hl-light').media = theme === 'light' ? 'all' : 'not all';
+    $('#hl-dark').media = theme === 'dark' ? 'all' : 'not all';
+  }
+
+  const diffOf = (path) => data.diffs[path];
+  const hunkNotes = new Map(data.sections.flatMap((s) => s.files).filter((f) => f.hunks).map((f) => [f.path, f.hunks]));
+  const cssId = (path) => path.replace(/[^a-z0-9]+/gi, '-');
+  const isRead = (path) => readMap[path] && readMap[path] === diffOf(path)?.hash;
+  const isStale = (path) => readMap[path] && readMap[path] !== diffOf(path)?.hash;
+
+  // ---------- Editor links ----------
+  const editorUrl = (path, line) => {
+    const abs = `${data.repoRoot}/${path}`;
+    return `${prefs.editor}://file${encodeURI(abs)}${line ? `:${line}` : ''}`;
+  };
+  const firstLine = (diff) => {
+    for (const hunk of diff?.hunks ?? []) for (const l of hunk.lines) if (l.t === '+') return l.n;
+    return diff?.hunks?.[0]?.lines.find((l) => l.n)?.n ?? 1;
+  };
+
+  // ---------- Small pieces ----------
+  const chevron = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const splitPath = (path) => {
+    const i = path.lastIndexOf('/');
+    return `<span><span class="dir">${esc(path.slice(0, i + 1))}</span><span class="base">${esc(path.slice(i + 1))}</span></span>`;
+  };
+  const shortPath = (path) => path.replace(data.commonPrefix ?? '', '');
+  const deltaHtml = (diff) => {
+    if (!diff) return '';
+    const total = diff.additions + diff.deletions;
+    const a = total ? Math.round((diff.additions / total) * 5) : 0;
+    const d = total ? Math.min(5 - a, Math.round((diff.deletions / total) * 5)) : 0;
+    const blocks = Array.from({ length: 5 }, (_, i) => `<i class="${i < a ? 'a' : i < a + d ? 'd' : ''}"></i>`).join('');
+    return `<span class="delta"><span class="a">+${diff.additions}</span><span class="d">−${diff.deletions}</span><span class="blocks">${blocks}</span></span>`;
+  };
+  const badgeHtml = (path) => {
+    const diff = diffOf(path);
+    const stale = isStale(path) ? '<span class="badge stale" title="This file changed after you marked it read">changed since read</span>' : '';
+    if (!diff) return stale;
+    const label = diff.status === 'renamed' ? `moved${diff.similarity < 100 ? ' · edited' : ''}` : diff.status === 'added' ? 'new' : diff.status;
+    return `<span class="badge ${diff.status}">${label}</span>${stale}`;
+  };
+  const readToggle = (path, label = 'Read') =>
+    `<label class="read-toggle" title="Mark read (v)"><input type="checkbox" data-read="${esc(path)}" ${isRead(path) ? 'checked' : ''}>${label}</label>`;
+
+  // Common prefix of every path, dimmed out of the sidebar.
+  const allPaths = Object.keys(data.diffs);
+  data.commonPrefix = allPaths.reduce((prefix, path) => {
+    while (!path.startsWith(prefix)) prefix = prefix.slice(0, prefix.lastIndexOf('/', prefix.length - 2) + 1);
+    return prefix;
+  }, allPaths[0] ?? '');
+
+  // ---------- Diff rendering ----------
+  // Extensions highlight.js does not know by name, and files known by their whole name.
+  const LANG_BY_EXT = {
+    tsx: 'typescript', mts: 'typescript', cts: 'typescript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+    jsonc: 'json', json5: 'json', mdx: 'markdown', htm: 'xml', vue: 'xml', svelte: 'xml', svg: 'xml',
+    zsh: 'bash', env: 'ini', toml: 'ini', cfg: 'ini', conf: 'ini', psql: 'sql', pgsql: 'sql', gql: 'graphql',
+    h: 'c', hpp: 'cpp', cc: 'cpp', mm: 'objectivec', kts: 'kotlin', gradle: 'kotlin', pyi: 'python', rake: 'ruby', gemspec: 'ruby',
+  };
+  const LANG_BY_NAME = {
+    dockerfile: 'dockerfile', containerfile: 'dockerfile', makefile: 'makefile', gnumakefile: 'makefile',
+    gemfile: 'ruby', rakefile: 'ruby', podfile: 'ruby', '.env': 'bash', '.gitignore': 'bash', '.npmrc': 'ini', '.editorconfig': 'ini',
+  };
+  const langOf = (path) => {
+    const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase();
+    const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '';
+    const lang = LANG_BY_NAME[name] ?? (name.startsWith('dockerfile') ? 'dockerfile' : null) ?? (name.startsWith('.env') ? 'bash' : null) ?? LANG_BY_EXT[ext] ?? ext;
+    return window.hljs && lang && hljs.getLanguage(lang) ? lang : undefined;
+  };
+  const highlight = (text, lang) => {
+    if (window.hljs && lang) {
+      try { return hljs.highlight(text, { language: lang, ignoreIllegals: true }).value; } catch {}
+    }
+    return esc(text);
+  };
+
+  /**
+   * Splits highlighted HTML into one string per line, closing the spans still
+   * open at each line break and reopening them on the next line, so a line in
+   * the middle of a block comment or a multi-line string keeps its colour.
+   */
+  const splitHighlighted = (html) => {
+    const lines = [];
+    const open = [];
+    let line = '';
+    for (const token of html.split(/(<span[^>]*>|<\/span>|\n)/)) {
+      if (!token) continue;
+      if (token === '\n') {
+        lines.push(line + '</span>'.repeat(open.length));
+        line = open.join('');
+      } else {
+        if (token.startsWith('<span')) open.push(token);
+        else if (token === '</span>') open.pop();
+        line += token;
+      }
+    }
+    lines.push(line);
+    return lines;
+  };
+
+  /**
+   * Rebuilds the file as it was at the fork from its text now and its hunks,
+   * by putting back each hunk's removed lines in place of its added ones.
+   */
+  const oldText = (diff) => {
+    const out = [];
+    let next = 1;
+    for (const hunk of diff.hunks) {
+      const start = Number(hunk.header.match(/\+(\d+)/)[1]);
+      while (next < start) out.push(diff.full[next++ - 1]);
+      for (const l of hunk.lines) {
+        if (l.t !== '+') out.push(l.s);
+        if (l.n != null) next = l.n + 1;
+      }
+    }
+    while (next <= diff.full.length) out.push(diff.full[next++ - 1]);
+    return out;
+  };
+
+  /**
+   * Highlights each side of a file as a whole, once, and returns its lines by
+   * number. Highlighting a line on its own loses the comment or string it sits
+   * inside; the whole text keeps it.
+   */
+  const sideCache = new Map();
+  const highlightedSides = (path, lang) => {
+    if (sideCache.has(path)) return sideCache.get(path);
+    const diff = diffOf(path);
+    const byNumber = (pairs) => {
+      if (!pairs.length) return new Map();
+      const html = splitHighlighted(highlight(pairs.map(([, s]) => s).join('\n'), lang));
+      return new Map(pairs.map(([n], i) => [n, html[i]]));
+    };
+    const fromHunks = (key, keep) =>
+      diff.hunks.flatMap((h) => h.lines).filter((l) => keep(l.t) && l[key] != null).map((l) => [l[key], l.s]);
+    let sides;
+    if (!lang) sides = { new: new Map(), old: new Map() };
+    else if (diff.full) {
+      sides = {
+        new: byNumber(diff.full.map((s, i) => [i + 1, s])),
+        old: byNumber(oldText(diff).map((s, i) => [i + 1, s])),
+      };
+    } else {
+      // An added or deleted file is one hunk that already holds the whole text.
+      sides = { new: byNumber(fromHunks('n', (t) => t !== '-')), old: byNumber(fromHunks('o', (t) => t !== '+')) };
+    }
+    sideCache.set(path, sides);
+    return sides;
+  };
+
+  /** Pairs a run of removed lines with the added lines after it, for word marks. */
+  const pairChanges = (lines) => {
+    const pairs = new Map();
+    for (let i = 0; i < lines.length; ) {
+      if (lines[i].t !== '-') { i++; continue; }
+      let j = i; while (j < lines.length && lines[j].t === '-') j++;
+      let k = j; while (k < lines.length && lines[k].t === '+') k++;
+      const dels = j - i, adds = k - j;
+      for (let x = 0; x < Math.min(dels, adds); x++) pairs.set(i + x, j + x);
+      i = k;
+    }
+    return pairs;
+  };
+  const changedSpan = (a, b) => {
+    let start = 0;
+    while (start < a.length && start < b.length && a[start] === b[start]) start++;
+    let endA = a.length, endB = b.length;
+    while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB--; }
+    const shared = start + (a.length - endA);
+    if (shared < Math.max(a.length, b.length) * 0.35) return null;
+    return [[start, endA], [start, endB]];
+  };
+  /** Wraps a character range of already-highlighted HTML in <mark>. */
+  const markRange = (html, [from, to]) => {
+    if (to <= from) return html;
+    const box = document.createElement('div');
+    box.innerHTML = html;
+    const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+    const nodes = []; let pos = 0;
+    while (walker.nextNode()) { const n = walker.currentNode; nodes.push([n, pos]); pos += n.length; }
+    for (const [node, startPos] of nodes) {
+      const s = Math.max(from, startPos) - startPos;
+      const e = Math.min(to, startPos + node.length) - startPos;
+      if (e <= s) continue;
+      const mid = node.splitText(s); mid.splitText(e - s);
+      const mark = document.createElement('mark');
+      mid.parentNode.replaceChild(mark, mid); mark.appendChild(mid);
+    }
+    return box.innerHTML;
+  };
+
+  const lineCells = (path, line, side, html) => {
+    const num = side === 'old' ? line.o : line.n;
+    const link = side === 'new' && num != null && diffOf(path).status !== 'deleted'
+      ? `<a href="${editorUrl(path, num)}" title="Open at line ${num}">${num}</a>` : (num ?? '');
+    return { num: link, html };
+  };
+
+  const renderLines = (path, hunkLines, lang) => {
+    const pairs = pairChanges(hunkLines);
+    const reverse = new Map([...pairs].map(([d, a]) => [a, d]));
+    const sides = highlightedSides(path, lang);
+    return hunkLines.map((line, i) => {
+      let html = (line.t === '-' ? sides.old.get(line.o) : sides.new.get(line.n)) ?? highlight(line.s, lang);
+      const partner = pairs.has(i) ? hunkLines[pairs.get(i)] : reverse.has(i) ? hunkLines[reverse.get(i)] : null;
+      if (partner) {
+        const spans = line.t === '-' ? changedSpan(line.s, partner.s) : changedSpan(partner.s, line.s);
+        if (spans) html = markRange(html, line.t === '-' ? spans[0] : spans[1]);
+      }
+      return { ...line, html };
+    });
+  };
+
+  // A hunk's note: { title, text } for the whole hunk, or { parts: [{ at, title, text }] }
+  // splitting it by line range, which new and deleted files use since git gives them one hunk.
+  const caret = '<svg class="caret" width="10" height="10" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 3l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const noteRows = (block, cols) => block.note
+    ? `<tr class="block-note" data-note="${block.id}" hidden><td colspan="${cols}"><div class="block-note-body">${[block.note.text].flat().map((p) => `<p>${inline(p)}</p>`).join('')}</div></td></tr>`
+    : '';
+  const titleHtml = (block) => block.note
+    ? `<button class="block-toggle" data-block-toggle="${block.id}" aria-expanded="false">${caret}<span class="block-title">${inline(block.note.title)}</span></button>`
+    : '';
+
+  const hunkRow = (path, hunk, cols, block) => {
+    const at = hunk.lines.find((l) => l.n != null)?.n;
+    const open = at && diffOf(path).status !== 'deleted' ? `<a class="hunk-open" href="${editorUrl(path, at)}">open at ${at} ↗</a>` : '';
+    const ids = block ? ` data-b="${block.id}" data-bh="${block.id}"` : '';
+    return `<tr class="hunk${block?.note ? ' has-note' : ''}"${ids}><td colspan="${cols}"><div class="hunk-line">${titleHtml(block ?? {})}<span class="hunk-meta">${esc(hunk.header)}<span class="ctx">${esc(hunk.context || '')}</span></span>${open}</div></td></tr>${block ? noteRows(block, cols) : ''}`;
+  };
+  const partRow = (block, cols) => {
+    const range = block.from === block.to ? `line ${block.from}` : `lines ${block.from}–${block.to}`;
+    return `<tr class="hunk part has-note" data-b="${block.id}" data-bh="${block.id}"><td colspan="${cols}"><div class="hunk-line">${titleHtml(block)}<span class="hunk-meta">${range}</span></div></td></tr>${noteRows(block, cols)}`;
+  };
+
+  const unifiedRows = (path, lines, blockOf) => lines.map((l) => {
+    const cls = l.t === '+' ? 'add' : l.t === '-' ? 'del' : '';
+    const oldNum = l.o ?? '';
+    const newCell = lineCells(path, l, 'new', l.html).num;
+    const block = blockOf(l);
+    const nums = `${l.n != null ? ` data-n="${l.n}"` : ''}${l.o != null ? ` data-o="${l.o}"` : ''}${block ? ` data-b="${block.id}"` : ''}`;
+    return `${block?.startsAt === l ? partRow(block, 3) : ''}<tr class="${cls}"${nums}><td class="ln">${oldNum}</td><td class="ln">${newCell}</td><td class="code">${l.html || ' '}</td></tr>`;
+  }).join('');
+
+  /**
+   * The unchanged lines between two hunks: in full, or as one slim row that
+   * says how many there are and expands the file when clicked.
+   */
+  const gapRows = (path, gap, full, lang) => {
+    const count = gap.to - gap.from + 1;
+    if (count <= 0) return '';
+    if (!full)
+      return `<tr class="gap" data-expand><td colspan="3"><span class="gap-inner"><span class="gap-dots">⋯</span>${count} unchanged line${count === 1 ? '' : 's'}</span></td></tr>`;
+    const lines = [];
+    for (let n = gap.from; n <= gap.to; n++)
+      lines.push({ t: ' ', n, o: gap.oldFrom + (n - gap.from), s: diffOf(path).full[n - 1] ?? '' });
+    return unifiedRows(path, renderLines(path, lines, lang), () => null).replace(/<tr class=""/g, '<tr class="ctx-full"');
+  };
+  /** Where each stretch of unchanged lines sits, before, between and after the hunks. */
+  const listGaps = (diff) => {
+    if (!diff.full) return [];
+    const gaps = [];
+    let lastN = 0, lastO = 0;
+    for (const hunk of diff.hunks) {
+      const first = hunk.lines.find((l) => l.n != null)?.n ?? lastN + 1;
+      gaps.push({ from: lastN + 1, to: first - 1, oldFrom: lastO + 1 });
+      for (const l of hunk.lines) { if (l.n != null) lastN = l.n; if (l.o != null) lastO = l.o; }
+    }
+    gaps.push({ from: lastN + 1, to: diff.full.length, oldFrom: lastO + 1 });
+    return gaps;
+  };
+
+  const renderDiff = (path, { limit = LONG_DIFF, full = false } = {}) => {
+    const diff = diffOf(path);
+    if (!diff) return '<div class="diff"><div class="diff-note">Not in this diff.</div></div>';
+    if (diff.binary) return '<div class="diff"><div class="diff-note">Binary file.</div></div>';
+    if (!diff.hunks.length) return `<div class="diff"><div class="diff-note">${diff.status === 'renamed' ? 'Moved with no content change.' : 'No content change.'}</div></div>`;
+    const lang = langOf(path);
+    const cols = 3;
+    const notes = hunkNotes.get(path) ?? [];
+    const gaps = listGaps(diff);
+    if (full) limit = Infinity;
+    let shown = 0, body = '', truncated = 0;
+    diff.hunks.forEach((hunk, hi) => {
+      if (shown >= limit) { truncated += hunk.lines.length; return; }
+      if (gaps[hi]) body += gapRows(path, gaps[hi], full, lang);
+      const take = hunk.lines.slice(0, limit - shown);
+      truncated += hunk.lines.length - take.length;
+      shown += take.length;
+      const lines = renderLines(path, take, lang);
+      const note = notes[hi];
+      const key = `${cssId(path)}-h${hi}`;
+      if (note?.parts) {
+        // Each part owns the lines in its range, on the side the file still has.
+        const side = diff.status === 'deleted' ? 'o' : 'n';
+        const blocks = note.parts.map((part, pi) => {
+          const [from, to = from] = String(part.at).split('-').map(Number);
+          return { id: `${key}p${pi}`, from, to, note: part, startsAt: null };
+        });
+        const blockOf = (l) => blocks.find((b) => l[side] >= b.from && l[side] <= b.to);
+        for (const b of blocks) b.startsAt = lines.find((l) => blockOf(l) === b) ?? null;
+        body += hunkRow(path, hunk, cols) + unifiedRows(path, lines, blockOf);
+      } else {
+        const block = { id: key, note };
+        body += hunkRow(path, hunk, cols, block) + unifiedRows(path, lines, () => block);
+      }
+    });
+    if (!truncated && gaps.length) body += gapRows(path, gaps[gaps.length - 1], full, lang);
+    const more = truncated ? `<button class="more" data-more="${esc(path)}">Show ${truncated} more lines</button>` : '';
+    return `<div class="diff"><table><colgroup><col style="width:48px"><col style="width:48px"><col></colgroup>${body}</table>${more}</div>`;
+  };
+
+  // ---------- Page ----------
+  const totals = Object.values(data.diffs).reduce((t, d) => ({ a: t.a + d.additions, d: t.d + d.deletions }), { a: 0, d: 0 });
+  const builtAgo = (() => {
+    const mins = Math.round((Date.now() - new Date(data.builtAt)) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.round(mins / 60);
+    return hours < 48 ? `${hours} h ago` : new Date(data.builtAt).toLocaleDateString();
+  })();
+
+  const units = []; // every reviewable unit, in reading order: {id, path, kind}
+  let fileNo = 0;
+
+  const testHtml = (test) => {
+    const diff = diffOf(test.path);
+    const id = `u${units.length}`;
+    units.push({ id, path: test.path, kind: 'test' });
+    const name = test.path.slice(test.path.lastIndexOf('/') + 1);
+    return `<div class="test collapsed ${isRead(test.path) ? 'is-read' : ''}" id="${id}" data-path="${esc(test.path)}">
+      <div class="row-head">
+        <button class="chev" data-toggle aria-label="Expand">${chevron}</button>
+        <span class="path" title="${esc(test.path)}"><span><span class="base">${esc(name)}</span></span></span>
+        ${badgeHtml(test.path)}
+        <span class="note">${test.note ? inline(test.note) : ''}</span>
+        ${deltaHtml(diff)}
+        ${readToggle(test.path)}
+      </div>
+      <div class="row-body" data-diff-slot></div>
+    </div>`;
+  };
+
+  const fileHtml = (file) => {
+    const diff = diffOf(file.path);
+    const id = `u${units.length}`;
+    units.push({ id, path: file.path, kind: 'file', no: ++fileNo, tests: (file.tests ?? []).map((t) => t.path) });
+    const read = isRead(file.path);
+    const from = diff?.oldPath ? `<div class="renamed-from">moved from ${esc(shortPath(diff.oldPath))}${diff.similarity != null ? ` · ${diff.similarity}% similar` : ''}</div>` : '';
+    const context = [file.context ?? []].flat().map((p) => `<p>${inline(p)}</p>`).join('');
+    const changed = [file.changed ?? []].flat().map((p) => `<p>${inline(p)}</p>`).join('');
+    const noteCount = (hunkNotes.get(file.path) ?? []).reduce((n, h) => n + (h?.parts?.length ?? (h ? 1 : 0)), 0);
+    const changes = changed
+      ? `<h4>What changed</h4><div class="context">${changed}</div>${noteCount ? `<p class="notes-hint">${noteCount} note${noteCount === 1 ? '' : 's'} in the diff · click a header to read one, or press <kbd>m</kbd></p>` : ''}`
+      : '';
+    const tests = file.tests?.length ? `<div class="tests"><div class="tests-title">Tests · ${file.tests.length}</div>${file.tests.map(testHtml).join('')}</div>` : '';
+    const startCollapsed = read || diff?.status === 'deleted';
+    return `<article class="file ${startCollapsed ? 'collapsed' : ''} ${read ? 'is-read' : ''}" id="${id}" data-path="${esc(file.path)}">
+      <header class="file-head">
+        <button class="chev" data-toggle aria-label="Collapse">${chevron}</button>
+        <span class="file-no">${fileNo}</span>
+        <span class="path" title="${esc(file.path)}">${splitPath(shortPath(file.path))}</span>
+        ${badgeHtml(file.path)}
+        ${deltaHtml(diff)}
+        ${diff?.full ? `<button class="open full-toggle" data-full-toggle aria-pressed="false" title="Show the whole file (f)">Full file</button>` : ''}
+        ${diff && diff.status !== 'deleted' ? `<a class="open" href="${editorUrl(file.path, firstLine(diff))}" data-open>Open ↗</a>` : ''}
+        ${readToggle(file.path)}
+      </header>
+      <div class="file-body">
+        <div class="file-main">
+          <div data-diff-slot></div>
+          ${tests}
+        </div>
+        <aside class="notes">
+          <div class="notes-inner">
+            <p class="summary">${inline(file.summary)}</p>
+            ${from}
+            ${context ? `<h4>Context</h4><div class="context">${context}</div>` : ''}
+            ${changes}
+          </div>
+        </aside>
+      </div>
+    </article>`;
+  };
+
+  const skimHtml = (group, gi) => {
+    const id = `u${units.length}`;
+    units.push({ id, path: null, kind: 'skim', paths: group.paths });
+    const rows = group.paths.map((path) => {
+      const name = path.slice(path.lastIndexOf('/') + 1);
+      return `<div class="skim-file collapsed ${isRead(path) ? 'is-read' : ''}" data-path="${esc(path)}">
+        <div class="row-head">
+          <button class="chev" data-toggle aria-label="Expand">${chevron}</button>
+          <span class="path" title="${esc(path)}" style="max-width:none;flex:1">${splitPath(shortPath(path))}</span>
+          ${badgeHtml(path)}
+          ${deltaHtml(diffOf(path))}
+          ${readToggle(path)}
+        </div>
+        <div class="row-body" data-diff-slot></div>
+      </div>`;
+    }).join('');
+    return `<div class="skim-group" id="${id}" data-skim="${gi}">
+      <div class="skim-head"><h3>${inline(group.label)}</h3><span class="note">${inline(group.note || '')}</span>
+        <button class="btn ghost" data-read-group="${gi}" style="padding:3px 10px;font-size:12px">Mark all read</button></div>
+      ${rows}
+    </div>`;
+  };
+
+  // ---------- UI / UX review ----------
+  // Walkthroughs for trying the change in the running app. Ticks and notes are
+  // kept per branch in this browser, like the read marks.
+  const uiKey = `${storeKey}:ui`;
+  const uiState = { steps: {}, notes: {}, ...load(uiKey, {}) };
+  const saveUi = () => save(uiKey, uiState);
+  const fileUnitId = (path) =>
+    units.find((u) => u.kind === 'file' && u.path === path)?.id ??
+    units.find((u) => u.kind === 'skim' && u.paths.includes(path))?.id;
+  const uiStepCount = (ui) => ui.scenarios.reduce((n, sc) => n + sc.steps.length, 0);
+  const uiDoneIn = (si, sc) => sc.steps.filter((_, i) => uiState.steps[`${si}-${i}`]).length;
+
+  const terminalHtml = (lines) => `<div class="term"><div class="term-bar"><i></i><i></i><i></i></div><pre>${lines.map((l) => esc(l)).join('\n')}</pre></div>`;
+  const scenarioHtml = (sc, si) => {
+    const done = uiDoneIn(si, sc);
+    const steps = sc.steps.map((step, i) => {
+      const key = `${si}-${i}`;
+      return `<li class="ui-step ${uiState.steps[key] ? 'done' : ''}">
+        <label><input type="checkbox" data-ui-step="${key}" ${uiState.steps[key] ? 'checked' : ''}>
+          <span class="ui-step-text"><span class="ui-do">${inline(step.do)}</span><span class="ui-expect">${inline(step.expect)}</span>${step.cmd ? `<span class="cmd"><code>${esc(step.cmd)}</code><button class="copy" data-copy="${esc(step.cmd)}">Copy</button></span>` : ''}</span>
+        </label></li>`;
+    }).join('');
+    const files = (sc.files ?? []).map((path) => {
+      const id = fileUnitId(path);
+      const name = path.slice(path.lastIndexOf('/') + 1);
+      return id ? `<a class="ui-file" href="#${id}" data-nav="${id}">${esc(name)}</a>` : `<span class="ui-file">${esc(name)}</span>`;
+    }).join('');
+    const note = uiState.notes[si] ?? '';
+    return `<article class="ui-card ${done === sc.steps.length ? 'ui-complete' : ''}" id="ui-${si}" data-ui="${si}">
+      <header class="ui-head">
+        <button class="chev" data-ui-toggle aria-label="Collapse">${chevron}</button>
+        <span class="ui-no">UI ${si + 1}</span>
+        <h3>${inline(sc.title)}</h3>
+        ${sc.where ? `<span class="ui-where">${inline(sc.where)}</span>` : ''}
+        <span class="ui-flag" ${note ? '' : 'hidden'} title="You noted a problem">noted</span>
+        <span class="ui-count" data-ui-count>${done}/${sc.steps.length}</span>
+      </header>
+      <div class="ui-body">
+        <div class="ui-main">
+          <ol class="ui-steps">${steps}</ol>
+          <label class="ui-note-label">Anything look or feel wrong?
+            <textarea data-ui-note="${si}" rows="2" placeholder="Note it here — it stays in this browser.">${esc(note)}</textarea>
+          </label>
+        </div>
+        <aside class="notes ui-aside"><div class="notes-inner">
+          <h4>What changed for the user</h4>
+          <div class="context">${[sc.why ?? []].flat().map((x) => `<p>${inline(x)}</p>`).join('')}</div>
+          ${sc.screen ? `<h4>What you should see</h4>${terminalHtml(sc.screen)}` : ''}
+          ${files ? `<h4>Related code</h4><div class="ui-files">${files}</div>` : ''}
+        </div></aside>
+      </div>
+    </article>`;
+  };
+  const uiReviewHtml = (ui, no) => {
+    const setup = ui.setup?.length ? `<div class="ui-setup">
+        <h3>Before you start</h3>
+        <ol>${ui.setup.map((step) => `<li><p>${inline(step.text)}</p>${step.cmd ? `<div class="cmd"><code>${esc(step.cmd)}</code><button class="copy" data-copy="${esc(step.cmd)}">Copy</button></div>` : ''}</li>`).join('')}</ol>
+      </div>` : '';
+    const missing = ui.notPreviewable?.length ? `<div class="ui-missing">
+        <h3>Can't be previewed locally</h3>
+        <ul>${ui.notPreviewable.map((m) => `<li><b>${inline(m.title)}</b> — ${inline(m.why)}</li>`).join('')}</ul>
+      </div>` : '';
+    return `<section class="section ui-section" id="ui-review">
+      <div class="section-head"><span class="section-no">${String(no).padStart(2, '0')}</span><h2>UI / UX review</h2>
+        <span class="section-count">${ui.scenarios.length} walkthroughs · ${uiStepCount(ui)} steps</span></div>
+      ${ui.intro ? `<p class="section-intro">${inline(ui.intro)}</p>` : ''}
+      ${setup}
+      ${ui.scenarios.map(scenarioHtml).join('')}
+      ${missing}
+    </section>`;
+  };
+
+  const ov = data.overview;
+  // Each overview list is optional, and a column only shows when it has items.
+  const overviewColumns = (overview) => {
+    const cols = [['What changes for people using it', overview.userChanges], ['Hold in mind while reading', overview.holdInMind]]
+      .filter(([, items]) => items?.length)
+      .map(([heading, items]) => `<div class="col"><h3>${heading}</h3><ul>${items.map((x) => `<li>${inline(x)}</li>`).join('')}</ul></div>`);
+    return cols.length ? `<div class="columns">${cols.join('')}</div>` : '';
+  };
+  const pr = data.pr ? `<a href="${esc(data.pr.url)}">PR #${data.pr.number}</a><span>·</span>` : '';
+  let html = `<section class="hero" id="overview">
+    <div class="kicker">${pr}<span class="mono">${esc(data.branch)}</span><span class="arrow">→</span><span class="mono">${esc(data.base)}</span><span>·</span><span>${data.baseSource === 'given' ? 'base given' : `base from ${esc(data.baseSource || 'git')}`}</span></div>
+    <h1>${inline(data.title)}</h1>
+    <div class="stats"><span>${data.commits.length} commit${data.commits.length === 1 ? '' : 's'}</span><span>${allPaths.length} files</span><span><span class="add">+${totals.a}</span> <span class="del">−${totals.d}</span></span><span>built from <span class="mono">${esc(data.head)}</span> ${builtAgo}</span></div>
+    <p class="summary">${inline(ov.summary)}</p>
+    ${overviewColumns(ov)}
+    <div class="commits"><h3>Commits</h3>${data.commits.map((c) => `<div class="commit"><span class="mono">${esc(c.sha)}</span><span>${esc(c.subject)}</span></div>`).join('')}</div>
+    <div class="hero-actions"><button class="btn" id="start">Start reading</button><button class="btn ghost" id="reset">Clear read marks</button></div>
+  </section>`;
+
+  data.sections.forEach((section, si) => {
+    const count = section.files.length;
+    html += `<section class="section" id="s${si}">
+      <div class="section-head"><span class="section-no">${String(si + 1).padStart(2, '0')}</span><h2>${inline(section.title)}</h2><span class="section-count">${count} file${count === 1 ? '' : 's'}</span></div>
+      ${section.intro ? `<p class="section-intro">${inline(section.intro)}</p>` : ''}
+      ${section.files.map(fileHtml).join('')}
+    </section>`;
+  });
+  if (data.skim?.length) {
+    html += `<section class="section" id="skim">
+      <div class="section-head"><span class="section-no">${String(data.sections.length + 1).padStart(2, '0')}</span><h2>Skim</h2><span class="section-count">mechanical changes</span></div>
+      <p class="section-intro">Changes that need a glance, not a read. Each group says what kind of change it is.</p>
+      ${data.skim.map(skimHtml).join('')}
+    </section>`;
+  }
+  if (data.uiReview) html += uiReviewHtml(data.uiReview, data.sections.length + (data.skim?.length ? 2 : 1));
+  $('#main').innerHTML = html;
+
+  // ---------- Sidebar ----------
+  $('#side-title').textContent = data.title;
+  $('#side-branch').textContent = data.branch;
+  const navHtml = () => {
+    let out = '<a class="nav-overview" href="#overview">Overview</a>';
+    let ui = 0;
+    data.sections.forEach((section, si) => {
+      out += `<div class="nav-section"><div class="nav-section-title"><span>${esc(section.title)}</span></div>`;
+      for (const file of section.files) {
+        const unit = units.find((u) => u.kind === 'file' && u.path === file.path);
+        const diff = diffOf(file.path);
+        const name = file.path.slice(file.path.lastIndexOf('/') + 1);
+        const allRead = [file.path, ...(file.tests ?? []).map((t) => t.path)].every(isRead);
+        out += `<a class="nav-item ${allRead ? 'read' : ''} ${isStale(file.path) ? 'stale' : ''}" data-nav="${unit.id}" href="#${unit.id}" title="${esc(file.path)}">
+          <span class="dot"></span><span class="num">${unit.no}</span><span class="name">${esc(name)}</span>${diff ? `<span class="delta"><span class="a">+${diff.additions}</span> <span class="d">−${diff.deletions}</span></span>` : ''}</a>`;
+      }
+      out += '</div>';
+    });
+    if (data.skim?.length) {
+      out += '<div class="nav-section"><div class="nav-section-title"><span>Skim</span></div>';
+      units.filter((u) => u.kind === 'skim').forEach((u, gi) => {
+        const allRead = u.paths.every(isRead);
+        out += `<a class="nav-item ${allRead ? 'read' : ''}" data-nav="${u.id}" href="#${u.id}"><span class="dot"></span><span class="num"></span><span class="name">${esc(data.skim[gi].label.replace(/`/g, ''))}</span><span class="delta">${u.paths.length}</span></a>`;
+      });
+      out += '</div>';
+    }
+    if (data.uiReview) {
+      out += '<div class="nav-section"><div class="nav-section-title"><span>UI / UX review</span></div>';
+      data.uiReview.scenarios.forEach((sc, si) => {
+        const done = uiDoneIn(si, sc);
+        out += `<a class="nav-item ${done === sc.steps.length ? 'read' : ''}" data-nav="ui-${si}" href="#ui-${si}"><span class="dot"></span><span class="num">${si + 1}</span><span class="name">${esc(sc.title.replace(/`/g, ''))}</span><span class="delta">${done}/${sc.steps.length}</span></a>`;
+      });
+      out += '</div>';
+    }
+    $('#nav').innerHTML = out;
+    $('#tree').innerHTML = treeHtml();
+  };
+
+  // ---------- File tree ----------
+  // Every changed path in its folder, among the unchanged files that share the
+  // tree's root. A moved file also leaves a faded copy at its old place, and a
+  // folder the branch moved whole shows as one row.
+  const goneDirs = new Set(data.goneDirs ?? []);
+  const newDirs = new Set(data.newDirs ?? []);
+  const diffList = Object.values(data.diffs);
+  const leaving = diffList
+    .map((diff) => ({ diff, old: diff.status === 'renamed' ? diff.oldPath : diff.status === 'deleted' ? diff.path : null }))
+    .filter((x) => x.old);
+  const folderMoves = [...goneDirs]
+    .filter((dir) => !goneDirs.has(dir.slice(0, dir.lastIndexOf('/'))))
+    .flatMap((dir) => {
+      const inside = leaving.filter((x) => x.old.startsWith(`${dir}/`));
+      const to = new Set(inside.map(({ diff, old }) => {
+        const rest = old.slice(dir.length);
+        return diff.status === 'renamed' && diff.path.endsWith(rest) ? diff.path.slice(0, -rest.length) : null;
+      }));
+      return inside.length && to.size === 1 && !to.has(null) ? [{ from: dir, to: [...to][0], paths: inside.map((x) => x.diff.path) }] : [];
+    });
+  const moveTargets = new Set(folderMoves.map((m) => m.to));
+  const movedWhole = (path) => folderMoves.some((m) => path.startsWith(`${m.from}/`));
+  const treeEntries = [
+    ...diffList.map((diff) => ({ kind: 'file', path: diff.path, diff })),
+    ...diffList.filter((d) => d.status === 'renamed' && !movedWhole(d.oldPath)).map((d) => ({ kind: 'ghost', path: d.oldPath, to: d.path })),
+    ...folderMoves.map((m) => ({ kind: 'moved', path: m.from, to: m.to, paths: m.paths })),
+  ];
+  const treePrefix = treeEntries.reduce((prefix, { path }) => {
+    while (!path.startsWith(prefix)) prefix = prefix.slice(0, prefix.lastIndexOf('/', prefix.length - 2) + 1);
+    return prefix;
+  }, treeEntries[0]?.path.slice(0, treeEntries[0].path.lastIndexOf('/') + 1) ?? '');
+  const plainEntries = (data.unchangedPaths ?? []).filter((path) => path.startsWith(treePrefix)).map((path) => ({ kind: 'plain', path }));
+  const buildTree = (entries) => {
+    const root = { name: '', dir: treePrefix.replace(/\/$/, ''), dirs: new Map(), leaves: [], changed: false };
+    for (const entry of entries) {
+      const parts = entry.path.slice(treePrefix.length).split('/');
+      const changed = entry.kind !== 'plain';
+      let node = root;
+      root.changed ||= changed;
+      for (const part of parts.slice(0, -1)) {
+        if (!node.dirs.has(part)) node.dirs.set(part, { name: part, dir: node.dir ? `${node.dir}/${part}` : part, dirs: new Map(), leaves: [], changed: false });
+        node = node.dirs.get(part);
+        node.changed ||= changed;
+      }
+      node.leaves.push({ ...entry, name: parts.at(-1) });
+    }
+    // Single-child folder chains merge into one row, as in VS Code.
+    const compact = (node) => {
+      for (const [key, child] of node.dirs) {
+        while (!child.leaves.length && child.dirs.size === 1 && !newDirs.has(child.dir) && !goneDirs.has(child.dir)) {
+          const only = [...child.dirs.values()][0];
+          Object.assign(child, { name: `${child.name}/${only.name}`, dir: only.dir, dirs: only.dirs, leaves: only.leaves });
+        }
+        compact(child);
+        node.dirs.set(key, child);
+      }
+    };
+    compact(root);
+    return root;
+  };
+  const changedTree = buildTree(treeEntries);
+  const fullTree = buildTree([...treeEntries, ...plainEntries]);
+  // Folders holding a change start open and the rest closed; a click is kept.
+  const treeOpenKey = `${storeKey}:tree-open`;
+  const treeOpen = load(treeOpenKey, {});
+  const isOpen = (node) => treeOpen[node.dir] ?? node.changed;
+  // Where a moved path went, from the folder the old and new paths share. The
+  // file name is left off when only its folder changed.
+  const movedTo = (from, to) => {
+    const a = from.split('/'), b = to.split('/');
+    let i = 0;
+    while (i < a.length - 1 && i < b.length - 1 && a[i] === b[i]) i++;
+    const dir = b.slice(i, -1).join('/');
+    return a.at(-1) === b.at(-1) ? `${dir}/` : `${dir ? `${dir}/` : ''}${b.at(-1)}`;
+  };
+  const treeStats = (node) => {
+    const files = [];
+    const walk = (n) => { n.leaves.forEach((l) => l.kind === 'file' && files.push(l.path)); n.dirs.forEach(walk); };
+    walk(node);
+    return { total: files.length, read: files.filter(isRead).length };
+  };
+  const treeHtml = () => {
+    const leafHtml = (leaf, d) => {
+      if (leaf.kind === 'file') {
+        const { diff, path } = leaf;
+        const letter = { added: 'A', deleted: 'D', renamed: 'R', modified: 'M' }[diff.status];
+        const title = diff.status === 'renamed' ? `${path}\nmoved from ${diff.oldPath}` : path;
+        return `<a class="tree-row tree-file st-${diff.status} ${isRead(path) ? 'read' : ''} ${isStale(path) ? 'stale' : ''}" data-tree="${esc(path)}" href="#${fileUnitId(path) ?? ''}" style="--d:${d}" title="${esc(title)}">
+          <span class="name" style="grid-column: 2">${esc(leaf.name)}</span><span class="st" title="${diff.status}">${letter}</span></a>`;
+      }
+      if (leaf.kind === 'plain')
+        return `<a class="tree-row tree-plain" href="${editorUrl(leaf.path)}" style="--d:${d}" title="${esc(leaf.path)}\nunchanged · opens in your editor"><span class="name" style="grid-column: 2">${esc(leaf.name)}</span></a>`;
+      const target = leaf.kind === 'moved' ? leaf.paths[0] : leaf.to;
+      const label = leaf.kind === 'moved' ? `${leaf.name}/` : leaf.name;
+      const to = leaf.kind === 'moved' ? `${movedTo(`${leaf.path}/x`, `${leaf.to}/x`)} · ${leaf.paths.length} files` : movedTo(leaf.path, leaf.to);
+      return `<a class="tree-row tree-ghost" data-goto="${esc(target)}" data-ghost-of="${esc(leaf.kind === 'moved' ? leaf.paths.join('\n') : leaf.to)}" href="#" style="--d:${d}" title="${esc(`${leaf.path}${leaf.kind === 'moved' ? '/' : ''}\nmoved to ${leaf.to}${leaf.kind === 'moved' ? '/' : ''}`)}">
+        <span class="st">→</span><span class="name">${esc(label)}</span><span class="to">moved to ${esc(to)}</span></a>`;
+    };
+    const dirHtml = (node, d) => {
+      const { total, read } = treeStats(node);
+      const open = isOpen(node);
+      // A folder takes its files' colours: removed, moved here whole, new, or holding a change.
+      const status = goneDirs.has(node.dir) ? 'deleted' : moveTargets.has(node.dir) ? 'renamed' : newDirs.has(node.dir) ? 'added' : node.changed ? 'modified' : 'none';
+      return `<div class="tree-folder" data-folder="${esc(node.dir)}">
+        <div class="tree-row tree-dir ${total && read === total ? 'read' : ''} st-${status}" data-dir="${esc(node.dir)}" aria-expanded="${open}" style="--d:${d}" title="${esc(node.dir)}/">
+          <span class="chev">${chevron}</span><span class="ico"></span><span class="name">${esc(node.name)}/</span></div>
+        <div class="tree-kids" ${open ? '' : 'hidden'}>${kidsHtml(node, d + 1)}</div></div>`;
+    };
+    const kidsHtml = (node, d) =>
+      [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => dirHtml(child, d)).join('') +
+      [...node.leaves].sort((a, b) => a.name.localeCompare(b.name)).map((leaf) => leafHtml(leaf, d)).join('');
+    const all = prefs.treeAll !== false;
+    $('#t-unchanged').setAttribute('aria-pressed', all);
+    return `<div class="tree-root" title="Every path starts here">${esc(treePrefix)}</div>${kidsHtml(all ? fullTree : changedTree, 0)}`;
+  };
+  const setSideView = (view) => {
+    prefs.sideView = view; save(prefKey, prefs);
+    document.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-selected', b.dataset.view === view));
+    $('#nav').hidden = view !== 'order';
+    $('#tree').hidden = view !== 'tree';
+    $('#t-unchanged').hidden = view !== 'tree';
+    markCurrentNav();
+  };
+  /** Opens the card holding a path, unfolding it and the test or skim row inside. */
+  const revealPath = (path) => {
+    const el = document.querySelector(`main :is(.file, .test, .skim-file)[data-path="${CSS.escape(path)}"]`);
+    if (!el) return;
+    const host = el.closest('.file, .skim-group');
+    host.classList.remove('hidden-read');
+    if (host.classList.contains('file')) setCollapsed(host, false);
+    if (el !== host) setCollapsed(el, false);
+    keyboardHolds = true;
+    setCurrent(host.id, false);
+    // Far jumps land at once; a long smooth scroll is slow to click around with.
+    const far = Math.abs(el.getBoundingClientRect().top) > innerHeight * 3;
+    el.scrollIntoView({ block: 'start', behavior: far ? 'auto' : 'smooth' });
+  };
+
+  const everyPath = allPaths;
+  const refreshProgress = () => {
+    const read = everyPath.filter(isRead).length;
+    $('#read-count').textContent = read;
+    $('#total-count').textContent = everyPath.length;
+    const pct = everyPath.length ? Math.round((read / everyPath.length) * 100) : 0;
+    $('#read-pct').textContent = `${pct}%`;
+    $('#bar').style.width = `${pct}%`;
+    if (data.uiReview) {
+      const total = uiStepCount(data.uiReview);
+      const doneSteps = data.uiReview.scenarios.reduce((n, sc, si) => n + uiDoneIn(si, sc), 0);
+      $('#ui-progress').hidden = false;
+      $('#ui-count').textContent = doneSteps;
+      $('#ui-total').textContent = total;
+      const uiPct = total ? Math.round((doneSteps / total) * 100) : 0;
+      $('#ui-pct').textContent = `${uiPct}%`;
+      $('#ui-bar').style.width = `${uiPct}%`;
+    }
+    navHtml();
+    markCurrentNav();
+    applyHide();
+  };
+
+  // ---------- Diff slots (rendered when first opened) ----------
+  const fillSlot = (container, force) => {
+    const slot = container.querySelector(':scope > [data-diff-slot], :scope > .file-body > .file-main > [data-diff-slot]');
+    if (!slot || (slot.dataset.filled && !force)) return;
+    slot.innerHTML = renderDiff(container.dataset.path, { limit: slot.dataset.all ? Infinity : LONG_DIFF, full: !!slot.dataset.full });
+    slot.dataset.filled = '1';
+    if (prefs.notesOpen) setAllNotes(slot, true);
+  };
+  const fillOpen = () => document.querySelectorAll('.file:not(.collapsed), .test:not(.collapsed), .skim-file:not(.collapsed)').forEach((el) => fillSlot(el));
+
+  const setCollapsed = (el, collapsed) => {
+    el.classList.toggle('collapsed', collapsed);
+    if (!collapsed) fillSlot(el);
+  };
+
+  // ---------- Read marks ----------
+  const setRead = (path, read) => {
+    if (read) readMap[path] = diffOf(path)?.hash ?? '1'; else delete readMap[path];
+    save(storeKey, readMap);
+    document.querySelectorAll(`[data-path="${CSS.escape(path)}"]`).forEach((el) => {
+      el.classList.toggle('is-read', read);
+      const box = el.querySelector(':scope > .file-head input[data-read], :scope > .row-head input[data-read]');
+      if (box) box.checked = read;
+      el.querySelectorAll(':scope > .file-head .badge.stale, :scope > .row-head .badge.stale').forEach((b) => b.remove());
+    });
+  };
+  const toast = (text) => {
+    const t = $('#toast'); t.textContent = text; t.classList.add('show');
+    clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove('show'), 1400);
+  };
+
+  const applyHide = () => {
+    $('#t-hide').setAttribute('aria-pressed', prefs.hideRead);
+    for (const unit of units) {
+      if (unit.kind === 'test') continue;
+      const el = document.getElementById(unit.id);
+      const paths = unit.kind === 'skim' ? unit.paths : [unit.path, ...unit.tests];
+      const done = paths.every(isRead);
+      el.classList.toggle('hidden-read', prefs.hideRead && done && unit.id !== currentId);
+      document.querySelector(`[data-nav="${unit.id}"]`)?.classList.toggle('hidden-read', prefs.hideRead && done);
+    }
+    document.querySelectorAll('main .section').forEach((section) => {
+      const cards = section.querySelectorAll('.file, .skim-group');
+      section.hidden = cards.length > 0 && [...cards].every((c) => c.classList.contains('hidden-read'));
+    });
+    document.querySelectorAll('.nav-section').forEach((section) => {
+      const items = section.querySelectorAll('.nav-item');
+      section.hidden = [...items].every((i) => i.classList.contains('hidden-read'));
+    });
+    document.querySelectorAll('#tree .tree-file').forEach((row) => row.classList.toggle('hidden-read', !!(prefs.hideRead && isRead(row.dataset.tree))));
+    document.querySelectorAll('#tree .tree-ghost').forEach((row) => row.classList.toggle('hidden-read', prefs.hideRead && row.dataset.ghostOf.split('\n').every(isRead)));
+    [...document.querySelectorAll('#tree .tree-folder')].reverse().forEach((folder) =>
+      folder.classList.toggle('hidden-read', prefs.hideRead && !folder.querySelector('.tree-file:not(.hidden-read), .tree-ghost:not(.hidden-read), .tree-plain')));
+  };
+
+  // ---------- Current file ----------
+  const tops = () => units.filter((u) => u.kind !== 'test').map((u) => document.getElementById(u.id)).filter((el) => !el.classList.contains('hidden-read'));
+  let currentId = null;
+  const setCurrent = (id, scroll) => {
+    if (currentId) document.getElementById(currentId)?.classList.remove('current');
+    currentId = id;
+    const el = id && document.getElementById(id);
+    if (!el) return;
+    el.classList.add('current');
+    markCurrentNav();
+    if (scroll) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
+  const markCurrentNav = () => {
+    document.querySelectorAll('.nav-item.current').forEach((n) => n.classList.remove('current'));
+    const nav = currentId && document.querySelector(`[data-nav="${currentId}"]`);
+    if (nav) { nav.classList.add('current'); if (!$('#nav').hidden) scrollSideTo(nav); }
+    markCurrentTree();
+  };
+  // The focused card's files and tests light up in the tree.
+  // A file inside a closed folder marks the folder instead.
+  // Scrolls only the sidebar list, never the page, to bring a row into view.
+  const scrollSideTo = (row) => {
+    const list = row.closest('.nav');
+    const top = row.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    if (top < 0) list.scrollTop += top - 8;
+    else if (top + row.offsetHeight > list.clientHeight) list.scrollTop += top + row.offsetHeight - list.clientHeight + 8;
+  };
+  const markCurrentTree = (follow = true) => {
+    document.querySelectorAll('#tree .on, #tree .on-sub, #tree .holds').forEach((n) => n.classList.remove('on', 'on-sub', 'holds'));
+    const unit = units.find((u) => u.id === currentId);
+    if (!unit) return;
+    const main = unit.kind === 'skim' ? unit.paths : [unit.path];
+    const sub = unit.kind === 'file' ? unit.tests : [];
+    let first = null;
+    for (const [paths, cls] of [[main, 'on'], [sub, 'on-sub']])
+      for (const path of paths) {
+        const row = document.querySelector(`#tree [data-tree="${CSS.escape(path)}"]`);
+        if (!row) continue;
+        const closed = [...document.querySelectorAll('#tree .tree-kids[hidden]')].filter((k) => k.contains(row)).at(0);
+        const shown = closed ? closed.previousElementSibling : row;
+        shown.classList.add(closed ? 'holds' : cls);
+        first ??= shown;
+      }
+    if (follow && first && !$('#tree').hidden) scrollSideTo(first);
+  };
+  // The file under the mouse is the current one, checked as the mouse moves and
+  // on every frame of a scroll. After j, k or n the keyboard holds the focus
+  // until the mouse really moves, so the scroll they start cannot undo them.
+  let pointer = null;
+  let keyboardHolds = false;
+  const focusUnderPointer = () => {
+    if (!pointer || keyboardHolds) return;
+    const card = document.elementFromPoint(pointer.x, pointer.y)?.closest('main .file, main .skim-group, main .ui-card');
+    if (card && card.id !== currentId) setCurrent(card.id, false);
+  };
+  document.addEventListener('mousemove', (e) => {
+    if (pointer && e.clientX === pointer.x && e.clientY === pointer.y) return;
+    pointer = { x: e.clientX, y: e.clientY };
+    keyboardHolds = false;
+    focusUnderPointer();
+  }, { passive: true });
+  document.addEventListener('mouseleave', () => { pointer = null; });
+  let scrollFrame = 0;
+  window.addEventListener('scroll', () => {
+    if (scrollFrame) return;
+    scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; focusUnderPointer(); });
+  }, { passive: true });
+  const move = (step) => {
+    keyboardHolds = true;
+    const list = tops();
+    const i = list.findIndex((el) => el.id === currentId);
+    const next = list[Math.max(0, Math.min(list.length - 1, i + step))];
+    if (next) setCurrent(next.id, true);
+  };
+  const unitDone = (unit) => (unit.kind === 'skim' ? unit.paths : [unit.path, ...unit.tests]).every(isRead);
+  const nextUnread = () => {
+    keyboardHolds = true;
+    const list = units.filter((u) => u.kind !== 'test');
+    const i = list.findIndex((u) => u.id === currentId);
+    const next = [...list.slice(i + 1), ...list.slice(0, i + 1)].find((u) => !unitDone(u));
+    if (next) { const el = document.getElementById(next.id); el.classList.remove('hidden-read'); setCurrent(next.id, true); }
+    else toast('Every file is read');
+  };
+
+  // ---------- Events ----------
+  document.addEventListener('click', (e) => {
+    const toggle = e.target.closest('[data-toggle]');
+    if (toggle) { const host = toggle.closest('.file, .test, .skim-file'); setCollapsed(host, !host.classList.contains('collapsed')); return; }
+    const more = e.target.closest('[data-more]');
+    if (more) { const slot = more.closest('[data-diff-slot]'); slot.dataset.all = '1'; fillSlot(slot.closest('[data-path]'), true); return; }
+    const group = e.target.closest('[data-read-group]');
+    if (group) { data.skim[group.dataset.readGroup].paths.forEach((p) => setRead(p, true)); refreshProgress(); return; }
+    const dir = e.target.closest('#tree [data-dir]');
+    if (dir) {
+      const open = dir.getAttribute('aria-expanded') !== 'true';
+      dir.setAttribute('aria-expanded', open);
+      dir.nextElementSibling.hidden = !open;
+      treeOpen[dir.dataset.dir] = open;
+      save(treeOpenKey, treeOpen);
+      markCurrentTree(false);
+      return;
+    }
+    const leaf = e.target.closest('#tree [data-tree], #tree [data-goto]');
+    if (leaf) {
+      e.preventDefault();
+      const path = leaf.dataset.tree ?? leaf.dataset.goto;
+      revealPath(path);
+      // A moved file's old place points at its new row, so show where it went.
+      if (leaf.dataset.goto) {
+        const row = document.querySelector(`#tree [data-tree="${CSS.escape(path)}"]`);
+        if (row) {
+          [...document.querySelectorAll('#tree .tree-kids[hidden]')].filter((k) => k.contains(row)).forEach((k) => k.previousElementSibling.click());
+          scrollSideTo(row);
+          row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
+        }
+      }
+      return;
+    }
+    if (e.target.closest('[data-tree-all]')) {
+      prefs.treeAll = prefs.treeAll === false; save(prefKey, prefs);
+      $('#tree').innerHTML = treeHtml();
+      applyHide();
+      markCurrentTree(false);
+      return;
+    }
+    const view = e.target.closest('[data-view]');
+    if (view) return setSideView(view.dataset.view);
+    const nav = e.target.closest('[data-nav]');
+    if (nav) { e.preventDefault(); const el = document.getElementById(nav.dataset.nav); el.classList.remove('hidden-read'); setCurrent(nav.dataset.nav, true); }
+  });
+  document.addEventListener('change', (e) => {
+    const box = e.target.closest('[data-read]');
+    if (!box) return;
+    const path = box.dataset.read;
+    setRead(path, box.checked);
+    const host = box.closest('.file, .test, .skim-file');
+    if (host.classList.contains('file') && box.checked) {
+      units.find((u) => u.path === path)?.tests.forEach((t) => setRead(t, true));
+      setCollapsed(host, true);
+    }
+    refreshProgress();
+  });
+  $('#t-hide').addEventListener('click', () => { prefs.hideRead = !prefs.hideRead; save(prefKey, prefs); applyHide(); });
+  // ---------- UI review events ----------
+  document.addEventListener('change', (e) => {
+    const box = e.target.closest?.('[data-ui-step]');
+    if (!box) return;
+    if (box.checked) uiState.steps[box.dataset.uiStep] = true; else delete uiState.steps[box.dataset.uiStep];
+    saveUi();
+    box.closest('.ui-step').classList.toggle('done', box.checked);
+    const card = box.closest('.ui-card');
+    const si = Number(card.dataset.ui);
+    const sc = data.uiReview.scenarios[si];
+    const done = uiDoneIn(si, sc);
+    card.querySelector('[data-ui-count]').textContent = `${done}/${sc.steps.length}`;
+    card.classList.toggle('ui-complete', done === sc.steps.length);
+    refreshProgress();
+  });
+  document.addEventListener('input', (e) => {
+    const area = e.target.closest?.('[data-ui-note]');
+    if (!area) return;
+    const text = area.value.trim();
+    if (text) uiState.notes[area.dataset.uiNote] = area.value; else delete uiState.notes[area.dataset.uiNote];
+    saveUi();
+    area.closest('.ui-card').querySelector('.ui-flag').hidden = !text;
+  });
+  document.addEventListener('click', (e) => {
+    const copy = e.target.closest('[data-copy]');
+    if (copy) {
+      navigator.clipboard?.writeText(copy.dataset.copy).then(() => toast('Copied'), () => toast('Copy failed'));
+      return;
+    }
+    const toggle = e.target.closest('[data-ui-toggle]');
+    if (toggle) toggle.closest('.ui-card').classList.toggle('collapsed');
+  });
+
+  // ---------- Full file ----------
+  /** Shows the whole file around its hunks, keeping open notes open and the view where it was. */
+  const toggleFull = (card, force) => {
+    if (!card?.classList.contains('file') || !diffOf(card.dataset.path)?.full) return;
+    const slot = card.querySelector('.file-main > [data-diff-slot]');
+    const full = force ?? !slot.dataset.full;
+    const open = [...slot.querySelectorAll('tr[data-note]:not([hidden])')].map((r) => r.dataset.note);
+    const top = card.getBoundingClientRect().top;
+    if (full) slot.dataset.full = '1'; else delete slot.dataset.full;
+    setCollapsed(card, false);
+    fillSlot(card, true);
+    open.forEach((id) => setNoteOpen(slot, id, true));
+    const btn = card.querySelector('[data-full-toggle]');
+    btn.setAttribute('aria-pressed', full);
+    btn.textContent = full ? 'Changes only' : 'Full file';
+    if (top < 0) window.scrollBy(0, card.getBoundingClientRect().top - top);
+  };
+
+  // ---------- Hunk blocks: hover to highlight, click the header to read ----------
+  let hovered = null;
+  const lightBlock = (slot, id) => {
+    if (hovered === id) return;
+    document.querySelectorAll('.blk-hover').forEach((el) => el.classList.remove('blk-hover'));
+    hovered = id;
+    if (id) slot.querySelectorAll(`tr[data-b="${id}"], tr[data-note="${id}"]`).forEach((tr) => tr.classList.add('blk-hover'));
+  };
+  const setNoteOpen = (slot, id, open) => {
+    const row = slot.querySelector(`tr[data-note="${id}"]`);
+    if (!row) return;
+    row.hidden = !open;
+    const head = slot.querySelector(`tr[data-bh="${id}"]`);
+    head?.classList.toggle('open', open);
+    head?.querySelector('[data-block-toggle]')?.setAttribute('aria-expanded', open);
+  };
+  const setAllNotes = (root, open) =>
+    root.querySelectorAll('tr[data-note]').forEach((row) => setNoteOpen(row.closest('[data-diff-slot]'), row.dataset.note, open));
+
+  document.addEventListener('mouseover', (e) => {
+    const tr = e.target.closest('.file-main > [data-diff-slot] tr');
+    if (tr) {
+      const slot = tr.closest('[data-diff-slot]');
+      lightBlock(slot, tr.dataset.b ?? tr.dataset.note ?? null);
+    } else lightBlock(null, null);
+  });
+  document.addEventListener('mouseout', (e) => {
+    if (!e.relatedTarget?.closest?.('.file-main > [data-diff-slot] tr')) lightBlock(null, null);
+  });
+  document.addEventListener('click', (e) => {
+    const fullBtn = e.target.closest('[data-full-toggle]');
+    if (fullBtn) return toggleFull(fullBtn.closest('.file'));
+    if (e.target.closest('tr[data-expand]')) return toggleFull(e.target.closest('.file'), true);
+    // Any line of a hunk opens its note; a link or a text selection does not.
+    const tr = e.target.closest('.file-main > [data-diff-slot] tr[data-b]');
+    if (tr && !e.target.closest('a') && !window.getSelection()?.toString()) {
+      const slot = tr.closest('[data-diff-slot]');
+      const id = tr.dataset.b;
+      const head = slot.querySelector(`tr[data-bh="${id}"]`);
+      if (head && slot.querySelector(`tr[data-note="${id}"]`))
+        setNoteOpen(slot, id, !head.classList.contains('open'));
+    }
+  });
+  $('#t-notes').addEventListener('click', () => {
+    prefs.notesOpen = !prefs.notesOpen; save(prefKey, prefs);
+    $('#t-notes').setAttribute('aria-pressed', prefs.notesOpen);
+    setAllNotes(document, prefs.notesOpen);
+  });
+  $('#t-notes').setAttribute('aria-pressed', !!prefs.notesOpen);
+  $('#editor').value = prefs.editor;
+  $('#editor').addEventListener('change', (e) => {
+    prefs.editor = e.target.value; save(prefKey, prefs);
+    document.querySelectorAll('a[href*="://file/"]').forEach((a) => { a.href = a.href.replace(/^[a-z]+:/, `${prefs.editor}:`); });
+  });
+  $('#start').addEventListener('click', () => { currentId = units[0]?.id; nextUnread(); if (!units.some((u) => u.kind !== 'test' && !unitDone(u))) return; });
+  $('#reset').addEventListener('click', () => {
+    for (const path of everyPath) setRead(path, false);
+    refreshProgress(); toast('Read marks cleared');
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.target.matches?.('input[type=text], textarea, select')) return;
+    const help = $('#help');
+    if (e.key === 'Escape') { help.classList.remove('open'); return; }
+    if (e.key === '?') { help.classList.toggle('open'); return; }
+    const el = currentId && document.getElementById(currentId);
+    const unit = units.find((u) => u.id === currentId);
+    switch (e.key) {
+      case 'j': move(1); break;
+      case 'k': move(-1); break;
+      case 'n': nextUnread(); break;
+      case 'x': if (el?.classList.contains('file')) setCollapsed(el, !el.classList.contains('collapsed')); break;
+      case 'o': { const a = el?.querySelector('[data-open]'); if (a) location.href = a.href; break; }
+      case 't': setSideView(prefs.sideView === 'tree' ? 'order' : 'tree'); break;
+      case 'h': prefs.hideRead = !prefs.hideRead; save(prefKey, prefs); applyHide(); toast(prefs.hideRead ? 'Hiding read files' : 'Showing read files'); break;
+      case 'm': {
+        const slot = el?.querySelector('.file-main > [data-diff-slot]');
+        if (!slot) return;
+        setAllNotes(slot, !!slot.querySelector('tr[data-note][hidden]'));
+        break;
+      }
+      case 'M': $('#t-notes').click(); break;
+      case 'f': toggleFull(el); break;
+      case 'v': {
+        if (!unit) return;
+        const paths = unit.kind === 'skim' ? unit.paths : [unit.path, ...unit.tests];
+        const done = paths.every(isRead);
+        paths.forEach((p) => setRead(p, !done));
+        if (el.classList.contains('file')) setCollapsed(el, !done);
+        refreshProgress();
+        if (!done) nextUnread();
+        break;
+      }
+      default: return;
+    }
+    e.preventDefault();
+  });
+  document.getElementById('help').addEventListener('click', (e) => { if (e.target.id === 'help') e.target.classList.remove('open'); });
+
+  // ---------- The one live diff ----------
+  let liveDiff = null;
+  document.addEventListener('mouseover', (e) => {
+    const box = e.target.closest?.('.diff');
+    if (!box || box === liveDiff) return;
+    liveDiff?.classList.remove('live');
+    box.classList.add('live');
+    liveDiff = box;
+  }, { passive: true });
+
+  // ---------- Sideways scroll ----------
+  // Each diff scrolls sideways on its own; its line numbers and full-width rows
+  // read the offset from --sx and shift back by it, once per frame at most.
+  const pendingScroll = new Set();
+  document.addEventListener('scroll', (e) => {
+    const box = e.target;
+    if (!(box instanceof Element) || !box.classList.contains('diff')) return;
+    if (!pendingScroll.size) requestAnimationFrame(() => {
+      for (const el of pendingScroll) el.style.setProperty('--sx', `${el.scrollLeft}px`);
+      pendingScroll.clear();
+    });
+    pendingScroll.add(box);
+  }, { capture: true, passive: true });
+
+  // ---------- Diff width ----------
+  // The table can be wider than its box; rows that span it need the box's width.
+  const widthObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) entry.target.style.setProperty('--diff-w', `${Math.floor(entry.contentRect.width) - 2}px`);
+  });
+  document.querySelectorAll('[data-diff-slot]').forEach((slot) => widthObserver.observe(slot));
+
+  // ---------- Sidebar width ----------
+  // Dragging the sidebar's right edge sets its width; a double-click goes back
+  // to the default, which grows with the window.
+  const setSideWidth = (px) => {
+    if (px) document.querySelector('.layout').style.setProperty('--side-w', `${px}px`);
+    else document.querySelector('.layout').style.removeProperty('--side-w');
+  };
+  setSideWidth(prefs.sideW);
+  const resizer = $('.side-resize');
+  resizer.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    resizer.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing');
+    let frame = 0;
+    const onMove = (ev) => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        prefs.sideW = Math.round(Math.max(220, Math.min(innerWidth * 0.5, ev.clientX)));
+        setSideWidth(prefs.sideW);
+      });
+    };
+    const onUp = () => {
+      resizer.removeEventListener('pointermove', onMove);
+      document.body.classList.remove('resizing');
+      save(prefKey, prefs);
+    };
+    resizer.addEventListener('pointermove', onMove);
+    resizer.addEventListener('pointerup', onUp, { once: true });
+  });
+  resizer.addEventListener('dblclick', () => { delete prefs.sideW; save(prefKey, prefs); setSideWidth(null); });
+
+  // ---------- Start ----------
+  fillOpen();
+  refreshProgress();
+  setSideView(prefs.sideView ?? 'order');
+  const target = location.hash && document.getElementById(location.hash.slice(1));
+  if (target) {
+    target.classList.remove('collapsed', 'hidden-read');
+    fillOpen();
+    requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }));
+    if (units.some((u) => u.id === target.id)) setCurrent(target.id, false);
+  } else setCurrent(tops()[0]?.id, false);
+})();
+</script>
+</body>
+</html>

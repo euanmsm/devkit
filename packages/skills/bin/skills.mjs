@@ -6,14 +6,16 @@
 // `skills sync` writes the configured skills; `skills check` fails when the
 // skills on disk have drifted from the config; `skills base` names the branch a
 // branch skill compares against; `skills prepass` and `skills pr` do the code
-// review's and the PR skill's shell-side work; `skills qa-gate` runs the Manual
-// QA gate in CI.
+// review's and the PR skill's shell-side work; `skills review-page` checks a
+// review page's notes and builds the page; `skills qa-gate` runs the Manual QA
+// gate in CI.
 
 import { repoRoot } from '@euanmsm/devkit-core';
 
 import { baseCommand } from '../src/base-cli.mjs';
 import { check } from '../src/check.mjs';
 import { prCommand, qaGate } from '../src/pr/cli.mjs';
+import { reviewPageCommand } from '../src/review-page/cli.mjs';
 import { prepass } from '../src/review/cli.mjs';
 import { sync } from '../src/sync.mjs';
 
@@ -23,6 +25,7 @@ const USAGE = `Usage:
   skills base [--base <b>]      the branch this one is compared against, and why
   skills prepass …              the code review's prework, run by the skill itself
   skills pr prepass|publish …   the PR skill's prework and publishing
+  skills review-page prepare|build …  the review page's brief and build
   skills qa-gate reset|status   the Manual QA gate, run by its GitHub workflow`;
 
 const [command, ...rest] = process.argv.slice(2);
@@ -64,6 +67,8 @@ try {
     process.exitCode = await prepass(rest, root);
   } else if (command === 'pr') {
     process.exitCode = await prCommand(rest, root);
+  } else if (command === 'review-page') {
+    process.exitCode = reviewPageCommand(rest, root);
   } else if (['help', '--help', '-h'].includes(command)) {
     console.log(USAGE);
   } else {
