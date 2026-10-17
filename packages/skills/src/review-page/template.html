@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)" id="hl-light">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)" id="hl-dark">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/dockerfile.min.js"></script>
 <style>
 :root {
   --bg: #f6f7f9;
@@ -651,15 +652,102 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
   }, allPaths[0] ?? '');
 
   // ---------- Diff rendering ----------
+  // Extensions highlight.js does not know by name, and files known by their whole name.
+  const LANG_BY_EXT = {
+    tsx: 'typescript', mts: 'typescript', cts: 'typescript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+    jsonc: 'json', json5: 'json', mdx: 'markdown', htm: 'xml', vue: 'xml', svelte: 'xml', svg: 'xml',
+    zsh: 'bash', env: 'ini', toml: 'ini', cfg: 'ini', conf: 'ini', psql: 'sql', pgsql: 'sql', gql: 'graphql',
+    h: 'c', hpp: 'cpp', cc: 'cpp', mm: 'objectivec', kts: 'kotlin', gradle: 'kotlin', pyi: 'python', rake: 'ruby', gemspec: 'ruby',
+  };
+  const LANG_BY_NAME = {
+    dockerfile: 'dockerfile', containerfile: 'dockerfile', makefile: 'makefile', gnumakefile: 'makefile',
+    gemfile: 'ruby', rakefile: 'ruby', podfile: 'ruby', '.env': 'bash', '.gitignore': 'bash', '.npmrc': 'ini', '.editorconfig': 'ini',
+  };
   const langOf = (path) => {
-    const ext = path.split('.').pop();
-    return { ts: 'typescript', tsx: 'typescript', mts: 'typescript', js: 'javascript', mjs: 'javascript', jsx: 'javascript', json: 'json', md: 'markdown', sql: 'sql', css: 'css', html: 'xml', yml: 'yaml', yaml: 'yaml', sh: 'bash' }[ext];
+    const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase();
+    const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : '';
+    const lang = LANG_BY_NAME[name] ?? (name.startsWith('dockerfile') ? 'dockerfile' : null) ?? (name.startsWith('.env') ? 'bash' : null) ?? LANG_BY_EXT[ext] ?? ext;
+    return window.hljs && lang && hljs.getLanguage(lang) ? lang : undefined;
   };
   const highlight = (text, lang) => {
-    if (window.hljs && lang && hljs.getLanguage(lang)) {
+    if (window.hljs && lang) {
       try { return hljs.highlight(text, { language: lang, ignoreIllegals: true }).value; } catch {}
     }
     return esc(text);
+  };
+
+  /**
+   * Splits highlighted HTML into one string per line, closing the spans still
+   * open at each line break and reopening them on the next line, so a line in
+   * the middle of a block comment or a multi-line string keeps its colour.
+   */
+  const splitHighlighted = (html) => {
+    const lines = [];
+    const open = [];
+    let line = '';
+    for (const token of html.split(/(<span[^>]*>|<\/span>|\n)/)) {
+      if (!token) continue;
+      if (token === '\n') {
+        lines.push(line + '</span>'.repeat(open.length));
+        line = open.join('');
+      } else {
+        if (token.startsWith('<span')) open.push(token);
+        else if (token === '</span>') open.pop();
+        line += token;
+      }
+    }
+    lines.push(line);
+    return lines;
+  };
+
+  /**
+   * Rebuilds the file as it was at the fork from its text now and its hunks,
+   * by putting back each hunk's removed lines in place of its added ones.
+   */
+  const oldText = (diff) => {
+    const out = [];
+    let next = 1;
+    for (const hunk of diff.hunks) {
+      const start = Number(hunk.header.match(/\+(\d+)/)[1]);
+      while (next < start) out.push(diff.full[next++ - 1]);
+      for (const l of hunk.lines) {
+        if (l.t !== '+') out.push(l.s);
+        if (l.n != null) next = l.n + 1;
+      }
+    }
+    while (next <= diff.full.length) out.push(diff.full[next++ - 1]);
+    return out;
+  };
+
+  /**
+   * Highlights each side of a file as a whole, once, and returns its lines by
+   * number. Highlighting a line on its own loses the comment or string it sits
+   * inside; the whole text keeps it.
+   */
+  const sideCache = new Map();
+  const highlightedSides = (path, lang) => {
+    if (sideCache.has(path)) return sideCache.get(path);
+    const diff = diffOf(path);
+    const byNumber = (pairs) => {
+      if (!pairs.length) return new Map();
+      const html = splitHighlighted(highlight(pairs.map(([, s]) => s).join('\n'), lang));
+      return new Map(pairs.map(([n], i) => [n, html[i]]));
+    };
+    const fromHunks = (key, keep) =>
+      diff.hunks.flatMap((h) => h.lines).filter((l) => keep(l.t) && l[key] != null).map((l) => [l[key], l.s]);
+    let sides;
+    if (!lang) sides = { new: new Map(), old: new Map() };
+    else if (diff.full) {
+      sides = {
+        new: byNumber(diff.full.map((s, i) => [i + 1, s])),
+        old: byNumber(oldText(diff).map((s, i) => [i + 1, s])),
+      };
+    } else {
+      // An added or deleted file is one hunk that already holds the whole text.
+      sides = { new: byNumber(fromHunks('n', (t) => t !== '-')), old: byNumber(fromHunks('o', (t) => t !== '+')) };
+    }
+    sideCache.set(path, sides);
+    return sides;
   };
 
   /** Pairs a run of removed lines with the added lines after it, for word marks. */
@@ -713,8 +801,9 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
   const renderLines = (path, hunkLines, lang) => {
     const pairs = pairChanges(hunkLines);
     const reverse = new Map([...pairs].map(([d, a]) => [a, d]));
+    const sides = highlightedSides(path, lang);
     return hunkLines.map((line, i) => {
-      let html = highlight(line.s, lang);
+      let html = (line.t === '-' ? sides.old.get(line.o) : sides.new.get(line.n)) ?? highlight(line.s, lang);
       const partner = pairs.has(i) ? hunkLines[pairs.get(i)] : reverse.has(i) ? hunkLines[reverse.get(i)] : null;
       if (partner) {
         const spans = line.t === '-' ? changedSpan(line.s, partner.s) : changedSpan(partner.s, line.s);
