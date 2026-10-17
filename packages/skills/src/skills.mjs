@@ -273,4 +273,32 @@ export const SKILLS = {
       outputDir: options.outputDir.replace(/\/+$/, ''),
     }),
   },
+
+  'review-page': {
+    defaults: { outputDir: 'tmp', editor: 'vscode' },
+    patterns: {
+      outputDir: {
+        test: /^(?!\/)(?!.*(^|\/)\.\.(\/|$))[^\s]+$/,
+        means:
+          'a folder inside the repository, relative to its root, with no spaces',
+      },
+      editor: { test: /^(vscode|cursor)$/, means: 'vscode or cursor' },
+    },
+    files: [
+      {
+        template: 'review-page/SKILL.md',
+        dir: 'skillsDir',
+        path: 'review-page/SKILL.md',
+      },
+      {
+        template: 'review-page/notes-format.md',
+        dir: 'skillsDir',
+        path: 'review-page/notes-format.md',
+      },
+    ],
+    values: (options) => ({
+      outputDir: options.outputDir.replace(/\/+$/, ''),
+      editor: options.editor,
+    }),
+  },
 };
