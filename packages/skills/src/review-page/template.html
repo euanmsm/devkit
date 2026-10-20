@@ -36,7 +36,6 @@
   --watch-fg: #6b5210;
   --done: #2e9b57;
   --shadow: 0 1px 2px rgb(16 24 40 / 0.05), 0 1px 3px rgb(16 24 40 / 0.06);
-  --blk: rgb(79 91 213 / 0.05);
   --note-head: #e9ecfb;
   --note-head-hover: #dfe3fa;
   --note-card: #ffffff;
@@ -47,6 +46,10 @@
   --term-fg: #d6dde8;
   --note-border: #cdd3f3;
   --notes-w: clamp(380px, 34vw, 600px);
+  /* The longest line of prose: 75 to 80 characters. In em, since ch is the
+     width of a 0 and prose letters are narrower; 34.5em measured 76 to 80
+     characters a line across the page's text. */
+  --measure: 34.5em;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   color-scheme: light;
@@ -60,7 +63,7 @@
     --del-bg: #2a1517; --del-num: #3a1b1e; --del-mark: #6e2a2e; --del-fg: #f2817c;
     --hunk-bg: #1a1f33; --hunk-fg: #9aa3d6; --move-fg: #58a6ff;
     --watch-bg: #2a2310; --watch-border: #8a6d1d; --watch-fg: #e8cf86;
-    --done: #4cc47a; --blk: rgb(139 148 247 / 0.06); --note-head: #1d2240; --note-head-hover: #252b52; --note-card: #12151f; --ui: #3cc8b4; --ui-soft: #11302c; --term-bg: #0b0e13; --term-bar: #151a22; --term-fg: #d6dde8; --note-border: #343b6b; color-scheme: dark;
+    --done: #4cc47a; --note-head: #1d2240; --note-head-hover: #252b52; --note-card: #12151f; --ui: #3cc8b4; --ui-soft: #11302c; --term-bg: #0b0e13; --term-bar: #151a22; --term-fg: #d6dde8; --note-border: #343b6b; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
@@ -71,11 +74,13 @@
   --del-bg: #2a1517; --del-num: #3a1b1e; --del-mark: #6e2a2e; --del-fg: #f2817c;
   --hunk-bg: #1a1f33; --hunk-fg: #9aa3d6; --move-fg: #58a6ff;
   --watch-bg: #2a2310; --watch-border: #8a6d1d; --watch-fg: #e8cf86;
-  --done: #4cc47a; --blk: rgb(139 148 247 / 0.06); --note-head: #1d2240; --note-head-hover: #252b52; --note-card: #12151f; --ui: #3cc8b4; --ui-soft: #11302c; --term-bg: #0b0e13; --term-bar: #151a22; --term-fg: #d6dde8; --note-border: #343b6b; color-scheme: dark;
+  --done: #4cc47a; --note-head: #1d2240; --note-head-hover: #252b52; --note-card: #12151f; --ui: #3cc8b4; --ui-soft: #11302c; --term-bg: #0b0e13; --term-bar: #151a22; --term-fg: #d6dde8; --note-border: #343b6b; color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
-html { scroll-padding-top: 12px; }
+/* Everything that sticks to the top of the page sits under the tab bar. */
+:root { --tabs-h: 38px; }
+html { scroll-padding-top: calc(var(--tabs-h) + 12px); }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased;
@@ -100,7 +105,38 @@ button { font: inherit; color: inherit; }
   display: flex; flex-direction: column;
   border-right: 1px solid var(--border); background: var(--surface);
 }
+.workspace { min-width: 0; }
 main { padding: 28px 32px 120px; max-width: 1760px; width: 100%; }
+
+/* ---------- Tabs ---------- */
+/* The bar across the top of the page. Review is the only tab for now; the bar
+   is built from a list so files can later open in tabs of their own. */
+.tabbar {
+  position: sticky; top: 0; z-index: 6; height: var(--tabs-h);
+  display: flex; align-items: stretch; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.tabs { display: flex; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.tab {
+  position: relative; display: inline-flex; align-items: center; gap: 7px; flex: none;
+  padding: 0 16px; border: 0; border-right: 1px solid var(--border); background: transparent;
+  font-size: 12.5px; color: var(--text-3); cursor: pointer; white-space: nowrap;
+}
+.tab:hover { color: var(--text); }
+.tab svg { flex: none; }
+/* The bar is a surface like the sidebar and the cards; the open tab is marked
+   by its text and a line of the accent along its top. */
+.tab[aria-selected="true"] { color: var(--text); }
+.tab[aria-selected="true"]::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--accent); }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tabbar-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; padding: 0 12px; }
+.bar-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+  font-size: 12.5px; color: var(--text-2); cursor: pointer;
+}
+.bar-btn:hover { border-color: var(--border-strong); color: var(--text); }
+.bar-btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.bar-count { font: 600 11px var(--mono); color: inherit; opacity: .8; }
 
 /* ---------- Sidebar ---------- */
 .side-head { padding: 18px 18px 14px; border-bottom: 1px solid var(--border); }
@@ -152,7 +188,7 @@ main { padding: 28px 32px 120px; max-width: 1760px; width: 100%; }
 .tree-plain:hover { color: var(--text-2); opacity: 1; }
 .tree-row {
   display: grid; grid-template-columns: 14px 14px minmax(0,1fr) auto; align-items: center; gap: 5px;
-  padding: 3px 10px 3px calc(10px + var(--d, 0) * 10px); border-radius: 6px;
+  padding: 3px 10px 3px calc(10px + var(--d, 0) * var(--tree-indent)); border-radius: 6px;
   color: var(--text-2); font-size: 12.5px; cursor: pointer; user-select: none;
 }
 .tree-row:hover { background: var(--surface-2); text-decoration: none; }
@@ -186,6 +222,14 @@ main { padding: 28px 32px 120px; max-width: 1760px; width: 100%; }
 /* Tests of the focused file, and closed folders holding it, get a lighter shade. */
 .tree-row.on-sub, .tree-row.holds { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
 .tree-row.hidden-read, .tree-folder.hidden-read { display: none; }
+/* Indent guides, as in VS Code: a faint rail under each open folder's
+   chevron runs down past everything inside it. */
+#tree { --tree-indent: 12px; }
+.tree-kids { position: relative; }
+.tree-kids::before {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 1px; pointer-events: none;
+  left: calc(10px + var(--d, 0) * var(--tree-indent) + 10.5px); background: var(--border);
+}
 .tree-row.flash { animation: tree-flash 1.2s ease; }
 @keyframes tree-flash { from { background: var(--accent-soft); } to { background: transparent; } }
 
@@ -211,11 +255,11 @@ kbd {
 .stats { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: var(--text-2); margin-bottom: 16px; }
 .stats .add { color: var(--add-fg); font-family: var(--mono); }
 .stats .del { color: var(--del-fg); font-family: var(--mono); }
-.hero .summary { font-size: 15px; color: var(--text); max-width: 78ch; margin: 0 0 22px; }
+.hero .summary { font-size: 15px; color: var(--text); max-width: var(--measure); margin: 0 0 22px; }
 .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .col h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); margin: 0 0 8px; font-weight: 650; }
 .col ul { margin: 0; padding-left: 18px; }
-.col li { margin-bottom: 6px; color: var(--text-2); }
+.col li { margin-bottom: 6px; color: var(--text-2); max-width: var(--measure); }
 .commits { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 16px; }
 .commits h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); margin: 0 0 8px; font-weight: 650; }
 .commit { display: flex; gap: 10px; font-size: 13px; padding: 2px 0; color: var(--text-2); }
@@ -233,7 +277,7 @@ kbd {
 .section-no { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 600; }
 .section-head h2 { font-size: 18px; margin: 0; letter-spacing: -.005em; }
 .section-count { font-size: 12px; color: var(--text-3); }
-.section-intro { color: var(--text-2); margin: 0 0 14px; max-width: 80ch; }
+.section-intro { color: var(--text-2); margin: 0 0 14px; max-width: var(--measure); }
 
 /* ---------- File card ---------- */
 .file {
@@ -249,7 +293,7 @@ kbd {
 .file.current::after, .skim-group.current::after, .ui-card.current::after { opacity: 1; }
 .file.hidden-read { display: none; }
 .file-head {
-  position: sticky; top: 0; z-index: 3;
+  position: sticky; top: var(--tabs-h); z-index: 3;
   display: flex; align-items: center; gap: 10px; padding: 9px 12px;
   background: var(--surface); border-bottom: 1px solid var(--border); border-radius: 10px 10px 0 0;
 }
@@ -277,8 +321,10 @@ kbd {
 .blocks { display: inline-flex; gap: 1px; }
 .blocks i { width: 7px; height: 7px; border-radius: 1.5px; background: var(--border); }
 .blocks i.a { background: var(--add-fg); } .blocks i.d { background: var(--del-fg); }
-.open { font-size: 12px; color: var(--text-2); flex: none; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); }
-.open:hover { text-decoration: none; border-color: var(--border-strong); color: var(--text); }
+/* The small buttons in a file's header. Not `.open`, which also marks an open
+   hunk bar, sheet or overlay, and gave each of them this button's border. */
+.head-btn { font-size: 12px; color: var(--text-2); flex: none; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); }
+.head-btn:hover { text-decoration: none; border-color: var(--border-strong); color: var(--text); }
 .read-toggle {
   display: inline-flex; align-items: center; gap: 6px; flex: none; cursor: pointer; font-size: 12px; color: var(--text-2);
   border: 1px solid var(--border); border-radius: 6px; padding: 2px 9px 2px 6px; user-select: none; background: var(--surface);
@@ -286,21 +332,25 @@ kbd {
 .read-toggle input { margin: 0; accent-color: var(--done); }
 .is-read > .file-head .read-toggle, .is-read > .row-head .read-toggle { border-color: var(--done); color: var(--done); }
 
+/* A file far from the screen is neither drawn nor hit-tested. Every line number
+   is its own positioned layer, so hit-testing every diff on each mouse move
+   took a whole frame. Its height until first drawn is estimated from its lines. */
 .file-body {
   display: grid; grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr); gap: 0;
+  content-visibility: auto; contain-intrinsic-size: auto var(--est-h, 600px);
 }
 .collapsed > .file-body { display: none; }
 .file-main { padding: 14px 16px 16px; min-width: 0; }
 .notes { border-left: 1px solid var(--border); background: var(--surface-2); border-radius: 0 0 10px 0; }
 .notes-inner {
-  position: sticky; top: 46px; max-height: calc(100vh - 56px); overflow-y: auto;
+  position: sticky; top: calc(var(--tabs-h) + 46px); max-height: calc(100vh - var(--tabs-h) - 56px); overflow-y: auto;
   padding: 16px 18px 18px; font-size: 13.5px; line-height: 1.6;
 }
-.notes .summary { margin: 0 0 14px; font-size: 14.5px; font-weight: 550; color: var(--text); line-height: 1.5; }
+.notes .summary { max-width: var(--measure); margin: 0 0 14px; font-size: 14.5px; font-weight: 550; color: var(--text); line-height: 1.5; }
 .notes h4 {
   margin: 16px 0 6px; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3);
 }
-.notes .context p { margin: 0 0 8px; color: var(--text-2); }
+.notes .context p { margin: 0 0 8px; color: var(--text-2); max-width: var(--measure); }
 .renamed-from { font-size: 12px; color: var(--text-3); margin: -6px 0 12px; font-family: var(--mono); word-break: break-all; }
 
 /* ---------- Tests and skim rows ---------- */
@@ -359,9 +409,11 @@ tr.hunk:first-child td { border-top: 0; }
 .hunk-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hunk-fg); opacity: .75; }
 .hunk-meta .ctx { color: var(--text-2); margin-left: 8px; }
 .hunk-open { font-family: var(--sans); font-size: 11.5px; flex: none; }
-tr.has-note, tr.blk-hover:not(.block-note) { cursor: pointer; }
+tr.has-note { cursor: pointer; }
+/* A line takes a comment when clicked, or a range when dragged over. */
+.diff tr:is([data-n], [data-o]):not(.ctx-full) td { cursor: pointer; }
 tr.has-note td { background: var(--note-head); }
-tr.has-note:hover td, tr.has-note.blk-hover td { background: var(--note-head-hover); }
+tr.has-note:hover td { background: var(--note-head-hover); }
 tr.part td { border-top: 1px dashed var(--border-strong); }
 .block-toggle {
   display: inline-flex; align-items: center; gap: 7px; border: 0; background: none; padding: 0; cursor: pointer;
@@ -382,10 +434,9 @@ tr.block-note td { padding: 2px 12px 12px !important; background: var(--note-hea
   content: ""; position: absolute; top: -6px; left: 14px; width: 10px; height: 10px; transform: rotate(45deg);
   background: var(--note-card); border-left: 1px solid var(--note-border); border-top: 1px solid var(--note-border);
 }
-.block-note-body p { margin: 0 0 6px; max-width: 92ch; }
+.block-note-body p { margin: 0 0 6px; max-width: var(--measure); }
 .block-note-body p:last-child { margin-bottom: 0; }
 tr.has-note.open td { background: var(--note-head); }
-tr.blk-hover:not(.hunk):not(.block-note) td.code { box-shadow: inset 0 0 0 9999px var(--blk); }
 tr.gap td {
   background: var(--surface-2); color: var(--text-3); font: 12px var(--sans); padding: 3px 12px !important;
   border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); cursor: pointer; text-align: center;
@@ -413,7 +464,7 @@ tr.ctx-full td.code, tr.ctx-full td.ln { background: var(--surface); }
 .ui-setup ol { margin: 0; padding-left: 20px; }
 .ui-setup li { margin-bottom: 12px; color: var(--text-2); }
 .ui-setup li:last-child { margin-bottom: 0; }
-.ui-setup li p { margin: 0 0 6px; }
+.ui-setup li p { margin: 0 0 6px; max-width: var(--measure); }
 .cmd {
   display: flex; align-items: center; gap: 10px; max-width: 520px;
   background: var(--term-bg); color: var(--term-fg); border-radius: 7px; padding: 7px 8px 7px 12px;
@@ -427,6 +478,7 @@ tr.ctx-full td.code, tr.ctx-full td.ln { background: var(--surface); }
 .copy:hover { background: rgb(255 255 255 / .1); }
 .ui-missing { background: var(--surface-2); box-shadow: none; }
 .ui-missing ul { margin: 0; padding-left: 18px; color: var(--text-2); }
+.ui-missing li { max-width: var(--measure); }
 .ui-missing li + li { margin-top: 6px; }
 
 .ui-card {
@@ -458,7 +510,7 @@ tr.ctx-full td.code, tr.ctx-full td.ln { background: var(--surface); }
 .ui-step label { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; padding: 9px 10px; cursor: pointer; border-radius: 8px; }
 .ui-step label:hover { background: var(--surface-2); }
 .ui-step input { margin: 3px 0 0; width: 16px; height: 16px; accent-color: var(--done); cursor: pointer; }
-.ui-step-text { display: flex; flex-direction: column; gap: 3px; }
+.ui-step-text { display: flex; flex-direction: column; gap: 3px; max-width: var(--measure); }
 .ui-do { color: var(--text); font-weight: 550; }
 .ui-do::before { content: counter(step) ". "; color: var(--text-3); font-weight: 600; }
 .ui-expect { color: var(--text-2); font-size: 13px; padding-left: 16px; position: relative; }
@@ -467,12 +519,12 @@ tr.ctx-full td.code, tr.ctx-full td.ln { background: var(--surface); }
 .ui-step.done .ui-do { text-decoration: line-through; text-decoration-color: var(--border-strong); }
 .ui-note-label { display: block; margin-top: 14px; font-size: 12px; color: var(--text-3); }
 .ui-note-label textarea {
-  display: block; width: 100%; margin-top: 6px; resize: vertical; min-height: 44px;
+  display: block; width: 100%; max-width: var(--measure); margin-top: 6px; resize: vertical; min-height: 44px;
   font: 13px/1.5 var(--sans); color: var(--text); background: var(--surface-2);
   border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px;
 }
 .ui-note-label textarea:focus { outline: 2px solid var(--ui-soft); border-color: var(--ui); }
-.ui-aside .notes-inner { top: 12px; }
+.ui-aside .notes-inner { top: calc(var(--tabs-h) + 12px); }
 .term { border-radius: 8px; overflow: hidden; background: var(--term-bg); box-shadow: 0 1px 3px rgb(0 0 0 / .2); }
 .term-bar { display: flex; gap: 5px; padding: 7px 10px; background: var(--term-bar); }
 .term-bar i { width: 8px; height: 8px; border-radius: 50%; background: rgb(255 255 255 / .22); }
@@ -487,6 +539,103 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
   .ui-body { grid-template-columns: 1fr; }
   .ui-aside { order: -1; border-left: 0; border-bottom: 1px solid var(--border); border-radius: 0; }
 }
+
+/* ---------- Comments ---------- */
+/* One + for the whole page, moved to the line under the mouse; dragging it or
+   shift-clicking another line makes a range. A button on every line made each
+   mouse move hit-test thousands of positioned elements. */
+.cmt-add {
+  position: fixed; top: 0; left: 0; z-index: 4;
+  width: 18px; height: 18px; padding: 0; border: 0; border-radius: 5px; cursor: pointer;
+  background: var(--accent); color: #fff; font: 700 14px/18px var(--sans); text-align: center;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .2);
+}
+.cmt-add[hidden] { display: none; }
+.cmt-dragging { cursor: ns-resize; user-select: none; }
+tr.cmt-sel td.code { box-shadow: inset 0 0 0 9999px color-mix(in srgb, var(--accent) 16%, transparent); }
+tr.cmt-sel td.ln { background: var(--accent-soft); color: var(--accent); }
+/* A comment is one more row of the diff. Like a hunk note it spans the row
+   and is no wider than the diff's box, so focusing it never scrolls the code
+   sideways. A strip of gutter keeps the line numbers' column unbroken beside
+   it, and the card sits just inside the code column. */
+tr.cmt-row td { padding: 6px 12px 8px !important; white-space: normal; font-family: var(--sans); background: var(--row-bg, var(--surface)); }
+.cmt-box {
+  position: relative; transform: translateX(var(--sx, 0px)); box-sizing: border-box;
+  width: calc(var(--diff-w, 100%) - 24px); padding-left: calc(96px + 8px - 12px);
+}
+.cmt-box::before {
+  content: ""; position: absolute; top: -6px; bottom: -8px; left: -12px; width: 96px;
+  background: var(--gutter-bg, var(--surface)); box-shadow: 1px 0 0 var(--border);
+}
+/* The row keeps the colour of the line it follows, so an added or removed
+   stretch carries on around the card, as on GitHub. */
+tr.cmt-row.on-add { --row-bg: var(--add-bg); --gutter-bg: var(--add-num); }
+tr.cmt-row.on-del { --row-bg: var(--del-bg); --gutter-bg: var(--del-num); }
+.cmt-file-list { margin-bottom: 10px; display: grid; gap: 8px; }
+/* A comment's card is as wide as its text: the measure plus its padding and borders. */
+.cmt, .cmt-form { font-size: 13.5px; max-width: calc(var(--measure) + 28px); }
+.cmt { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px; padding: 9px 12px; }
+.cmt + .cmt, .cmt + .cmt-form { margin-top: 8px; }
+.cmt.flash { animation: cmt-flash 1.4s ease; }
+@keyframes cmt-flash { from { box-shadow: 0 0 0 4px var(--accent-soft); } to { box-shadow: none; } }
+.cmt-meta { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-3); }
+.cmt-where { font-family: var(--mono); color: var(--text-2); }
+.cmt-actions { margin-left: auto; display: flex; gap: 2px; }
+.cmt-actions button { border: 0; background: none; padding: 1px 6px; border-radius: 5px; color: var(--text-3); cursor: pointer; font-size: 12px; }
+.cmt-actions button:hover { background: var(--surface-2); color: var(--text); }
+.cmt-actions button[data-armed] { color: var(--del-fg); }
+.cmt-body { margin-top: 4px; font-size: 13.5px; line-height: 1.55; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cmt-form { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px; padding: 10px 12px; }
+.cmt-form textarea {
+  display: block; width: 100%; margin-top: 6px; resize: vertical; min-height: 70px;
+  font: 13.5px/1.5 var(--sans); color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px;
+}
+.cmt-form textarea:focus { outline: none; border-color: var(--accent); }
+.cmt-form-row { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.cmt-form-row .btn { padding: 4px 12px; font-size: 12.5px; }
+.cmt-hint { margin-right: auto; font-size: 11.5px; color: var(--text-3); }
+.cmt-file-btn { font-size: 12px; color: var(--text-2); flex: none; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
+.cmt-file-btn:hover { border-color: var(--border-strong); color: var(--text); }
+.cmt-file-btn.has { border-color: var(--accent); color: var(--accent); }
+
+/* The comments sheet slides in over the page from the right, under the tab
+   bar, so the bar's Comments button stays in reach to close it. */
+.drawer {
+  position: fixed; top: var(--tabs-h); right: 0; z-index: 15; width: min(440px, 100vw); height: calc(100vh - var(--tabs-h));
+  display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--border);
+  /* The shadow falls on the left only; the clip trims what would spread
+     above, over the tab bar. */
+  box-shadow: -16px 0 40px rgb(0 0 0 / .16); clip-path: inset(0 0 0 -80px); transform: translateX(100%); visibility: hidden;
+  transition: transform .2s ease, visibility 0s linear .2s;
+}
+.drawer.open { transform: none; visibility: visible; transition: transform .2s ease; }
+.drawer-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.drawer-head h3 { flex: 1; margin: 0; font-size: 14px; }
+.drawer-head h3 span { color: var(--text-3); font-weight: 500; }
+.drawer-head .btn { padding: 5px 12px; font-size: 12.5px; }
+.drawer-head .btn:disabled { opacity: .45; cursor: default; }
+.drawer-close { font-size: 18px; line-height: 1; }
+.drawer-list { flex: 1; overflow-y: auto; padding: 14px 14px 24px; }
+.drawer-file { margin-bottom: 16px; }
+.drawer-path { margin: 0 0 6px; font: 11.5px var(--mono); word-break: break-all; }
+.drawer-path .dir { color: var(--text-3); }
+.drawer-path .base { color: var(--text); font-weight: 600; }
+.drawer-item { display: block; margin-bottom: 6px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--surface); }
+.drawer-item:hover, .drawer-item:focus-visible { border-color: var(--accent); outline: none; }
+/* The lines a comment is on, coloured and highlighted as in the diff. */
+.drawer-quote { margin: 6px 0 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; font: 11.5px/1.5 var(--mono); color: var(--text); }
+.dq-line { display: grid; grid-template-columns: 34px minmax(0, 1fr); }
+.dq-num { padding: 0 6px; text-align: right; color: var(--text-3); background: var(--surface); user-select: none; }
+.dq-code { position: relative; padding: 0 8px 0 16px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.dq-code::before { position: absolute; left: 5px; color: var(--text-3); }
+.dq-line.add .dq-num { background: var(--add-num); } .dq-line.add .dq-code { background: var(--add-bg); }
+.dq-line.add .dq-code::before { content: "+"; color: var(--add-fg); }
+.dq-line.del .dq-num { background: var(--del-num); } .dq-line.del .dq-code { background: var(--del-bg); }
+.dq-line.del .dq-code::before { content: "−"; color: var(--del-fg); }
+.dq-plain { padding: 4px 8px; background: var(--surface-2); color: var(--text-2); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.drawer-empty { padding: 24px 6px; color: var(--text-3); font-size: 13px; }
+.drawer-empty b { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; background: var(--accent); color: #fff; font-size: 12px; }
 
 /* ---------- Overlay ---------- */
 .overlay { position: fixed; inset: 0; background: rgb(10 12 16 / .45); display: none; place-items: center; z-index: 20; }
@@ -509,7 +658,7 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
   main { padding: 16px 16px 80px; }
 
   .columns { grid-template-columns: 1fr; }
-  .open, .blocks { display: none; }
+  .head-btn, .blocks { display: none; }
 }
 </style>
 </head>
@@ -548,7 +697,18 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
       </select></label>
     </div>
   </aside>
-  <main id="main"></main>
+  <div class="workspace">
+    <header class="tabbar">
+      <div class="tabs" id="tabs" role="tablist" aria-label="Open views"></div>
+      <div class="tabbar-actions">
+        <button class="bar-btn" id="t-comments" aria-pressed="false" aria-controls="drawer" title="Open or close your comments (c)">
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H7l-3 2.5v-2.5h-.5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+          Comments <span class="bar-count" id="t-comments-n">0</span>
+        </button>
+      </div>
+    </header>
+    <main id="main" role="tabpanel" aria-labelledby="tab-review"></main>
+  </div>
 </div>
 
 <div class="overlay" id="help" role="dialog" aria-label="Keyboard shortcuts">
@@ -566,10 +726,21 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
       <kbd>f</kbd><span>Full file or changes only</span>
       <kbd>m</kbd><span>Open or close this file's hunk notes</span>
       <kbd>M</kbd><span>Open or close every hunk note</span>
+      <kbd>c</kbd><span>Open or close your comments</span>
       <kbd>?</kbd><span>This sheet</span>
     </div>
+    <p class="notes-hint">Click a line to comment on it, or drag across lines for a range. Click a hunk's bar, or press <kbd>m</kbd>, to read its note. Hold <kbd>Alt</kbd> to select text.</p>
   </div>
 </div>
+<button class="cmt-add" id="cmt-add" hidden tabindex="-1" title="Comment on this line · drag across lines for a range" aria-label="Comment on this line">+</button>
+<aside class="drawer" id="drawer" aria-label="Comments">
+  <div class="drawer-head">
+    <h3>Comments <span id="drawer-count"></span></h3>
+    <button class="btn" id="cmt-export" title="Save every comment as a JSON file">Export JSON</button>
+    <button class="chev drawer-close" id="drawer-close" aria-label="Close comments">×</button>
+  </div>
+  <div class="drawer-list" id="drawer-list"></div>
+</aside>
 <div class="toast" id="toast"></div>
 
 <script id="review-data" type="application/json">__REVIEW_DATA__</script>
@@ -594,6 +765,12 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
   const load = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
   const save = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
   const readMap = load(storeKey, {});
+  // Review comments, kept beside the read marks: { id, path, file } for a whole
+  // file, or { id, path, start, end } for lines, each end a { side, line }.
+  const commentKey = `${storeKey}:comments`;
+  const comments = load(commentKey, []);
+  const saveComments = () => save(commentKey, comments);
+  const commentsOf = (path) => comments.filter((c) => c.path === path);
   const prefs = { hideRead: false, layout: 'unified', editor: data.editor || 'vscode', ...load(prefKey, {}) };
   const query = new URLSearchParams(location.search);
   const theme = query.get('theme');
@@ -643,6 +820,10 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
   };
   const readToggle = (path, label = 'Read') =>
     `<label class="read-toggle" title="Mark read (v)"><input type="checkbox" data-read="${esc(path)}" ${isRead(path) ? 'checked' : ''}>${label}</label>`;
+  const commentButton = (path) => {
+    const count = commentsOf(path).length;
+    return `<button class="cmt-file-btn ${count ? 'has' : ''}" data-cmt-file="${esc(path)}" title="Comment on the whole file">Comment<span data-cmt-n>${count ? ` · ${count}` : ''}</span></button>`;
+  };
 
   // Common prefix of every path, dimmed out of the sidebar.
   const allPaths = Object.keys(data.diffs);
@@ -936,6 +1117,7 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
         ${badgeHtml(test.path)}
         <span class="note">${test.note ? inline(test.note) : ''}</span>
         ${deltaHtml(diff)}
+        ${commentButton(test.path)}
         ${readToggle(test.path)}
       </div>
       <div class="row-body" data-diff-slot></div>
@@ -956,15 +1138,19 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
       : '';
     const tests = file.tests?.length ? `<div class="tests"><div class="tests-title">Tests · ${file.tests.length}</div>${file.tests.map(testHtml).join('')}</div>` : '';
     const startCollapsed = read || diff?.status === 'deleted';
-    return `<article class="file ${startCollapsed ? 'collapsed' : ''} ${read ? 'is-read' : ''}" id="${id}" data-path="${esc(file.path)}">
+    // About 19px a line, up to the lines first shown, plus each hunk's header and the tests.
+    const lineCount = Math.min(LONG_DIFF, (diff?.hunks ?? []).reduce((n, h) => n + h.lines.length, 0));
+    const estimate = 60 + lineCount * 19 + (diff?.hunks?.length ?? 0) * 54 + (file.tests?.length ?? 0) * 36;
+    return `<article class="file ${startCollapsed ? 'collapsed' : ''} ${read ? 'is-read' : ''}" id="${id}" data-path="${esc(file.path)}" style="--est-h:${estimate}px">
       <header class="file-head">
         <button class="chev" data-toggle aria-label="Collapse">${chevron}</button>
         <span class="file-no">${fileNo}</span>
         <span class="path" title="${esc(file.path)}">${splitPath(shortPath(file.path))}</span>
         ${badgeHtml(file.path)}
         ${deltaHtml(diff)}
-        ${diff?.full ? `<button class="open full-toggle" data-full-toggle aria-pressed="false" title="Show the whole file (f)">Full file</button>` : ''}
-        ${diff && diff.status !== 'deleted' ? `<a class="open" href="${editorUrl(file.path, firstLine(diff))}" data-open>Open ↗</a>` : ''}
+        ${diff?.full ? `<button class="head-btn full-toggle" data-full-toggle aria-pressed="false" title="Show the whole file (f)">Full file</button>` : ''}
+        ${diff && diff.status !== 'deleted' ? `<a class="head-btn" href="${editorUrl(file.path, firstLine(diff))}" data-open>Open ↗</a>` : ''}
+        ${commentButton(file.path)}
         ${readToggle(file.path)}
       </header>
       <div class="file-body">
@@ -995,6 +1181,7 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
           <span class="path" title="${esc(path)}" style="max-width:none;flex:1">${splitPath(shortPath(path))}</span>
           ${badgeHtml(path)}
           ${deltaHtml(diffOf(path))}
+          ${commentButton(path)}
           ${readToggle(path)}
         </div>
         <div class="row-body" data-diff-slot></div>
@@ -1115,6 +1302,23 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
   }
   if (data.uiReview) html += uiReviewHtml(data.uiReview, data.sections.length + (data.skim?.length ? 2 : 1));
   $('#main').innerHTML = html;
+
+  // ---------- Tabs ----------
+  // Each open view is one tab. The review is the only one for now, and cannot
+  // be closed; files will open in tabs of their own.
+  const reviewIcon = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h10v11H3zM5.5 5.5h5M5.5 8h5M5.5 10.5h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const tabs = [{ id: 'review', label: 'Review', icon: reviewIcon }];
+  let activeTab = 'review';
+  const renderTabs = () => {
+    $('#tabs').innerHTML = tabs.map((tab) => `<button class="tab" role="tab" id="tab-${tab.id}" data-tab="${tab.id}" aria-selected="${tab.id === activeTab}" aria-controls="main" tabindex="${tab.id === activeTab ? 0 : -1}">${tab.icon}<span>${esc(tab.label)}</span></button>`).join('');
+  };
+  renderTabs();
+  $('#tabs').addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-tab]');
+    if (!tab || tab.dataset.tab === activeTab) return;
+    activeTab = tab.dataset.tab;
+    renderTabs();
+  });
 
   // ---------- Sidebar ----------
   $('#side-title').textContent = data.title;
@@ -1260,7 +1464,7 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
       return `<div class="tree-folder" data-folder="${esc(node.dir)}">
         <div class="tree-row tree-dir ${total && read === total ? 'read' : ''} st-${status}" data-dir="${esc(node.dir)}" aria-expanded="${open}" style="--d:${d}" title="${esc(node.dir)}/">
           <span class="chev">${chevron}</span><span class="ico"></span><span class="name">${esc(node.name)}/</span></div>
-        <div class="tree-kids" ${open ? '' : 'hidden'}>${kidsHtml(node, d + 1)}</div></div>`;
+        <div class="tree-kids" style="--d:${d}" ${open ? '' : 'hidden'}>${kidsHtml(node, d + 1)}</div></div>`;
     };
     const kidsHtml = (node, d) =>
       [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name)).map((child) => dirHtml(child, d)).join('') +
@@ -1322,6 +1526,7 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
     slot.innerHTML = renderDiff(container.dataset.path, { limit: slot.dataset.all ? Infinity : LONG_DIFF, full: !!slot.dataset.full });
     slot.dataset.filled = '1';
     if (prefs.notesOpen) setAllNotes(slot, true);
+    decorateComments(slot, container.dataset.path);
   };
   const fillOpen = () => document.querySelectorAll('.file:not(.collapsed), .test:not(.collapsed), .skim-file:not(.collapsed)').forEach((el) => fillSlot(el));
 
@@ -1420,16 +1625,21 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
   // until the mouse really moves, so the scroll they start cannot undo them.
   let pointer = null;
   let keyboardHolds = false;
+  const focusCard = (el) => {
+    const card = el?.closest?.('main .file, main .skim-group, main .ui-card');
+    if (card && card.id !== currentId) setCurrent(card.id, false);
+  };
+  // A scroll moves the page under a still mouse, so only then is the browser
+  // asked what is under it; a mouse move already says, in its target.
   const focusUnderPointer = () => {
     if (!pointer || keyboardHolds) return;
-    const card = document.elementFromPoint(pointer.x, pointer.y)?.closest('main .file, main .skim-group, main .ui-card');
-    if (card && card.id !== currentId) setCurrent(card.id, false);
+    focusCard(document.elementFromPoint(pointer.x, pointer.y));
   };
   document.addEventListener('mousemove', (e) => {
     if (pointer && e.clientX === pointer.x && e.clientY === pointer.y) return;
     pointer = { x: e.clientX, y: e.clientY };
     keyboardHolds = false;
-    focusUnderPointer();
+    focusCard(e.target);
   }, { passive: true });
   document.addEventListener('mouseleave', () => { pointer = null; });
   let scrollFrame = 0;
@@ -1564,14 +1774,7 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
     if (top < 0) window.scrollBy(0, card.getBoundingClientRect().top - top);
   };
 
-  // ---------- Hunk blocks: hover to highlight, click the header to read ----------
-  let hovered = null;
-  const lightBlock = (slot, id) => {
-    if (hovered === id) return;
-    document.querySelectorAll('.blk-hover').forEach((el) => el.classList.remove('blk-hover'));
-    hovered = id;
-    if (id) slot.querySelectorAll(`tr[data-b="${id}"], tr[data-note="${id}"]`).forEach((tr) => tr.classList.add('blk-hover'));
-  };
+  // ---------- Hunk notes: click the hunk bar, or press m, to read ----------
   const setNoteOpen = (slot, id, open) => {
     const row = slot.querySelector(`tr[data-note="${id}"]`);
     if (!row) return;
@@ -1583,28 +1786,16 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
   const setAllNotes = (root, open) =>
     root.querySelectorAll('tr[data-note]').forEach((row) => setNoteOpen(row.closest('[data-diff-slot]'), row.dataset.note, open));
 
-  document.addEventListener('mouseover', (e) => {
-    const tr = e.target.closest('.file-main > [data-diff-slot] tr');
-    if (tr) {
-      const slot = tr.closest('[data-diff-slot]');
-      lightBlock(slot, tr.dataset.b ?? tr.dataset.note ?? null);
-    } else lightBlock(null, null);
-  });
-  document.addEventListener('mouseout', (e) => {
-    if (!e.relatedTarget?.closest?.('.file-main > [data-diff-slot] tr')) lightBlock(null, null);
-  });
   document.addEventListener('click', (e) => {
     const fullBtn = e.target.closest('[data-full-toggle]');
     if (fullBtn) return toggleFull(fullBtn.closest('.file'));
     if (e.target.closest('tr[data-expand]')) return toggleFull(e.target.closest('.file'), true);
-    // Any line of a hunk opens its note; a link or a text selection does not.
-    const tr = e.target.closest('.file-main > [data-diff-slot] tr[data-b]');
-    if (tr && !e.target.closest('a') && !window.getSelection()?.toString()) {
-      const slot = tr.closest('[data-diff-slot]');
-      const id = tr.dataset.b;
-      const head = slot.querySelector(`tr[data-bh="${id}"]`);
-      if (head && slot.querySelector(`tr[data-note="${id}"]`))
-        setNoteOpen(slot, id, !head.classList.contains('open'));
+    // The hunk bar opens its note; a click on a line starts a comment instead.
+    const head = e.target.closest('.file-main > [data-diff-slot] tr[data-bh]');
+    if (head && !e.target.closest('a')) {
+      const slot = head.closest('[data-diff-slot]');
+      const id = head.dataset.bh;
+      if (slot.querySelector(`tr[data-note="${id}"]`)) setNoteOpen(slot, id, !head.classList.contains('open'));
     }
   });
   $('#t-notes').addEventListener('click', () => {
@@ -1627,7 +1818,7 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
   document.addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || e.target.matches?.('input[type=text], textarea, select')) return;
     const help = $('#help');
-    if (e.key === 'Escape') { help.classList.remove('open'); return; }
+    if (e.key === 'Escape') { help.classList.remove('open'); setDrawer(false); return; }
     if (e.key === '?') { help.classList.toggle('open'); return; }
     const el = currentId && document.getElementById(currentId);
     const unit = units.find((u) => u.id === currentId);
@@ -1646,6 +1837,7 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
         break;
       }
       case 'M': $('#t-notes').click(); break;
+      case 'c': setDrawer(!$('#drawer').classList.contains('open')); break;
       case 'f': toggleFull(el); break;
       case 'v': {
         if (!unit) return;
@@ -1662,6 +1854,397 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
     e.preventDefault();
   });
   document.getElementById('help').addEventListener('click', (e) => { if (e.target.id === 'help') e.target.classList.remove('open'); });
+
+  // ---------- Comments ----------
+  // A comment sits on one line, a range of lines in one hunk, or a whole file.
+  // A line is named by its side and number: 'new' for added and unchanged lines,
+  // 'old' for removed ones, the same pair GitHub's review comments take.
+  let draft = null; // the one open comment form: { path, file, start, end, text, editId }
+  let drag = null;  // a range being dragged out: { slot, path, start, end, hunk }
+  let suppressClick = false;
+
+  const hostOf = (path) => document.querySelector(`main :is(.file, .test, .skim-file)[data-path="${CSS.escape(path)}"]`);
+  const slotOf = (host) => host?.querySelector(':scope > [data-diff-slot], :scope > .file-body > .file-main > [data-diff-slot]');
+  const codeRows = (slot) => [...slot.querySelectorAll('tr:is([data-n], [data-o]):not(.ctx-full)')];
+  const rowAt = (slot, at) => at && slot.querySelector(at.side === 'old' ? `tr.del[data-o="${at.line}"]` : `tr[data-n="${at.line}"]:not(.ctx-full)`);
+  const anchorOf = (tr) => (tr.classList.contains('del') ? { side: 'old', line: Number(tr.dataset.o) } : { side: 'new', line: Number(tr.dataset.n) });
+  /** The header row of the hunk a line sits in; a range never crosses one. */
+  const hunkOf = (tr) => {
+    let row = tr.previousElementSibling;
+    while (row && !(row.classList.contains('hunk') && !row.classList.contains('part'))) row = row.previousElementSibling;
+    return row;
+  };
+  /** Every line from a to b, in page order whichever way they were picked. */
+  const rowsBetween = (slot, a, b) => {
+    const rows = codeRows(slot);
+    let i = rows.indexOf(a), j = rows.indexOf(b);
+    if (i > j) [i, j] = [j, i];
+    return i < 0 ? [] : rows.slice(i, j + 1);
+  };
+  const sameAt = (a, b) => a.side === b.side && a.line === b.line;
+  const atLabel = (at) => (at.side === 'old' ? `old ${at.line}` : `${at.line}`);
+  const whereLabel = (c) => {
+    if (c.file) return 'whole file';
+    return sameAt(c.start, c.end) ? `line ${atLabel(c.end)}` : `lines ${atLabel(c.start)}–${atLabel(c.end)}`;
+  };
+  const commentStale = (c) => !!c.hash && c.hash !== diffOf(c.path)?.hash;
+
+  const cardHtml = (c) => `<div class="cmt" data-cmt-id="${c.id}">
+      <div class="cmt-meta"><span class="cmt-where">${esc(whereLabel(c))}</span>${commentStale(c) ? '<span class="badge stale" title="The diff changed after this comment was written">diff changed</span>' : ''}
+        <span class="cmt-actions"><button data-cmt-edit="${c.id}">Edit</button><button data-cmt-del="${c.id}">Delete</button></span></div>
+      <div class="cmt-body">${esc(c.body)}</div>
+    </div>`;
+  const formHtml = (d) => `<form class="cmt-form" data-cmt-form>
+      <div class="cmt-meta"><span class="cmt-where">${d.editId ? 'Editing · ' : ''}${esc(whereLabel(d))}</span></div>
+      <textarea data-cmt-text rows="3" placeholder="Leave a comment">${esc(d.text)}</textarea>
+      <div class="cmt-form-row"><span class="cmt-hint">⌘↵ to save · Esc to cancel</span>
+        <button type="button" class="btn ghost" data-cmt-cancel>Cancel</button>
+        <button type="submit" class="btn">${d.editId ? 'Save' : 'Comment'}</button></div>
+    </form>`;
+  /**
+   * Scrolls the page, and only the page, to show part of a diff. The browser's
+   * own scrollIntoView also scrolls the diff sideways, which slid the code
+   * under its pinned line numbers.
+   */
+  const showInPage = (el, { center = false, smooth = false } = {}) => {
+    const r = el.getBoundingClientRect();
+    const top = $('.tabbar').getBoundingClientRect().bottom + 12;
+    const bottom = innerHeight - 12;
+    const by = center ? r.top + r.height / 2 - (top + bottom) / 2 : r.top < top ? r.top - top : r.bottom > bottom ? Math.min(r.bottom - bottom, r.top - top) : 0;
+    if (by) window.scrollBy({ top: by, behavior: smooth ? 'smooth' : 'auto' });
+  };
+  const threadRow = (inner, kind) => `<tr class="cmt-row${kind ? ` on-${kind}` : ''}"><td colspan="3"><div class="cmt-box">${inner}</div></td></tr>`;
+
+  /** Draws a file's comments, and the open form when it is this file's, into its rendered diff. */
+  const decorateComments = (slot, path) => {
+    slot.querySelectorAll('.cmt-row, .cmt-file-list').forEach((el) => el.remove());
+    slot.querySelectorAll('.cmt-has, .cmt-sel').forEach((el) => el.classList.remove('cmt-has', 'cmt-sel'));
+    const mine = commentsOf(path).filter((c) => c.id !== draft?.editId);
+    const open = draft?.path === path ? draft : null;
+
+    const fileCards = mine.filter((c) => c.file).map(cardHtml).join('');
+    const fileForm = open?.file ? formHtml(open) : '';
+    if (fileCards || fileForm) slot.insertAdjacentHTML('afterbegin', `<div class="cmt-file-list">${fileCards}${fileForm}</div>`);
+
+    // Lines whose numbers are not drawn (past "Show more") wait until they are.
+    const threads = new Map();
+    for (const c of mine.filter((c) => !c.file)) {
+      const end = rowAt(slot, c.end);
+      if (!end) continue;
+      rowsBetween(slot, rowAt(slot, c.start) ?? end, end).forEach((r) => r.classList.add('cmt-has'));
+      threads.set(end, [...(threads.get(end) ?? []), cardHtml(c)]);
+    }
+    const formEnd = open && !open.file ? rowAt(slot, open.end) : null;
+    if (formEnd) {
+      rowsBetween(slot, rowAt(slot, open.start) ?? formEnd, formEnd).forEach((r) => r.classList.add('cmt-sel'));
+      threads.set(formEnd, [...(threads.get(formEnd) ?? []), formHtml(open)]);
+    }
+    for (const [row, parts] of threads) row.insertAdjacentHTML('afterend', threadRow(parts.join(''), row.classList.contains('add') ? 'add' : row.classList.contains('del') ? 'del' : ''));
+
+    if (open?.focus) {
+      open.focus = false;
+      const area = slot.querySelector('[data-cmt-text]');
+      if (area) { area.focus({ preventScroll: true }); area.setSelectionRange(area.value.length, area.value.length); showInPage(area.closest('.cmt-form')); }
+    }
+  };
+  const redecorate = (path) => {
+    const slot = slotOf(hostOf(path));
+    if (slot?.dataset.filled) decorateComments(slot, path);
+  };
+
+  /** Points at the open form when it holds unsaved words, so they are not lost. */
+  const draftInTheWay = (next) => {
+    if (!draft?.text.trim() || (next?.editId && next.editId === draft.editId)) return false;
+    toast('Save or cancel the open comment first');
+    const area = slotOf(hostOf(draft.path))?.querySelector('[data-cmt-text]');
+    area?.focus({ preventScroll: true });
+    if (area) showInPage(area.closest('.cmt-form'), { center: true, smooth: true });
+    return true;
+  };
+  const openDraft = (next) => {
+    if (draftInTheWay(next)) return;
+    const before = draft?.path;
+    draft = null;
+    if (before && before !== next.path) redecorate(before);
+    // Unfold the file first, so its diff is drawn once with the form in it.
+    const host = hostOf(next.path);
+    const card = host?.closest('.file');
+    card?.classList.remove('hidden-read');
+    if (card?.classList.contains('collapsed')) setCollapsed(card, false);
+    if (host?.classList.contains('collapsed')) setCollapsed(host, false);
+    draft = { text: '', ...next, focus: true };
+    redecorate(draft.path);
+  };
+  const closeDraft = () => {
+    const path = draft?.path;
+    draft = null;
+    if (path) redecorate(path);
+  };
+  const saveDraft = () => {
+    const body = draft.text.trim();
+    if (!body) { toast('Write something first'); return; }
+    const path = draft.path;
+    const now = new Date().toISOString();
+    if (draft.editId) {
+      const c = comments.find((x) => x.id === draft.editId);
+      if (c) { c.body = body; c.edited = now; }
+    } else {
+      const slot = slotOf(hostOf(path));
+      const end = !draft.file && rowAt(slot, draft.end);
+      const quote = end ? rowsBetween(slot, rowAt(slot, draft.start) ?? end, end).map((r) => r.querySelector('td.code').textContent.replace(/\s+$/, '')) : [];
+      comments.push({
+        id: `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        path,
+        ...(draft.file ? { file: true } : { start: draft.start, end: draft.end }),
+        body,
+        quote: quote.slice(0, 20),
+        hash: diffOf(path)?.hash ?? null,
+        at: now,
+      });
+    }
+    saveComments();
+    draft = null;
+    redecorate(path);
+    refreshComments();
+    toast('Comment saved');
+  };
+  const deleteComment = (id) => {
+    const i = comments.findIndex((c) => c.id === id);
+    if (i < 0) return;
+    const [c] = comments.splice(i, 1);
+    saveComments();
+    redecorate(c.path);
+    refreshComments();
+    toast('Comment deleted');
+  };
+
+  // Picking lines: press a line, or its +, and drag over lines of the same
+  // hunk, or shift-click another line while a form is open to stretch its
+  // range. Holding Alt leaves the press to the browser, to select text.
+  const paintDrag = () => {
+    drag.slot.querySelectorAll('tr.cmt-sel').forEach((r) => r.classList.remove('cmt-sel'));
+    rowsBetween(drag.slot, drag.start, drag.end).forEach((r) => r.classList.add('cmt-sel'));
+  };
+  const addBtn = $('#cmt-add');
+  let hoverRow = null;
+  const placeAdd = (tr) => {
+    hoverRow = tr;
+    addBtn.hidden = !tr;
+    if (!tr) return;
+    const cell = tr.cells[1].getBoundingClientRect();
+    addBtn.style.transform = `translate(${Math.round(cell.right - 9)}px, ${Math.round(cell.top + cell.height / 2 - 9)}px)`;
+  };
+  document.addEventListener('mouseover', (e) => {
+    if (drag || e.target === addBtn) return;
+    const tr = e.target.closest?.('.diff tr:is([data-n], [data-o]):not(.ctx-full)') ?? null;
+    if (tr !== hoverRow) placeAdd(tr);
+  }, { passive: true });
+  // Any scroll, of the page or a diff sideways, leaves the + behind; it comes back on the next move.
+  window.addEventListener('scroll', () => { if (hoverRow) placeAdd(null); }, { passive: true, capture: true });
+
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || e.altKey) return;
+    const row = e.target === addBtn ? hoverRow : !e.target.closest('a') && e.target.closest?.('.diff tr:is([data-n], [data-o]):not(.ctx-full)');
+    if (!row) return;
+    e.preventDefault();
+    const slot = row.closest('[data-diff-slot]');
+    const path = slot.closest('[data-path]').dataset.path;
+    if (e.shiftKey && draft?.path === path && !draft.file) {
+      const start = rowAt(slot, draft.start);
+      if (start && hunkOf(start) === hunkOf(row)) {
+        const [a, b] = [start, row].sort((x, y) => (x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+        draft = { ...draft, start: anchorOf(a), end: anchorOf(b), focus: true };
+        decorateComments(slot, path);
+        return;
+      }
+      toast('A range stays inside one hunk');
+    }
+    if (draftInTheWay()) return;
+    drag = { slot, path, start: row, end: row, hunk: hunkOf(row) };
+    placeAdd(null);
+    document.body.classList.add('cmt-dragging');
+    paintDrag();
+  });
+  document.addEventListener('mouseover', (e) => {
+    if (!drag) return;
+    const tr = e.target.closest?.('tr');
+    if (!tr || !drag.slot.contains(tr) || !tr.matches('tr:is([data-n], [data-o]):not(.ctx-full)') || hunkOf(tr) !== drag.hunk) return;
+    if (tr !== drag.end) { drag.end = tr; paintDrag(); }
+  });
+  document.addEventListener('mouseup', () => {
+    if (!drag) return;
+    const { path, start, end } = drag;
+    const [a, b] = rowsBetween(drag.slot, start, end).filter((r, i, all) => i === 0 || i === all.length - 1);
+    drag = null;
+    document.body.classList.remove('cmt-dragging');
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 0);
+    openDraft({ path, file: false, start: anchorOf(a), end: anchorOf(b ?? a) });
+  });
+  // The click that ends a press on a line must not also act on what it lands on.
+  document.addEventListener('click', (e) => {
+    if (suppressClick || e.target.closest?.('.cmt-add')) e.stopPropagation();
+  }, true);
+
+  document.addEventListener('click', (e) => {
+    const fileBtn = e.target.closest('[data-cmt-file]');
+    if (fileBtn) { openDraft({ path: fileBtn.dataset.cmtFile, file: true }); return; }
+    if (e.target.closest('[data-cmt-cancel]')) { closeDraft(); return; }
+    const edit = e.target.closest('[data-cmt-edit]');
+    if (edit) {
+      const c = comments.find((x) => x.id === edit.dataset.cmtEdit);
+      if (c) openDraft({ path: c.path, file: !!c.file, start: c.start, end: c.end, text: c.body, editId: c.id });
+      return;
+    }
+    // Deleting takes a second click, so a slip cannot lose a comment.
+    const del = e.target.closest('[data-cmt-del]');
+    if (del) {
+      e.stopPropagation();
+      if (del.dataset.armed) { deleteComment(del.dataset.cmtDel); return; }
+      del.dataset.armed = '1'; del.textContent = 'Delete?';
+      setTimeout(() => { if (del.isConnected) { delete del.dataset.armed; del.textContent = 'Delete'; } }, 3000);
+      return;
+    }
+    const go = e.target.closest('[data-cmt-go]');
+    if (go) goToComment(go.dataset.cmtGo);
+  });
+  document.addEventListener('submit', (e) => {
+    if (!e.target.matches('[data-cmt-form]')) return;
+    e.preventDefault();
+    saveDraft();
+  });
+  document.addEventListener('input', (e) => {
+    if (e.target.matches?.('[data-cmt-text]') && draft) draft.text = e.target.value;
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!e.target.matches?.('[data-cmt-text]')) return;
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveDraft(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDraft(); }
+  });
+
+  // ---------- Comments sheet ----------
+  const pathOrder = units.flatMap((u) => (u.kind === 'skim' ? u.paths : [u.path]));
+  const lineKey = (c) => (c.file ? -1 : c.end.line + (c.end.side === 'old' ? 0.5 : 0));
+  const sortedComments = () => [...comments].sort((a, b) => {
+    const pa = pathOrder.indexOf(a.path), pb = pathOrder.indexOf(b.path);
+    return (pa < 0 ? Infinity : pa) - (pb < 0 ? Infinity : pb) || a.path.localeCompare(b.path) || lineKey(a) - lineKey(b) || a.at.localeCompare(b.at);
+  });
+  /**
+   * A comment's lines as the diff shows them: their kind, number and
+   * highlighted code. Null when the diff no longer holds them.
+   */
+  const quotedLines = (c) => {
+    const all = diffOf(c.path)?.hunks?.flatMap((h) => h.lines) ?? [];
+    const at = (a) => all.findIndex((l) => (a.side === 'old' ? l.t === '-' && l.o === a.line : l.t !== '-' && l.n === a.line));
+    let i = at(c.start), j = at(c.end);
+    if (i < 0 || j < 0) return null;
+    if (i > j) [i, j] = [j, i];
+    const lang = langOf(c.path);
+    const sides = highlightedSides(c.path, lang);
+    return all.slice(i, j + 1).map((l) => ({
+      kind: l.t === '+' ? 'add' : l.t === '-' ? 'del' : '',
+      num: l.t === '-' ? l.o : l.n,
+      html: (l.t === '-' ? sides.old.get(l.o) : sides.new.get(l.n)) ?? highlight(l.s, lang),
+    }));
+  };
+  const quoteHtml = (c) => {
+    if (c.file) return '';
+    const lines = quotedLines(c);
+    // A diff that has moved on since keeps the words saved with the comment.
+    if (!lines) return c.quote?.length ? `<div class="drawer-quote"><div class="dq-plain">${esc(c.quote.join('\n'))}</div></div>` : '';
+    return `<div class="drawer-quote">${lines.map((l) => `<div class="dq-line ${l.kind}"><span class="dq-num">${l.num}</span><span class="dq-code">${l.html || ' '}</span></div>`).join('')}</div>`;
+  };
+  const renderDrawer = () => {
+    const groups = new Map();
+    for (const c of sortedComments()) groups.set(c.path, [...(groups.get(c.path) ?? []), c]);
+    const item = (c) => `<div class="drawer-item" data-cmt-go="${c.id}" role="button" tabindex="0">
+        <div class="cmt-meta"><span class="cmt-where">${esc(whereLabel(c))}</span>${commentStale(c) ? '<span class="badge stale">diff changed</span>' : ''}
+          <span class="cmt-actions"><button data-cmt-del="${c.id}">Delete</button></span></div>
+        ${quoteHtml(c)}
+        <div class="cmt-body">${esc(c.body)}</div>
+      </div>`;
+    $('#drawer-list').innerHTML = groups.size
+      ? [...groups].map(([path, list]) => `<div class="drawer-file"><p class="drawer-path" title="${esc(path)}">${splitPath(shortPath(path))}</p>${list.map(item).join('')}</div>`).join('')
+      : '<p class="drawer-empty">No comments yet. Click a line in any diff, drag across lines for a range, or use <i>Comment</i> on a file’s header for the whole file.</p>';
+    $('#drawer-count').textContent = comments.length ? `· ${comments.length}` : '';
+    $('#cmt-export').disabled = !comments.length;
+  };
+  const refreshComments = () => {
+    $('#t-comments-n').textContent = comments.length;
+    document.querySelectorAll('[data-cmt-file]').forEach((btn) => {
+      const count = commentsOf(btn.dataset.cmtFile).length;
+      btn.classList.toggle('has', count > 0);
+      btn.querySelector('[data-cmt-n]').textContent = count ? ` · ${count}` : '';
+    });
+    renderDrawer();
+  };
+  const setDrawer = (open) => {
+    $('#drawer').classList.toggle('open', open);
+    $('#t-comments').setAttribute('aria-pressed', open);
+    if (prefs.commentsOpen !== open) { prefs.commentsOpen = open; save(prefKey, prefs); }
+  };
+  /** Scrolls to a comment, drawing its file and every line of it if they are not yet. */
+  const goToComment = (id) => {
+    const c = comments.find((x) => x.id === id);
+    if (!c) return;
+    revealPath(c.path);
+    const host = hostOf(c.path);
+    const slot = slotOf(host);
+    if (!slot) return;
+    let card = slot.querySelector(`[data-cmt-id="${id}"]`);
+    if (!card && slot.querySelector('[data-more]')) {
+      slot.dataset.all = '1';
+      fillSlot(host, true);
+      card = slot.querySelector(`[data-cmt-id="${id}"]`);
+    }
+    if (!card) { toast('That line is no longer in the diff'); return; }
+    requestAnimationFrame(() => {
+      showInPage(card, { center: true });
+      card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
+    });
+  };
+  $('#drawer-list').addEventListener('keydown', (e) => {
+    const go = e.target.closest('[data-cmt-go]');
+    if (go && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); goToComment(go.dataset.cmtGo); }
+  });
+  $('#t-comments').addEventListener('click', () => setDrawer(!$('#drawer').classList.contains('open')));
+  $('#drawer-close').addEventListener('click', () => setDrawer(false));
+
+  // ---------- Export ----------
+  // One JSON file whose comments carry GitHub's own field names: line and side,
+  // start_line and start_side for a range, subject_type "file" for a whole file.
+  $('#cmt-export').addEventListener('click', () => {
+    const side = (at) => (at.side === 'old' ? 'LEFT' : 'RIGHT');
+    const out = {
+      version: 1,
+      repoRoot: data.repoRoot,
+      branch: data.branch,
+      base: data.base,
+      head: data.head,
+      pr: data.pr ?? null,
+      exportedAt: new Date().toISOString(),
+      comments: sortedComments().map((c) => ({
+        path: c.path,
+        subject_type: c.file ? 'file' : 'line',
+        ...(c.file ? {} : {
+          ...(sameAt(c.start, c.end) ? {} : { start_line: c.start.line, start_side: side(c.start) }),
+          line: c.end.line,
+          side: side(c.end),
+        }),
+        body: c.body,
+        ...(c.quote?.length ? { quote: c.quote } : {}),
+        diffChangedSince: commentStale(c),
+        createdAt: c.at,
+      })),
+    };
+    const url = URL.createObjectURL(new Blob([`${JSON.stringify(out, null, 2)}\n`], { type: 'application/json' }));
+    const a = Object.assign(document.createElement('a'), { href: url, download: `review-comments-${data.branch.split('/').pop()}.json` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`Exported ${comments.length} comment${comments.length === 1 ? '' : 's'}`);
+  });
 
   // ---------- The one live diff ----------
   let liveDiff = null;
@@ -1728,6 +2311,8 @@ a.ui-file:hover { color: var(--accent); border-color: var(--accent); text-decora
   // ---------- Start ----------
   fillOpen();
   refreshProgress();
+  refreshComments();
+  setDrawer(!!prefs.commentsOpen);
   setSideView(prefs.sideView ?? 'order');
   const target = location.hash && document.getElementById(location.hash.slice(1));
   if (target) {
