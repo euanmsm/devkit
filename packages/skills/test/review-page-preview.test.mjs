@@ -30,9 +30,9 @@ describe('review-page — preview', () => {
       assert.deepEqual(result.problems, []);
       assert.deepEqual(warnings, []);
       assert.deepEqual(result.stats, {
-        files: 11,
-        hunkNotes: 12,
-        walkthroughs: 1,
+        files: 12,
+        hunkNotes: 13,
+        walkthroughs: 3,
       });
       const html = readFileSync(result.file, 'utf8');
       assert.match(html, /"branch":"preview\/upload-retries"/);
@@ -48,7 +48,7 @@ describe('review-page — preview', () => {
       const result = buildPreview({ root, large: 3 });
 
       assert.deepEqual(result.problems, []);
-      assert.equal(result.stats.files, 14);
+      assert.equal(result.stats.files, 15);
       assert.match(
         readFileSync(result.file, 'utf8'),
         /src\/generated\/module003\.ts/,

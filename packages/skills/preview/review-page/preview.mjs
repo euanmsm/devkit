@@ -149,11 +149,19 @@ function writeNotes(folder, brief, generated) {
     sections.push({
       title: 'Generated load',
       intro:
-        'Made up by `--large`, to see how the page copes with a big branch.',
-      files: generated.map((file) => ({
-        path: file,
-        summary: 'A generated file.',
-      })),
+        'Made up by `--large`, to see how the page copes with a big branch. Each file reads like a real one so the notes column fills as it would.',
+      files: generated.map((file) => {
+        const name = path.basename(file, '.ts');
+        return {
+          path: file,
+          summary: `New \`${name}\`: a run of small steps, each doubling its input and adding its own number.`,
+          context: [
+            `\`${name}\` is one of the modules the upload pipeline loads by name. Each step is called in order, and the result of one feeds the next.`,
+            'Nothing imports it directly; the pipeline finds it by its folder, so adding a file is enough to register it.',
+          ],
+          changed: `Adds the module whole. The steps are uniform on purpose, so a reviewer only needs to check **one** and skim the rest for anything that breaks the pattern.`,
+        };
+      }),
     });
   }
 
@@ -202,12 +210,18 @@ function matchHunks(file, summary) {
         parts.push({
           at: `${start}-${end}`,
           title: `Lines ${start}–${end}`,
-          text: 'A made-up note for this part.',
+          text: [
+            `The steps in lines ${start} to ${end}. Each takes a number, doubles it and adds the step’s own number, so step 3 turns \`5\` into \`13\`.`,
+            'None of them reads or writes anything outside itself, so they can be checked one at a time in any order.',
+          ],
         });
       }
       return { parts };
     }
-    return { title: `Change ${i + 1}`, text: 'A made-up note for this hunk.' };
+    return {
+      title: `Change ${i + 1}`,
+      text: 'A placeholder note: the fixture’s notes no longer match this file’s hunks, so update them in `fixture.mjs`.',
+    };
   });
 }
 
