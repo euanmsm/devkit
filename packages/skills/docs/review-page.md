@@ -94,7 +94,21 @@ those notes.
   status.
 - Read marks and UI checklist ticks kept in the browser per branch. A file whose
   diff changes after it was marked read shows as changed since read.
-- Keyboard shortcuts: `j`/`k` to move, `v` to mark read, `?` for the rest.
+- Review comments on a line, a range of lines in one hunk, or a whole file. The
+  `+` beside a line number starts one; drag it, or shift-click another line's,
+  for a range. A file's **Comment** button covers the whole file. They are kept
+  in the browser per branch, like the read marks, so rebuilding the page keeps
+  them.
+- A comments sheet (`c`, or **Comments** in the sidebar) listing every comment
+  in reading order, each one jumping to its line, with **Export JSON**. The
+  export uses GitHub's review comment fields — `path`, `line`, `side`,
+  `start_line`, `start_side`, and `subject_type: "file"` — plus the PR, base and
+  head, so it can be posted to the PR as a review.
+- Keyboard shortcuts: `j`/`k` to move, `v` to mark read, `c` for comments, `?`
+  for the rest.
+
+Files far off screen are neither drawn nor hit-tested until scrolled near, so a
+branch with thousands of changed lines stays responsive.
 
 ## Options
 
