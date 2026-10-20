@@ -10,6 +10,7 @@
   },
   "scripts": {
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"packages/*/test/*.test.mjs\"",
+    "preview:review-page": "node packages/skills/preview/review-page/preview.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "version-packages": "changeset version && npm install --package-lock-only",

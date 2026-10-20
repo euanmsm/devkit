@@ -110,6 +110,27 @@ those notes.
 Files far off screen are neither drawn nor hit-tested until scrolled near, so a
 branch with thousands of changed lines stays responsive.
 
+## Working on the page
+
+The page is `src/review-page/template.html`. To see it without a real branch,
+build the preview from the devkit root:
+
+```
+npm run preview:review-page -- --open        # a small made-up branch
+npm run preview:review-page -- --large       # plus 40 generated files, ~12,000 lines
+npm run preview:review-page -- --large=100   # or as many as asked
+```
+
+It makes a throwaway repository in `.preview/review-page/` (git-ignored) with a
+branch, "retry failed uploads", that has every kind of change the page shows,
+then runs the real `prepare` and `build`. Edit the template, run it again and
+reload. The repository is rebuilt at the same path each time, so the preview's
+read marks and comments stay, and they never mix with a real branch's.
+
+The made-up branch and its notes are in `preview/review-page/fixture.mjs`. A
+file whose hunks no longer match its notes gets placeholder notes and a warning,
+so the preview still builds.
+
 ## Options
 
 | Option      | Default  | What it is                                                                       |
