@@ -255,7 +255,7 @@ like any other.
 | `jsdocProseMax`           | 4                                     | Longest prose run in one JSDoc block        |
 | `commentMaxChars`         | 100                                   | Longest comment                             |
 | `bannerMinCode`           | 150                                   | File size below which banners are noise     |
-| `sectionBanners`          | `large-files`                         | `always` welcomes banners, `off` bans them  |
+| `sectionBanners`          | `large-files`                         | `always`, `off`, or `divider` (see below)   |
 | `todoPrefix`              | any 2+ capitals                       | Issue prefix a `TODO()` must carry          |
 | `allowedTags`             | `@param @returns @throws @deprecated` | JSDoc tags that pass, beside tool pragmas   |
 | `jsdocScope`              | `all`                                 | `all` covers functions, `exported` does not |
@@ -266,6 +266,11 @@ like any other.
 `sectionBanners` set to `always` is not the same as switching `section-banner`
 off. Off drops banners from the generated contract entirely; `always` keeps a
 section there saying what a banner should separate.
+
+`divider` allows one thin `// ---- Helpers ----` line per file, between the main
+export and its helpers, and flags anything else below the header: a `// ====`
+banner block, a one-line `// ==== Name ====` banner, or a second divider.
+`bannerMinCode` does nothing in this mode.
 
 `bans` **replaces** the defaults rather than adding to them, which is why `init`
 writes all five out in full — edit the list rather than rebuilding it.

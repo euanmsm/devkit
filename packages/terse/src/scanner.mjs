@@ -205,9 +205,14 @@ const HEADER_MAX = config.headerMax;
 const JSDOC_PROSE_MAX = config.jsdocProseMax;
 const COMMENT_MAX_CHARS = config.commentMaxChars;
 const BANNER_MIN_CODE = config.bannerMinCode;
-const SECTION_BANNERS = ['always', 'off'].includes(config.sectionBanners)
+const SECTION_BANNERS = ['always', 'off', 'divider'].includes(
+  config.sectionBanners,
+)
   ? config.sectionBanners
   : 'large-files';
+
+const DIVIDER_ONLY =
+  'Section banner inside a file. Use one `// ---- Helpers ----` divider.';
 
 /**
  * Judges one inline banner against the repository's banner setting.
@@ -218,6 +223,7 @@ const SECTION_BANNERS = ['always', 'off'].includes(config.sectionBanners)
 function bannerFinding(code) {
   if (SECTION_BANNERS === 'always') return null;
   if (SECTION_BANNERS === 'off') return 'Section banner inside a file.';
+  if (SECTION_BANNERS === 'divider') return DIVIDER_ONLY;
   if (code >= BANNER_MIN_CODE) return null;
 
   return `Section banner in a ${code}-line file, minimum is ${BANNER_MIN_CODE}.`;
@@ -303,6 +309,19 @@ function body(line) {
  */
 function isBannerRule(line) {
   return /^\s*\/\/\s*[=-]{5,}\s*$/.test(line);
+}
+
+/**
+ * Names the one-line banner a line carries, such as `// ---- Helpers ----`.
+ *
+ * @param line - One raw source line
+ * @returns `'dash'`, `'equals'`, or null when the line is no one-line banner
+ */
+function oneLineBanner(line) {
+  const hit = /^\s*\/\/\s*([=-])\1{2,}\s+\S.*?\s+\1{3,}\s*$/.exec(line);
+  if (!hit) return null;
+
+  return hit[1] === '-' ? 'dash' : 'equals';
 }
 
 /**
@@ -1290,6 +1309,8 @@ export function scan(source, path = '') {
   let depth = 0;
   let declDepth = null;
   let templates = [];
+  let lastRule = -Infinity;
+  let dividers = 0;
 
   for (let n = start; n < lines.length; n++) {
     const raw = lines[n];
@@ -1314,8 +1335,24 @@ export function scan(source, path = '') {
     }
 
     if (!quoted && isBannerRule(raw)) {
-      const message = n > start ? bannerFinding(code) : null;
+      // In divider mode a block's closing rule repeats its opening finding.
+      const closing = SECTION_BANNERS === 'divider' && n - lastRule <= 2;
+      lastRule = n;
+      const message = n > start && !closing ? bannerFinding(code) : null;
       if (message) out.push(finding('section-banner', n + 1, message));
+      continue;
+    }
+
+    const oneLine =
+      SECTION_BANNERS === 'divider' && !quoted ? oneLineBanner(raw) : null;
+    if (oneLine) {
+      if (oneLine === 'dash') dividers++;
+      if (oneLine === 'equals')
+        out.push(finding('section-banner', n + 1, DIVIDER_ONLY));
+      else if (dividers > 1)
+        out.push(
+          finding('section-banner', n + 1, 'Second divider. One per file.'),
+        );
       continue;
     }
 
