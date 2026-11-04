@@ -206,6 +206,48 @@ describe('section banners', () => {
   });
 });
 
+const DIVIDER = `// ---- Helpers ${'-'.repeat(60)}`;
+const DIVIDER_ONLY =
+  'Section banner inside a file. Use one `// ---- Helpers ----` divider.';
+
+describe('divider mode', () => {
+  const divider = (source) => scanFile({ sectionBanners: 'divider' }, source);
+
+  test('allows one thin divider in a short file', () => {
+    assert.deepEqual(divider(`${HEADER}const a = 1;\n\n${DIVIDER}\n`), []);
+  });
+
+  test('flags a second divider', () => {
+    const found = divider(
+      `${HEADER}const a = 1;\n${DIVIDER}\nconst b = 2;\n${DIVIDER}\n`,
+    );
+
+    assert.deepEqual(found, ['Second divider. One per file.']);
+  });
+
+  test('flags a banner block once, even in a long file', () => {
+    assert.deepEqual(divider(LONG), [DIVIDER_ONLY]);
+  });
+
+  test('flags a one-line banner drawn in equals signs', () => {
+    const found = divider(
+      `${HEADER}const a = 1;\n// ======== Request ${'='.repeat(50)}\n`,
+    );
+
+    assert.deepEqual(found, [DIVIDER_ONLY]);
+  });
+
+  test('spares the file header', () => {
+    assert.deepEqual(divider(`${HEADER}const a = 1;\n`), []);
+  });
+
+  test('leaves one-line banners alone in other modes', () => {
+    const source = `${HEADER}const a = 1;\n${DIVIDER}\nconst b = 2;\n${DIVIDER}\n`;
+
+    assert.deepEqual(scanFile({ sectionBanners: 'always' }, source), []);
+  });
+});
+
 /**
  * Runs `newFindings` over two sources inside a repo configured the given way.
  *

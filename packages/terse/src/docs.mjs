@@ -134,15 +134,21 @@ const BANNERS = {
       'The header is the only banner a file carries. A file needing a table of\ncontents ' +
       'needs splitting instead.',
   },
+  divider: {
+    heading: 'One thin divider between the main export and its helpers',
+    body:
+      'The header is the only banner block a file carries. Below it, one ' +
+      'divider\nmarks where the main export ends and its helpers begin.',
+  },
 };
 
 /**
  * Reads which banner setting the repository runs, ignoring an unknown value.
  *
- * @returns `'large-files'`, `'always'` or `'off'`
+ * @returns `'large-files'`, `'always'`, `'off'` or `'divider'`
  */
 function banners() {
-  return ['always', 'off'].includes(config.sectionBanners)
+  return ['always', 'off', 'divider'].includes(config.sectionBanners)
     ? config.sectionBanners
     : 'large-files';
 }
@@ -203,6 +209,8 @@ export function build() {
 
       if (name === 'section-banner' && banners() === 'always')
         parts.push(fill(chunk('_banner-usage')));
+      if (name === 'section-banner' && banners() === 'divider')
+        parts.push(fill(chunk('_divider-usage')));
     }
   }
 

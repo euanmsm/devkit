@@ -203,6 +203,14 @@ describe('section banners', () => {
     assert.equal(doc.includes('### What a banner separates'), false);
   });
 
+  test('shows the single divider when a repo runs divider mode', () => {
+    const doc = buildWith({ sectionBanners: 'divider' });
+
+    assert.match(doc, /### One thin divider between the main export/);
+    assert.match(doc, /### What the divider looks like/);
+    assert.equal(doc.includes('### What a banner separates'), false);
+  });
+
   test('drops the guidance with the rule it belongs to', () => {
     const doc = buildWith({
       sectionBanners: 'always',
